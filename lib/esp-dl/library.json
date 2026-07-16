@@ -1,0 +1,26 @@
+{
+  "name": "esp-dl",
+  "version": "3.3.7",
+  "description": "Vendored espressif/esp-dl neural network inference framework (ESP32-P4 subset). Source: https://github.com/espressif/esp-dl @ master, esp-dl/ component dir. Audio tree and JPEG image codec excluded (drops dl_fft and esp_new_jpeg deps).",
+  "license": "MIT",
+  "build": {
+    "srcDir": ".",
+    "includeDir": "dl",
+    "srcFilter": [
+      "-<*>",
+      "+<dl/>",
+      "+<vision/>",
+      "+<fbs_loader/src/>",
+      "-<vision/image/dl_image_jpeg.cpp>"
+    ],
+    "flags": [
+      "-O3",
+      "-ffast-math",
+      "-Wno-array-bounds",
+      "-Wno-deprecated-copy",
+      "-Wno-strict-aliasing",
+      "-Wno-overloaded-virtual",
+      "-Wno-format"
+    ]
+  }
+}

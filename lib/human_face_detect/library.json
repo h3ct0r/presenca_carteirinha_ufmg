@@ -1,0 +1,11 @@
+{
+  "name": "human_face_detect",
+  "version": "0.5.0",
+  "description": "Vendored espressif/human_face_detect model component (MSR+MNP S8 V1, models served from the human_face_det flash partition). Source: https://github.com/espressif/esp-dl/tree/master/models/human_face_detect",
+  "license": "MIT",
+  "build": {
+    "srcDir": ".",
+    "includeDir": ".",
+    "srcFilter": ["+<human_face_detect.cpp>"]
+  }
+}
