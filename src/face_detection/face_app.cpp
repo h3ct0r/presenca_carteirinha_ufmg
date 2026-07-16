@@ -15,6 +15,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "human_face_detect.hpp"
+#include "storage/photo_store.h"
 
 static const char* TAG = "face_app";
 
@@ -42,6 +43,7 @@ struct shared_state {
     uint32_t frame_count;
     uint32_t infer_ms;
     char status[64];
+    char rfid[40];  // last card UID as hex, written by the RFID task
 };
 static shared_state s_st;
 
@@ -49,7 +51,14 @@ static shared_state s_st;
 static lv_obj_t* s_img = NULL;
 static lv_obj_t* s_boxes[MAX_FACES];
 static lv_obj_t* s_label = NULL;
+static lv_obj_t* s_photo_label = NULL;
+static lv_obj_t* s_rfid_label = NULL;
 static lv_image_dsc_t s_img_dsc;
+
+// Set by the snapshot button (LVGL thread), consumed by the detection task,
+// which owns full-res frame access and forwards the next frame to the SD
+// writer via photo_store_capture.
+static volatile bool s_capture_req = false;
 
 static void detection_task(void* arg) {
     // PPA client for hardware downscale 1920x1080 -> 480x270
@@ -73,6 +82,13 @@ static void detection_task(void* arg) {
         if (frame == nullptr) {
             snprintf(s_st.status, sizeof(s_st.status), "no frame (timeout)");
             continue;
+        }
+
+        // Snapshot requested from the UI: hand this full-res frame to the SD
+        // writer (copies it and returns; the write happens off this task).
+        if (s_capture_req) {
+            s_capture_req = false;
+            photo_store_capture(frame, CAM_W, CAM_H);
         }
 
         uint8_t* dst = s_st.preview[write_idx];
@@ -182,7 +198,15 @@ static void ui_refresh_cb(lv_timer_t* t) {
     memcpy(boxes, s_st.boxes, sizeof(boxes));
     char status[sizeof(s_st.status)];
     memcpy(status, s_st.status, sizeof(status));
+    char rfid[sizeof(s_st.rfid)];
+    memcpy(rfid, s_st.rfid, sizeof(rfid));
     xSemaphoreGive(s_st.lock);
+
+    static char last_rfid[sizeof(s_st.rfid)];
+    if (rfid[0] != '\0' && strcmp(rfid, last_rfid) != 0) {
+        memcpy(last_rfid, rfid, sizeof(last_rfid));
+        lv_label_set_text(s_rfid_label, rfid);
+    }
 
     lv_label_set_text(s_label, status);
     if (idx >= 0) {
@@ -199,6 +223,34 @@ static void ui_refresh_cb(lv_timer_t* t) {
             lv_obj_add_flag(s_boxes[i], LV_OBJ_FLAG_HIDDEN);
         }
     }
+
+    // SD/snapshot state lives on other tasks; poll it into the label here so
+    // all LVGL calls stay on this thread.
+    static char last_photo[48];
+    char photo[48];
+    photo_store_get_status(photo, sizeof(photo));
+    if (strcmp(photo, last_photo) != 0) {
+        memcpy(last_photo, photo, sizeof(last_photo));
+        lv_label_set_text(s_photo_label, photo);
+    }
+}
+
+static void snapshot_btn_cb(lv_event_t* e) {
+    s_capture_req = true;
+}
+
+void face_app_notify_rfid(const uint8_t* uid, uint8_t uid_len) {
+    if (s_st.lock == NULL || uid == NULL) return;
+
+    char hex[40];
+    int pos = snprintf(hex, sizeof(hex), "RFID: ");
+    for (uint8_t i = 0; i < uid_len && pos < (int)sizeof(hex) - 3; i++) {
+        pos += snprintf(hex + pos, sizeof(hex) - pos, "%02X%s", uid[i], i + 1 < uid_len ? ":" : "");
+    }
+
+    xSemaphoreTake(s_st.lock, portMAX_DELAY);
+    memcpy(s_st.rfid, hex, sizeof(s_st.rfid));
+    xSemaphoreGive(s_st.lock);
 }
 
 static void build_ui() {
@@ -245,6 +297,24 @@ static void build_ui() {
     lv_label_set_text(s_label, "starting camera...");
     lv_obj_align(s_label, LV_ALIGN_TOP_MID, 0, PREVIEW_H + 10);
 
+    // Snapshot button + SD status, below the feed/status area
+    lv_obj_t* snap_btn = lv_button_create(tab_face);
+    lv_obj_set_size(snap_btn, 220, 56);
+    lv_obj_align(snap_btn, LV_ALIGN_TOP_MID, 0, PREVIEW_H + 44);
+    lv_obj_add_event_cb(snap_btn, snapshot_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* snap_label = lv_label_create(snap_btn);
+    lv_label_set_text(snap_label, LV_SYMBOL_IMAGE "  Take Picture");
+    lv_obj_center(snap_label);
+
+    s_photo_label = lv_label_create(tab_face);
+    lv_label_set_text(s_photo_label, "");
+    lv_obj_align(s_photo_label, LV_ALIGN_TOP_MID, 0, PREVIEW_H + 112);
+
+    s_rfid_label = lv_label_create(tab_face);
+    lv_label_set_text(s_rfid_label, "RFID: waiting for card...");
+    lv_obj_set_style_text_font(s_rfid_label, &lv_font_montserrat_20, 0);
+    lv_obj_align(s_rfid_label, LV_ALIGN_TOP_MID, 0, PREVIEW_H + 148);
+
     // --- Widgets tab (small placeholder playground) ---
     lv_obj_t* tab_w = lv_tabview_add_tab(tv, "Widgets");
     lv_obj_set_flex_flow(tab_w, LV_FLEX_FLOW_COLUMN);
@@ -267,6 +337,9 @@ void face_app_start() {
         assert(s_st.preview[i]);
     }
     snprintf(s_st.status, sizeof(s_st.status), "starting camera...");
+
+    // Mount the TF card before the UI exists so the first status poll is real
+    photo_store_init();
 
     build_ui();
     lv_timer_create(ui_refresh_cb, 100, NULL);

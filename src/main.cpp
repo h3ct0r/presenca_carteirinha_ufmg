@@ -2,6 +2,7 @@
 #include <Wire.h>
 #include <lvgl.h>
 
+#include "audio/beeper.h"
 #include "face_detection/face_app.h"
 #include "lcd/st7701_lcd.h"
 #include "lvgl_port.h"
@@ -22,7 +23,6 @@ static gt911_touch touch(TP_I2C_SDA, TP_I2C_SCL, TP_RST, TP_INT);
 
 // Brings up the shared I2C master bus (port 1) used by the touch controller,
 // camera sensor and PN532 RFID reader (connector CN3, same ES_I2C net).
-//
 // Wire1 maps to I2C port 1 and, on this Arduino core (3.x / IDF 5.5), is
 // implemented on top of the same i2c_master driver the IDF-side consumers
 // use: touch and camera keep fetching the bus with
@@ -40,6 +40,8 @@ static void on_card_detected(const uint8_t* uid, uint8_t uid_len) {
         snprintf(buf + i * 3, sizeof(buf) - i * 3, "%02X ", uid[i]);
     }
     Serial.printf("RFID card UID: %s\n", buf);
+    face_app_notify_rfid(uid, uid_len);
+    beeper_beep();
 }
 
 void setup() {
@@ -55,6 +57,10 @@ void setup() {
     // Builds the UI and starts the camera + face-detection task. Camera
     // hardware is optional: without it the face tab shows an error state.
     face_app_start();
+
+    // Confirmation beep path (ES8311 -> NS4150 -> CN1). Optional: without
+    // the codec answering, beeper_beep() is a no-op.
+    beeper_init();
 
     // PN532 on CN3 (shared I2C bus). Optional: boot continues without it.
     pn532_reader_start(on_card_detected);

@@ -9,6 +9,7 @@
             "name": "PlatformIO",
             "includePath": [
                 "/Users/h3ct0r/Git/presenca_carteirinha_ufmg/src",
+                "/Users/h3ct0r/.platformio/packages/framework-arduinoespressif32/libraries/SD_MMC/src",
                 "/Users/h3ct0r/Git/presenca_carteirinha_ufmg/.pio/libdeps/esp32p4/Adafruit PN532",
                 "/Users/h3ct0r/Git/presenca_carteirinha_ufmg/.pio/libdeps/esp32p4/Adafruit BusIO",
                 "/Users/h3ct0r/.platformio/packages/framework-arduinoespressif32/libraries/Wire/src",
@@ -349,7 +350,6 @@
                 "/Users/h3ct0r/.platformio/packages/framework-arduinoespressif32/libraries/PPP/src",
                 "/Users/h3ct0r/.platformio/packages/framework-arduinoespressif32/libraries/Preferences/src",
                 "/Users/h3ct0r/.platformio/packages/framework-arduinoespressif32/libraries/RainMaker/src",
-                "/Users/h3ct0r/.platformio/packages/framework-arduinoespressif32/libraries/SD_MMC/src",
                 "/Users/h3ct0r/.platformio/packages/framework-arduinoespressif32/libraries/SPIFFS/src",
                 "/Users/h3ct0r/.platformio/packages/framework-arduinoespressif32/libraries/SimpleBLE/src",
                 "/Users/h3ct0r/.platformio/packages/framework-arduinoespressif32/libraries/TFLiteMicro/src",
@@ -366,6 +366,7 @@
                 "limitSymbolsToIncludedHeaders": true,
                 "path": [
                     "/Users/h3ct0r/Git/presenca_carteirinha_ufmg/src",
+                    "/Users/h3ct0r/.platformio/packages/framework-arduinoespressif32/libraries/SD_MMC/src",
                     "/Users/h3ct0r/Git/presenca_carteirinha_ufmg/.pio/libdeps/esp32p4/Adafruit PN532",
                     "/Users/h3ct0r/Git/presenca_carteirinha_ufmg/.pio/libdeps/esp32p4/Adafruit BusIO",
                     "/Users/h3ct0r/.platformio/packages/framework-arduinoespressif32/libraries/Wire/src",
@@ -706,7 +707,6 @@
                     "/Users/h3ct0r/.platformio/packages/framework-arduinoespressif32/libraries/PPP/src",
                     "/Users/h3ct0r/.platformio/packages/framework-arduinoespressif32/libraries/Preferences/src",
                     "/Users/h3ct0r/.platformio/packages/framework-arduinoespressif32/libraries/RainMaker/src",
-                    "/Users/h3ct0r/.platformio/packages/framework-arduinoespressif32/libraries/SD_MMC/src",
                     "/Users/h3ct0r/.platformio/packages/framework-arduinoespressif32/libraries/SPIFFS/src",
                     "/Users/h3ct0r/.platformio/packages/framework-arduinoespressif32/libraries/SimpleBLE/src",
                     "/Users/h3ct0r/.platformio/packages/framework-arduinoespressif32/libraries/TFLiteMicro/src",
