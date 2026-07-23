@@ -14,10 +14,6 @@ the device → picks a class → opens a dated attendance session → takes roll
 (tap cards / tap names), enrolls students, or starts an unattended kiosk for
 students to self-check-in. Attendance can later be exported to CSV.
 
-> Status: build- and native-test-verified. It has **not** been run on physical
-> hardware yet — runtime bugs (e.g. an LVGL crash) surface only on device.
-> Treat on-device behavior as unverified and check it there.
-
 ## Hardware
 
 Board: **Guition JC4880P443C** (module JC-ESP32P4-M3). Schematics and
