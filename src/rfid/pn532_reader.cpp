@@ -40,6 +40,14 @@ static void rfid_task(void*) {
                 memcpy(last_uid, uid, uid_len);
                 last_len = uid_len;
                 ESP_LOGI(TAG, "card detected (uid %u bytes)", uid_len);
+                char buf[3 * 7 + 1] = {0};
+                for (uint8_t i = 0; i < uid_len && i < 7; i++) {
+                    snprintf(buf + i * 3, sizeof(buf) - i * 3, "%02X ", uid[i]);
+                }
+                ESP_LOGI(TAG, "RFID card UID: %s\n", buf);
+                // The beep is decided by the auth outcome (grant vs. deny) in
+                // the UI, not on raw detection — a rejected card must not get
+                // the confirmation beep.
                 if (s_card_cb) s_card_cb(uid, uid_len);
             }
         } else {

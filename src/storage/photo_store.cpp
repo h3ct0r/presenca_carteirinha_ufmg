@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "storage/sd_card.h"
+
 #include "driver/jpeg_encode.h"
 #include "esp32-hal-log.h"
 #include "esp_heap_caps.h"
@@ -15,13 +17,11 @@
 
 static const char* TAG = "photo";
 
-// The board variant (esp32p4) routes SD_MMC to SDMMC slot 0 IOMUX pins
-// (GPIO39-44, the TF card on the schematic) and powers TF_VCC through the
-// chip's LDO channel 4, so SD_MMC.begin() needs no pin setup here.
-
-static SemaphoreHandle_t s_lock = NULL;  // guards s_status
+static SemaphoreHandle_t s_lock = NULL;  // guards s_status, s_last_path, s_save_seq
 static TaskHandle_t s_writer = NULL;
 static char s_status[48] = "SD not mounted";
+static char s_last_path[64] = "";  // path of the most recent successful save
+static uint32_t s_save_seq = 0;    // bumped on each successful save
 static bool s_mounted = false;
 static volatile bool s_busy = false;
 
@@ -55,6 +55,27 @@ void photo_store_get_status(char* out, size_t out_len) {
     xSemaphoreTake(s_lock, portMAX_DELAY);
     snprintf(out, out_len, "%s", s_status);
     xSemaphoreGive(s_lock);
+}
+
+// Records a completed save: stores the path and bumps the sequence so pollers
+// (the camera screen) can detect it and surface the path.
+static void set_saved(const char* path) {
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    snprintf(s_last_path, sizeof(s_last_path), "%s", path);
+    s_save_seq++;
+    xSemaphoreGive(s_lock);
+}
+
+uint32_t photo_store_last_saved(char* out, size_t out_len) {
+    if (s_lock == NULL) {
+        if (out != NULL && out_len > 0) out[0] = '\0';
+        return 0;
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (out != NULL && out_len > 0) snprintf(out, out_len, "%s", s_last_path);
+    uint32_t seq = s_save_seq;
+    xSemaphoreGive(s_lock);
+    return seq;
 }
 
 static void wr32(uint8_t* p, uint32_t v) {
@@ -109,6 +130,7 @@ static bool save_jpeg() {
     }
 
     set_status("saved IMG_%04d.jpg (%u KB)", s_next_idx, (unsigned)(jpg_size / 1024));
+    set_saved(name);
     ESP_LOGI(TAG, "saved %s (%u bytes)", name, (unsigned)jpg_size);
     s_next_idx++;
     return true;
@@ -147,12 +169,12 @@ static void save_bmp() {
     hdr[0] = 'B';
     hdr[1] = 'M';
     wr32(hdr + 2, file_size);
-    wr32(hdr + 10, 54);    // pixel data offset
-    wr32(hdr + 14, 40);    // info header size
+    wr32(hdr + 10, 54);  // pixel data offset
+    wr32(hdr + 14, 40);  // info header size
     wr32(hdr + 18, (uint32_t)w);
     wr32(hdr + 22, (uint32_t)h);
-    hdr[26] = 1;           // planes
-    hdr[28] = 24;          // bpp
+    hdr[26] = 1;   // planes
+    hdr[28] = 24;  // bpp
     wr32(hdr + 34, img_size);
     wr32(hdr + 38, 2835);  // 72 dpi
     wr32(hdr + 42, 2835);
@@ -171,6 +193,7 @@ static void save_bmp() {
 
     if (ok) {
         set_status("saved IMG_%04d.bmp", s_next_idx);
+        set_saved(name);
         ESP_LOGI(TAG, "saved %s (%u bytes)", name, (unsigned)file_size);
         s_next_idx++;
     } else {
@@ -192,9 +215,10 @@ static void writer_task(void*) {
 bool photo_store_init() {
     s_lock = xSemaphoreCreateMutex();
 
-    if (!SD_MMC.begin("/sdcard")) {
+    // Shared with config_service; mounts once, whoever calls first.
+    if (!sd_card_mount()) {
         set_status("no SD card");
-        ESP_LOGE(TAG, "SD_MMC mount failed - card inserted?");
+        ESP_LOGE(TAG, "SD not mounted - card inserted?");
         return false;
     }
     s_mounted = true;
@@ -228,8 +252,9 @@ bool photo_store_init() {
     xTaskCreate(writer_task, "photo_wr", 6144, NULL, 2, &s_writer);
 
     set_status("SD ready (%llu MB)", SD_MMC.cardSize() / (1024ULL * 1024ULL));
-    ESP_LOGI(TAG, "SD mounted, %llu MB, next photo IMG_%04d.bmp",
-             SD_MMC.cardSize() / (1024ULL * 1024ULL), s_next_idx);
+    ESP_LOGI(TAG, "SD mounted, %llu MB, next photo IMG_%04d (%s)",
+             SD_MMC.cardSize() / (1024ULL * 1024ULL), s_next_idx,
+             s_jpeg ? "jpg" : "bmp fallback");
     return true;
 }
 

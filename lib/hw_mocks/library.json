@@ -1,0 +1,10 @@
+{
+  "name": "hw_mocks",
+  "version": "1.0.0",
+  "description": "Host-side mock hardware for native unit tests: in-memory SD card (FS/SD_MMC), fake PN532 RFID reader, fake JPEG encoder, pthread-backed FreeRTOS primitives.",
+  "platforms": ["native"],
+  "build": {
+    "srcDir": "src",
+    "includeDir": "include"
+  }
+}

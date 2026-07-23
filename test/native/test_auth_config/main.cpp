@@ -1,0 +1,311 @@
+// config_service + auth against the in-memory SD card: teacher list parsing,
+// per-professor passwords (must be unique), status codes, UID/password lookup.
+//
+// Note on ordering: sd_card_mount() latches "mounted" for the whole binary,
+// so the mount-failure scenario MUST run first. The auth lookup tests rely on
+// the config loaded by test_valid_config_parses_teachers just before them.
+
+#include <stdio.h>
+#include <string.h>
+#include <unity.h>
+
+#include "app/auth.h"
+#include "app/event_bus.h"
+#include "mock_freertos.h"
+#include "mock_sd.h"
+#include "services/config_service.h"
+
+void setUp(void) {
+    app_event_t ev;
+    while (event_bus_poll(&ev)) {
+    }
+}
+void tearDown(void) {}
+
+static const char* VALID_CONFIG =
+    "{\n"
+    "  \"teachers\": [\n"
+    "    { \"name\": \"Prof Hector Azpurua\", \"email\": \"hector@dcc.ufmg.br\",\n"
+    "      \"rfid_uid\": \"E0:D1:33:5F\", \"password\": \"1234\" },\n"
+    "    { \"name\": \"Prof Two\", \"email\": \"two@dcc.ufmg.br\",\n"
+    "      \"rfid_uid\": \"E0:D1:33:6F\", \"password\": \"56789\" }\n"
+    "  ]\n"
+    "}\n";
+
+// Last CONFIG_STATE event on the bus, or -1.
+static int last_published_config_status(void) {
+    int status = -1;
+    app_event_t ev;
+    while (event_bus_poll(&ev)) {
+        if (ev.type == APP_EVENT_CONFIG_STATE) status = ev.config.status;
+    }
+    return status;
+}
+
+static void expect_error_contains(const char* needle) {
+    char msg[128];
+    config_get_error(msg, sizeof(msg));
+    if (strstr(msg, needle) == nullptr) {
+        char fail[256];
+        snprintf(fail, sizeof(fail), "error \"%s\" does not contain \"%s\"", msg, needle);
+        TEST_FAIL_MESSAGE(fail);
+    }
+}
+
+static void test_no_sd_card(void) {
+    mocksd_reset();
+    mocksd_set_begin_result(false);
+    config_service_start();
+    TEST_ASSERT_EQUAL(CONFIG_NO_SD, config_get_status());
+    TEST_ASSERT_EQUAL_INT(CONFIG_NO_SD, last_published_config_status());
+    // Locked: nothing to authorize against.
+    TEST_ASSERT_FALSE(auth_lookup_uid("E0:D1:33:5F", nullptr));
+    TEST_ASSERT_FALSE(auth_lookup_password("1234", nullptr));
+}
+
+static void test_missing_config_file(void) {
+    mocksd_reset();  // begin ok, empty card
+    config_service_start();
+    TEST_ASSERT_EQUAL(CONFIG_NO_FILE, config_get_status());
+}
+
+static void test_unparseable_json(void) {
+    mocksd_reset();
+    mocksd_add_file("/config.json", "{ not json");
+    config_service_start();
+    TEST_ASSERT_EQUAL(CONFIG_BAD_JSON, config_get_status());
+}
+
+static void test_no_teachers_is_invalid(void) {
+    mocksd_reset();
+    mocksd_add_file("/config.json", "{ \"teachers\": [] }");
+    config_service_start();
+    TEST_ASSERT_EQUAL(CONFIG_BAD_JSON, config_get_status());
+    expect_error_contains("no teachers");
+}
+
+static void test_duplicate_password_rejected(void) {
+    mocksd_reset();
+    mocksd_add_file("/config.json",
+                    "{ \"teachers\": [\n"
+                    "  { \"name\": \"Prof A\", \"rfid_uid\": \"AA:00\", \"password\": \"1111\" },\n"
+                    "  { \"name\": \"Prof B\", \"rfid_uid\": \"BB:00\", \"password\": \"1111\" }\n"
+                    "] }");
+    config_service_start();
+    TEST_ASSERT_EQUAL(CONFIG_DUP_PASSWORD, config_get_status());
+    TEST_ASSERT_EQUAL_INT(CONFIG_DUP_PASSWORD, last_published_config_status());
+    // The message must name both conflicting professors so the fix is obvious.
+    expect_error_contains("Prof A");
+    expect_error_contains("Prof B");
+}
+
+static void test_non_numeric_password_rejected(void) {
+    mocksd_reset();
+    mocksd_add_file("/config.json",
+                    "{ \"teachers\": [\n"
+                    "  { \"name\": \"Prof A\", \"rfid_uid\": \"AA:00\", \"password\": \"12ab\" }\n"
+                    "] }");
+    config_service_start();
+    TEST_ASSERT_EQUAL(CONFIG_NON_NUMERIC_PASSWORD, config_get_status());
+    TEST_ASSERT_EQUAL_INT(CONFIG_NON_NUMERIC_PASSWORD, last_published_config_status());
+    // The message must name the offending professor so the fix is obvious.
+    expect_error_contains("Prof A");
+}
+
+static void test_empty_passwords_do_not_collide(void) {
+    // RFID-only professors (no password) are fine, even several of them.
+    mocksd_reset();
+    mocksd_add_file("/config.json",
+                    "{ \"teachers\": [\n"
+                    "  { \"name\": \"Prof A\", \"rfid_uid\": \"AA:00\" },\n"
+                    "  { \"name\": \"Prof B\", \"rfid_uid\": \"BB:00\" }\n"
+                    "] }");
+    config_service_start();
+    TEST_ASSERT_EQUAL(CONFIG_OK, config_get_status());
+    TEST_ASSERT_FALSE(auth_lookup_password("", nullptr));
+    // No passwords anywhere -> idle screen hides the password button.
+    TEST_ASSERT_FALSE(config_has_any_password());
+}
+
+static void test_valid_config_parses_teachers(void) {
+    mocksd_reset();
+    mocksd_add_file("/config.json", VALID_CONFIG);
+    config_service_start();
+    TEST_ASSERT_EQUAL(CONFIG_OK, config_get_status());
+    TEST_ASSERT_EQUAL_INT(CONFIG_OK, last_published_config_status());
+
+    // Error string cleared on success.
+    char err[128];
+    config_get_error(err, sizeof(err));
+    TEST_ASSERT_EQUAL_STRING("", err);
+
+    device_config_t cfg;
+    config_get(&cfg);
+    TEST_ASSERT_EQUAL_INT(2, cfg.teacher_count);
+    TEST_ASSERT_EQUAL_STRING("Prof Hector Azpurua", cfg.teachers[0].name);
+    TEST_ASSERT_EQUAL_STRING("two@dcc.ufmg.br", cfg.teachers[1].email);
+    TEST_ASSERT_EQUAL_STRING("1234", cfg.teachers[0].password);
+    TEST_ASSERT_EQUAL_STRING("56789", cfg.teachers[1].password);
+    TEST_ASSERT_TRUE(config_has_any_password());
+}
+
+static void test_uid_lookup_identifies_teacher(void) {
+    teacher_t who = {};
+    TEST_ASSERT_TRUE(auth_lookup_uid("E0:D1:33:5F", &who));
+    TEST_ASSERT_EQUAL_STRING("Prof Hector Azpurua", who.name);
+
+    // Formatting must not matter.
+    TEST_ASSERT_TRUE(auth_lookup_uid("e0d1335f", &who));
+    TEST_ASSERT_TRUE(auth_lookup_uid("e0-d1-33-5f", &who));
+
+    TEST_ASSERT_TRUE(auth_lookup_uid("E0:D1:33:6F", &who));
+    TEST_ASSERT_EQUAL_STRING("Prof Two", who.name);
+
+    TEST_ASSERT_FALSE(auth_lookup_uid("DE:AD:BE:EF", &who));
+    TEST_ASSERT_FALSE(auth_lookup_uid("", &who));
+}
+
+static void test_password_lookup_identifies_teacher(void) {
+    teacher_t who = {};
+    TEST_ASSERT_TRUE(auth_lookup_password("1234", &who));
+    TEST_ASSERT_EQUAL_STRING("Prof Hector Azpurua", who.name);
+
+    TEST_ASSERT_TRUE(auth_lookup_password("56789", &who));
+    TEST_ASSERT_EQUAL_STRING("Prof Two", who.name);
+
+    TEST_ASSERT_FALSE(auth_lookup_password("wrong", &who));
+    TEST_ASSERT_FALSE(auth_lookup_password("", &who));
+}
+
+static void test_teacher_has_password(void) {
+    // Uses the valid config loaded above; both teachers have a password.
+    TEST_ASSERT_TRUE(config_teacher_has_password("hector@dcc.ufmg.br", ""));
+    TEST_ASSERT_TRUE(config_teacher_has_password("", "E0:D1:33:5F"));  // rfid_uid fallback
+    TEST_ASSERT_FALSE(config_teacher_has_password("nobody@x.edu", ""));
+    // by_uid copies out only the matched teacher.
+    teacher_t who = {};
+    TEST_ASSERT_TRUE(config_find_teacher_by_uid("e0d1335f", &who));
+    TEST_ASSERT_EQUAL_STRING("Prof Hector Azpurua", who.name);
+}
+
+static void test_photo_capture_defaults_off(void) {
+    mocksd_reset();
+    mocksd_add_file("/config.json",
+                    "{ \"teachers\": [ { \"name\": \"A\", \"rfid_uid\": \"AA:00\" } ] }");
+    config_service_start();
+    TEST_ASSERT_EQUAL(CONFIG_OK, config_get_status());
+    TEST_ASSERT_FALSE(config_photo_capture_enabled());  // absent -> off
+}
+
+static void test_photo_capture_parsed_and_persisted(void) {
+    mocksd_reset();
+    mocksd_add_file("/config.json",
+                    "{ \"capture_photos\": true,\n"
+                    "  \"teachers\": [ { \"name\": \"A\", \"rfid_uid\": \"AA:00\" } ] }");
+    config_service_start();
+    TEST_ASSERT_TRUE(config_photo_capture_enabled());
+
+    // Toggle off, persist, and confirm both RAM and the file reflect it.
+    config_result_t r = config_set_photo_capture(false);
+    TEST_ASSERT_TRUE(r.ok);
+    TEST_ASSERT_FALSE(config_photo_capture_enabled());
+
+    char buf[256];
+    size_t n = mocksd_read_file("/config.json", buf, sizeof(buf) - 1);
+    buf[n] = '\0';
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"capture_photos\": false"));
+    // Reload from disk confirms persistence.
+    config_service_start();
+    TEST_ASSERT_FALSE(config_photo_capture_enabled());
+}
+
+static void test_teacher_list_is_capped(void) {
+    char json[2048];
+    int n = snprintf(json, sizeof(json), "{ \"teachers\": [");
+    for (int i = 0; i < CONFIG_MAX_TEACHERS + 2; i++) {
+        n += snprintf(json + n, sizeof(json) - n,
+                      "%s{ \"name\": \"T%d\", \"rfid_uid\": \"00:00:00:%02X\" }",
+                      i ? "," : "", i, i);
+    }
+    snprintf(json + n, sizeof(json) - n, "] }");
+
+    mocksd_reset();
+    mocksd_add_file("/config.json", json);
+    config_service_start();
+    TEST_ASSERT_EQUAL(CONFIG_OK, config_get_status());
+    device_config_t cfg;
+    config_get(&cfg);
+    TEST_ASSERT_EQUAL_INT(CONFIG_MAX_TEACHERS, cfg.teacher_count);
+}
+
+// --- config_set_password (Admin panel password editing) ---------------------
+// These run last and chain: the first loads a config and adds a password; the
+// rest act on the config left loaded by the one before.
+
+static void test_set_password_adds_when_absent(void) {
+    mocksd_reset();
+    mocksd_add_file(
+        "/config.json",
+        "{ \"teachers\": [\n"
+        "  { \"name\": \"Prof A\", \"email\": \"a@x\", \"rfid_uid\": \"AA:00\" },\n"
+        "  { \"name\": \"Prof B\", \"email\": \"b@x\", \"rfid_uid\": \"BB:00\", \"password\": \"1234\" }\n"
+        "] }");
+    config_service_start();
+    TEST_ASSERT_EQUAL(CONFIG_OK, config_get_status());
+    TEST_ASSERT_FALSE(auth_lookup_password("5678", nullptr));
+
+    config_result_t r = config_set_password("a@x", "AA:00", "5678");
+    TEST_ASSERT_TRUE(r.ok);
+    // Reloaded and persisted: the new password now identifies Prof A.
+    teacher_t who = {};
+    TEST_ASSERT_TRUE(auth_lookup_password("5678", &who));
+    TEST_ASSERT_EQUAL_STRING("Prof A", who.name);
+}
+
+static void test_set_password_rejects_duplicate(void) {
+    // Prof B already uses 1234; Prof A must not be allowed to take it.
+    config_result_t r = config_set_password("a@x", "AA:00", "1234");
+    TEST_ASSERT_FALSE(r.ok);
+    TEST_ASSERT_NOT_NULL(strstr(r.message, "another professor"));
+    TEST_ASSERT_TRUE(auth_lookup_password("5678", nullptr));  // A's password unchanged
+}
+
+static void test_set_password_rejects_non_numeric(void) {
+    config_result_t r = config_set_password("a@x", "AA:00", "12ab");
+    TEST_ASSERT_FALSE(r.ok);
+}
+
+static void test_change_password_replaces_old(void) {
+    config_result_t r = config_set_password("a@x", "AA:00", "9999");
+    TEST_ASSERT_TRUE(r.ok);
+    TEST_ASSERT_FALSE(auth_lookup_password("5678", nullptr));  // old one gone
+    teacher_t who = {};
+    TEST_ASSERT_TRUE(auth_lookup_password("9999", &who));
+    TEST_ASSERT_EQUAL_STRING("Prof A", who.name);
+}
+
+int main(int, char**) {
+    // Park the services' background retry loops far beyond the test run.
+    mock_freertos_set_delay_scale(1000);
+    event_bus_init();
+    UNITY_BEGIN();
+    RUN_TEST(test_no_sd_card);  // must stay first (mount latches)
+    RUN_TEST(test_missing_config_file);
+    RUN_TEST(test_unparseable_json);
+    RUN_TEST(test_no_teachers_is_invalid);
+    RUN_TEST(test_duplicate_password_rejected);
+    RUN_TEST(test_non_numeric_password_rejected);
+    RUN_TEST(test_empty_passwords_do_not_collide);
+    RUN_TEST(test_valid_config_parses_teachers);
+    RUN_TEST(test_uid_lookup_identifies_teacher);       // uses the valid config above
+    RUN_TEST(test_password_lookup_identifies_teacher);  // uses the valid config above
+    RUN_TEST(test_teacher_has_password);                // uses the valid config above
+    RUN_TEST(test_teacher_list_is_capped);
+    RUN_TEST(test_set_password_adds_when_absent);  // chain: loads its own config
+    RUN_TEST(test_set_password_rejects_duplicate);
+    RUN_TEST(test_set_password_rejects_non_numeric);
+    RUN_TEST(test_change_password_replaces_old);
+    RUN_TEST(test_photo_capture_defaults_off);       // self-contained (own config)
+    RUN_TEST(test_photo_capture_parsed_and_persisted);
+    return UNITY_END();
+}

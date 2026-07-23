@@ -2,12 +2,16 @@
 #include <Wire.h>
 #include <lvgl.h>
 
+#include "app/event_bus.h"
 #include "audio/beeper.h"
-#include "face_detection/face_app.h"
 #include "lcd/st7701_lcd.h"
 #include "lvgl_port.h"
-#include "rfid/pn532_reader.h"
+#include "services/battery_service.h"
+#include "services/config_service.h"
+#include "services/rfid_service.h"
+#include "services/roster_service.h"
 #include "touch/gt911_touch.h"
+#include "ui/ui.h"
 
 // Touch controller pins. This board wires no reset/backlight GPIO for the
 // display panel itself (handled internally by the ST7701 driver), so only the
@@ -16,6 +20,8 @@
 #define TP_I2C_SCL 8
 #define TP_RST 3
 #define TP_INT -1
+
+LV_FONT_DECLARE(font_montserrat_custom_14);
 
 // Display panel has no external reset line on this board.
 static st7701_lcd lcd(-1);
@@ -32,41 +38,46 @@ static void i2c_bus_init() {
     Wire1.begin(TP_I2C_SDA, TP_I2C_SCL, 100000);
 }
 
-// Runs in the RFID task, not the LVGL thread: log here, and hand anything
-// UI-facing to lv_async_call.
-static void on_card_detected(const uint8_t* uid, uint8_t uid_len) {
-    char buf[3 * 7 + 1] = {0};
-    for (uint8_t i = 0; i < uid_len && i < 7; i++) {
-        snprintf(buf + i * 3, sizeof(buf) - i * 3, "%02X ", uid[i]);
-    }
-    Serial.printf("RFID card UID: %s\n", buf);
-    face_app_notify_rfid(uid, uid_len);
-    beeper_beep();
+// Central event dispatch, always on the LVGL thread. The attendance
+// controller will hook in here before the UI once it lands.
+static void app_dispatch(const app_event_t& ev) {
+    ui_handle_event(&ev);
 }
 
 void setup() {
     Serial.begin(115200);
     Serial.println("ESP32-P4 face detection starting");
 
+    event_bus_init();
+
     i2c_bus_init();
     lcd.begin();
     touch.begin();
-
-    lvgl_port_init(lcd, touch);
-
-    // Builds the UI and starts the camera + face-detection task. Camera
-    // hardware is optional: without it the face tab shows an error state.
-    face_app_start();
 
     // Confirmation beep path (ES8311 -> NS4150 -> CN1). Optional: without
     // the codec answering, beeper_beep() is a no-op.
     beeper_init();
 
-    // PN532 on CN3 (shared I2C bus). Optional: boot continues without it.
-    pn532_reader_start(on_card_detected);
+    // Load /config.json and the student/class data before the UI so the
+    // idle screen's first frame already reflects the real SD state.
+    config_service_start();
+    roster_service_start();
+
+    lvgl_port_init(lcd, touch);
+    ui_init();
+
+    if (!rfid_service_start()) {
+        Serial.println("RFID unavailable, continuing without it");
+    }
+
+    battery_service_start();
 }
 
 void loop() {
+    app_event_t ev;
+    while (event_bus_poll(&ev)) {
+        app_dispatch(ev);
+    }
     lv_timer_handler();
     delay(5);
 }

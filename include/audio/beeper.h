@@ -5,8 +5,17 @@
 // (passive electromagnetic buzzer or small speaker).
 //
 // beeper_init: call once from setup() after the I2C bus is up. Returns
-// false if the codec doesn't answer; beeper_beep is then a no-op.
+// false if the codec doesn't answer; the beep calls are then no-ops.
 bool beeper_init();
 
-// Queues one beep. Non-blocking, safe to call from any task (not ISR).
+// All three queue one sound and return immediately. Non-blocking, safe from
+// any task (not ISR).
+
+// General confirmation beep (e.g. a card was read).
 void beeper_beep();
+
+// Short, quiet tick for UI taps (button/card presses).
+void beeper_touch();
+
+// Distinct low double-beep signalling a problem / access denied.
+void beeper_error();

@@ -1,0 +1,101 @@
+#pragma once
+
+#include <stddef.h>
+#include <stdint.h>
+
+#include "app/teacher.h"
+
+// Reads the device's general configuration from /config.json on the root of
+// the SD card (FAT32). The file lists the professors authorized to use the
+// device, each with an RFID tag and their own password fallback (used when a
+// tag isn't available). Every professor's password must be unique so it
+// identifies exactly one of them:
+//
+//   {
+//     "teachers": [
+//       { "name": "Prof ...", "email": "...",
+//         "rfid_uid": "E0:D1:33:5F", "password": "1234" }
+//     ]
+//   }
+//
+// The config counts as valid if it has at least one teacher, no two
+// professors share a password, and every password is digits-only (so it can
+// be typed on the numeric keypads).
+
+constexpr int CONFIG_MAX_TEACHERS = 8;
+
+typedef enum : uint8_t {
+    CONFIG_OK = 0,              // SD mounted, config.json parsed and valid
+    CONFIG_NO_SD,              // no card, mount failed, or not FAT32
+    CONFIG_NO_FILE,            // SD mounted but /config.json is missing
+    CONFIG_BAD_JSON,           // config.json unparseable or has no teachers
+    CONFIG_DUP_PASSWORD,       // two professors share the same password
+    CONFIG_NON_NUMERIC_PASSWORD,  // a password contains non-digit characters
+} config_status_t;
+
+typedef struct {
+    teacher_t teachers[CONFIG_MAX_TEACHERS];
+    int teacher_count;
+    bool capture_photos;  // "capture_photos" in config.json (default false)
+} device_config_t;
+
+// Attempts a first load synchronously (mount + read + log), then, if that
+// didn't succeed, starts a background task that keeps retrying so inserting a
+// card later updates the UI. Publishes APP_EVENT_CONFIG_STATE on every state
+// change. Call once in setup(), after event_bus_init() and before ui_init()
+// so the idle screen's first frame reflects the real state.
+bool config_service_start(void);
+
+// Current status. Safe to read from any task.
+config_status_t config_get_status(void);
+
+// Human-readable reason for the current failure (e.g. "Prof A and Prof B
+// share the same password"). Empty string when status is CONFIG_OK.
+// Thread-safe.
+void config_get_error(char* out, size_t cap);
+
+// True if at least one professor has a password set. When false, password
+// login is impossible and the idle screen hides the "Enter password" button.
+// Thread-safe.
+bool config_has_any_password(void);
+
+// Copies the loaded config into out. Meaningful only when the status is
+// CONFIG_OK; otherwise out is zeroed. Thread-safe.
+void config_get(device_config_t* out);
+
+// Single-teacher lookups. They iterate the loaded config under the lock and
+// copy only the matched teacher into `out` (may be NULL), so callers don't put
+// a whole device_config_t (~1.5 kB) on their stack. All return false unless the
+// config status is CONFIG_OK. Thread-safe.
+//
+// - by_uid: matches the configured rfid_uid, ignoring case and separators.
+// - by_password: matches the exact (unique) password; empty never matches.
+bool config_find_teacher_by_uid(const char* uid_hex, teacher_t* out);
+bool config_find_teacher_by_password(const char* password, teacher_t* out);
+
+// True if the teacher identified by `email` (or `rfid_uid` when email is empty)
+// has a non-empty password. Thread-safe.
+bool config_teacher_has_password(const char* email, const char* rfid_uid);
+
+// Outcome of a config write, with a human-readable reason on failure.
+typedef struct {
+    bool ok;
+    char message[96];
+} config_result_t;
+
+// Sets (or adds, if absent) the password for the professor identified by
+// `email` (falls back to `rfid_uid` when email is empty), rewriting
+// /config.json atomically and reloading. The new password must be non-empty,
+// digits-only, and not already used by another professor. Returns {ok,message}
+// — on failure nothing is written. Call on the UI/LVGL thread (does SD I/O).
+config_result_t config_set_password(const char* email, const char* rfid_uid,
+                                    const char* new_password);
+
+// Device-wide setting: whether to capture a student photo with the onboard
+// camera when presence is registered. False unless config.json has
+// "capture_photos": true (and status is CONFIG_OK). Thread-safe.
+bool config_photo_capture_enabled(void);
+
+// Persists the capture_photos flag to /config.json (atomic rewrite + reload).
+// Returns {ok,message}; on failure nothing is written. Call on the UI thread.
+config_result_t config_set_photo_capture(bool enabled);

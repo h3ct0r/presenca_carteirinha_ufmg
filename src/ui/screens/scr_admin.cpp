@@ -1,0 +1,447 @@
+#include "ui/screens/scr_admin.h"
+
+#include <stdio.h>
+#include <string.h>
+
+#include "app/session.h"
+#include "services/config_service.h"
+#include "services/roster_service.h"
+#include "storage/attendance_store.h"
+#include "storage/sd_card.h"
+#include "ui/components/keyboard.h"
+#include "ui/components/shell.h"
+#include "ui/components/toast.h"
+#include "ui/screen_manager.h"
+#include "ui/theme/theme.h"
+#include "ui/ui_state.h"
+
+// Profile identity labels, filled in on_show from the logged-in session.
+static lv_obj_t* s_name = nullptr;
+static lv_obj_t* s_email = nullptr;
+static lv_obj_t* s_card = nullptr;
+
+// Rebuilt-on-show section containers, and the modal parent.
+static lv_obj_t* s_root = nullptr;      // shell root, parent for the modals
+static lv_obj_t* s_storage = nullptr;   // SD-card usage meter
+static lv_obj_t* s_security = nullptr;  // password section
+static lv_obj_t* s_settings = nullptr;  // device settings (photo capture)
+static lv_obj_t* s_debug = nullptr;     // debug tools section
+
+// Debug wipe controls.
+static lv_obj_t* s_wipe_btn = nullptr;      // destructive button, shown only in debug mode
+static lv_obj_t* s_wipe_confirm = nullptr;  // wipe confirmation overlay
+
+// Password modal.
+static lv_obj_t* s_pw_modal = nullptr;
+static lv_obj_t* s_pw_new = nullptr;
+static lv_obj_t* s_pw_confirm = nullptr;
+
+static void build_security(void);
+static void build_storage(void);
+
+static void sign_out_cb(lv_event_t*) {
+    session_set(nullptr);
+    ui_state_set_user(nullptr);  // top bar back to the device name
+    scr_mgr_show(SCREEN_IDLE, nullptr);
+}
+
+// True if the logged-in professor already has a password in config.json.
+static bool current_has_password(void) {
+    const teacher_t* t = session_get();
+    if (!t) return false;
+    return config_teacher_has_password(t->email, t->rfid_uid);
+}
+
+// --- password modal ---------------------------------------------------------
+
+static void close_pw_modal(void) {
+    if (s_pw_modal) {
+        keyboard_hide();
+        lv_obj_delete(s_pw_modal);
+        s_pw_modal = nullptr;
+        s_pw_new = nullptr;
+        s_pw_confirm = nullptr;
+    }
+}
+
+static void pw_cancel_cb(lv_event_t*) { close_pw_modal(); }
+
+static void pw_save_cb(lv_event_t*) {
+    const char* a = s_pw_new ? lv_textarea_get_text(s_pw_new) : "";
+    const char* b = s_pw_confirm ? lv_textarea_get_text(s_pw_confirm) : "";
+    if (strcmp(a, b) != 0) {
+        ui_toast_show("Passwords do not match", false);
+        return;
+    }
+    const teacher_t* t = session_get();
+    config_result_t r = config_set_password(t ? t->email : "", t ? t->rfid_uid : "", a);
+    ui_toast_show(r.message, r.ok);
+    if (r.ok) {
+        close_pw_modal();
+        build_security();  // refresh the "password set / not set" status
+    }
+}
+
+static void open_pw_modal(void) {
+    if (s_pw_modal) return;
+    bool has = current_has_password();
+
+    // Parented to the screen root (not lv_layer_top) so the shared password
+    // keyboard, which lives on lv_layer_top, floats ABOVE this modal's dim
+    // overlay instead of being covered by it.
+    s_pw_modal = lv_obj_create(s_root);
+    lv_obj_remove_style_all(s_pw_modal);
+    // Escape the shell's flex flow so this is a true full-screen overlay.
+    lv_obj_add_flag(s_pw_modal, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    lv_obj_set_size(s_pw_modal, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(s_pw_modal, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(s_pw_modal, LV_OPA_50, 0);
+    lv_obj_add_flag(s_pw_modal, LV_OBJ_FLAG_CLICKABLE);  // swallow taps behind
+    lv_obj_remove_flag(s_pw_modal, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* card = ui_make_card(s_pw_modal);
+    lv_obj_set_width(card, LV_PCT(88));
+    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 60);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(card, 12, 0);
+
+    ui_make_label(card, has ? "Change password" : "Set password", THEME_PRIMARY,
+                  &lv_font_montserrat_20);
+    lv_obj_t* hint = ui_make_label(card, "Digits only. This is your login fallback.",
+                                   THEME_MUTED, &lv_font_montserrat_14);
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(hint, LV_PCT(100));
+
+    s_pw_new = keyboard_make_textarea(card, "New password", 31, LV_KEYBOARD_MODE_NUMBER);
+    lv_textarea_set_password_mode(s_pw_new, true);
+    s_pw_confirm = keyboard_make_textarea(card, "Confirm password", 31, LV_KEYBOARD_MODE_NUMBER);
+    lv_textarea_set_password_mode(s_pw_confirm, true);
+
+    // Pop the numeric pad up on the first field right away (matches the idle
+    // login / class-unlock modals) so no extra tap is needed to start typing.
+    keyboard_show(s_pw_new, LV_KEYBOARD_MODE_NUMBER);
+
+    lv_obj_t* row = lv_obj_create(card);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(row, 10, 0);
+    lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* cancel = ui_make_button(row, "Cancel", &theme_style_btn_outline, pw_cancel_cb,
+                                      nullptr);
+    lv_obj_set_flex_grow(cancel, 1);
+    lv_obj_t* save = ui_make_button(row, "Save", &theme_style_btn_primary, pw_save_cb, nullptr);
+    lv_obj_set_flex_grow(save, 1);
+}
+
+static void change_pw_cb(lv_event_t*) { open_pw_modal(); }
+
+// --- profile ----------------------------------------------------------------
+
+static void fill_profile(void) {
+    const teacher_t* t = session_get();
+    lv_label_set_text(s_name, t ? t->name : "—");
+
+    char line[96];
+    snprintf(line, sizeof(line), "Email: %s", (t && t->email[0]) ? t->email : "(none)");
+    lv_label_set_text(s_email, line);
+
+    if (t && t->rfid_uid[0]) {
+        snprintf(line, sizeof(line), "Card: %s", t->rfid_uid);
+        lv_obj_set_style_text_color(s_card, lv_color_hex(THEME_SUCCESS), 0);
+    } else {
+        snprintf(line, sizeof(line), "Card: (password login)");
+        lv_obj_set_style_text_color(s_card, lv_color_hex(THEME_MUTED), 0);
+    }
+    lv_label_set_text(s_card, line);
+}
+
+// --- SD-card usage ----------------------------------------------------------
+
+// "3.6 GB" / "740 MB" from a raw byte count.
+static void fmt_bytes(unsigned long long b, char* out, size_t cap) {
+    double gb = (double)b / (1024.0 * 1024.0 * 1024.0);
+    if (gb >= 1.0) {
+        snprintf(out, cap, "%.1f GB", gb);
+    } else {
+        snprintf(out, cap, "%.0f MB", (double)b / (1024.0 * 1024.0));
+    }
+}
+
+static void build_storage(void) {
+    lv_obj_clean(s_storage);
+
+    lv_obj_t* card = ui_make_card(s_storage);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(card, 8, 0);
+    ui_make_label(card, "SD Card", THEME_PRIMARY, &lv_font_montserrat_20);
+
+    unsigned long long total = 0, used = 0;
+    if (!sd_card_usage(&total, &used) || total == 0) {
+        ui_make_label(card, "Card not available.", THEME_MUTED, &lv_font_montserrat_14);
+        return;
+    }
+    int pct = (int)((used * 100ULL) / total);
+
+    lv_obj_t* bar = lv_bar_create(card);
+    lv_obj_set_size(bar, LV_PCT(100), 14);
+    lv_bar_set_range(bar, 0, 100);
+    lv_bar_set_value(bar, pct, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(THEME_BORDER), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(pct >= 90 ? THEME_DANGER : THEME_SUCCESS),
+                              LV_PART_INDICATOR);
+
+    char used_s[16], total_s[16], line[64];
+    fmt_bytes(used, used_s, sizeof(used_s));
+    fmt_bytes(total, total_s, sizeof(total_s));
+    snprintf(line, sizeof(line), "%s of %s used (%d%%)", used_s, total_s, pct);
+    ui_make_label(card, line, THEME_MUTED, &lv_font_montserrat_14);
+}
+
+// --- password section -------------------------------------------------------
+
+static void build_security(void) {
+    lv_obj_clean(s_security);
+    bool has = current_has_password();
+
+    lv_obj_t* card = ui_make_card(s_security);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(card, 8, 0);
+
+    ui_make_label(card, "Password", THEME_PRIMARY, &lv_font_montserrat_20);
+    ui_make_label(card,
+                  has ? "A password is set for your account."
+                      : "No password set. Add one to log in without your card.",
+                  has ? THEME_SUCCESS : THEME_MUTED, &lv_font_montserrat_14);
+
+    lv_obj_t* btn = ui_make_button(card, has ? "Change password" : "Set password",
+                                   &theme_style_btn_primary, change_pw_cb, nullptr);
+    lv_obj_set_width(btn, LV_PCT(100));
+}
+
+// --- device settings --------------------------------------------------------
+
+static void camera_preview_cb(lv_event_t*) { scr_mgr_show(SCREEN_CAMERA, nullptr); }
+
+static void photo_toggle_cb(lv_event_t* e) {
+    lv_obj_t* sw = (lv_obj_t*)lv_event_get_target(e);
+    bool want = lv_obj_has_state(sw, LV_STATE_CHECKED);
+    config_result_t r = config_set_photo_capture(want);
+    ui_toast_show(r.message, r.ok);
+    if (!r.ok) {
+        // Persist failed — snap the switch back to the stored value.
+        if (config_photo_capture_enabled()) {
+            lv_obj_add_state(sw, LV_STATE_CHECKED);
+        } else {
+            lv_obj_remove_state(sw, LV_STATE_CHECKED);
+        }
+    }
+}
+
+static void build_settings(void) {
+    lv_obj_clean(s_settings);
+
+    lv_obj_t* card = ui_make_card(s_settings);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(card, 8, 0);
+    ui_make_label(card, "Attendance photos", THEME_PRIMARY, &lv_font_montserrat_20);
+
+    lv_obj_t* row = lv_obj_create(card);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    ui_make_label(row, "Take a photo on check-in", THEME_TEXT, &lv_font_montserrat_14);
+    lv_obj_t* sw = lv_switch_create(row);
+    if (config_photo_capture_enabled()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, photo_toggle_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    lv_obj_t* cap = ui_make_label(
+        card, "When on, the onboard camera captures each student's photo as their presence "
+              "is registered.",
+        THEME_MUTED, &lv_font_montserrat_14);
+    lv_label_set_long_mode(cap, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(cap, LV_PCT(100));
+
+    lv_obj_t* preview = ui_make_button(card, LV_SYMBOL_IMAGE "  Camera preview",
+                                       &theme_style_btn_outline, camera_preview_cb, nullptr);
+    lv_obj_set_width(preview, LV_PCT(100));
+}
+
+// --- debug tools ------------------------------------------------------------
+
+// Performs the wipe: unbind every card + delete every class's attendance.
+static void do_wipe(void) {
+    bool cards = roster_clear_all_uids();
+    int files = 0;
+    for (int i = 0; i < roster_class_count(); i++) {
+        const class_rec_t* c = roster_class_at(i);
+        if (c) files += attendance_clear(c->dir);
+    }
+    char msg[96];
+    snprintf(msg, sizeof(msg), "Cleared cards, removed %d attendance file(s)", files);
+    ui_toast_show(cards ? msg : "Card clear failed", cards);
+    build_storage();  // usage just dropped
+}
+
+static void close_wipe_confirm(void) {
+    if (s_wipe_confirm) {
+        lv_obj_delete(s_wipe_confirm);
+        s_wipe_confirm = nullptr;
+    }
+}
+
+static void wipe_cancel_cb(lv_event_t*) { close_wipe_confirm(); }
+
+static void wipe_confirm_cb(lv_event_t*) {
+    close_wipe_confirm();
+    do_wipe();
+}
+
+static void open_wipe_confirm(void) {
+    if (s_wipe_confirm) return;
+
+    s_wipe_confirm = lv_obj_create(s_root);
+    lv_obj_remove_style_all(s_wipe_confirm);
+    lv_obj_add_flag(s_wipe_confirm, LV_OBJ_FLAG_IGNORE_LAYOUT);  // full-screen overlay
+    lv_obj_set_size(s_wipe_confirm, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(s_wipe_confirm, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(s_wipe_confirm, LV_OPA_50, 0);
+    lv_obj_add_flag(s_wipe_confirm, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(s_wipe_confirm, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* card = ui_make_card(s_wipe_confirm);
+    lv_obj_set_width(card, LV_PCT(88));
+    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 80);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(card, 12, 0);
+
+    ui_make_label(card, LV_SYMBOL_WARNING "  Delete all data?", THEME_DANGER,
+                  &lv_font_montserrat_20);
+    lv_obj_t* hint = ui_make_label(
+        card, "This unbinds every student's RFID card and erases the attendance logs of "
+              "every class. This cannot be undone.",
+        THEME_MUTED, &lv_font_montserrat_14);
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(hint, LV_PCT(100));
+
+    lv_obj_t* row = lv_obj_create(card);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(row, 10, 0);
+    lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* cancel = ui_make_button(row, "Cancel", &theme_style_btn_outline, wipe_cancel_cb,
+                                      nullptr);
+    lv_obj_set_flex_grow(cancel, 1);
+    lv_obj_t* del = ui_make_button(row, "Delete all", &theme_style_btn_danger, wipe_confirm_cb,
+                                   nullptr);
+    lv_obj_set_flex_grow(del, 1);
+}
+
+static void wipe_cb(lv_event_t*) { open_wipe_confirm(); }
+
+static void debug_toggle_cb(lv_event_t* e) {
+    bool on = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED);
+    if (on) {
+        lv_obj_remove_flag(s_wipe_btn, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_wipe_btn, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void build_debug(void) {
+    lv_obj_clean(s_debug);
+
+    lv_obj_t* card = ui_make_card(s_debug);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(card, 8, 0);
+    ui_make_label(card, "Debug", THEME_PRIMARY, &lv_font_montserrat_20);
+
+    lv_obj_t* row = lv_obj_create(card);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    ui_make_label(row, "Enable debug tools", THEME_TEXT, &lv_font_montserrat_14);
+    lv_obj_t* sw = lv_switch_create(row);
+    lv_obj_add_event_cb(sw, debug_toggle_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    s_wipe_btn = ui_make_button(card, LV_SYMBOL_TRASH "  Delete all cards & attendance",
+                                &theme_style_btn_danger, wipe_cb, nullptr);
+    lv_obj_set_width(s_wipe_btn, LV_PCT(100));
+    lv_obj_add_flag(s_wipe_btn, LV_OBJ_FLAG_HIDDEN);  // revealed only when the toggle is on
+
+    lv_obj_t* cap = ui_make_label(
+        card, "Unbinds every student card and erases all attendance. Cannot be undone.",
+        THEME_MUTED, &lv_font_montserrat_14);
+    lv_label_set_long_mode(cap, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(cap, LV_PCT(100));
+}
+
+// --- screen -----------------------------------------------------------------
+
+// Adds a rebuilt-on-show section container to the shell body.
+static lv_obj_t* make_section(lv_obj_t* parent) {
+    lv_obj_t* s = lv_obj_create(parent);
+    lv_obj_remove_style_all(s);
+    lv_obj_set_size(s, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(s, LV_FLEX_FLOW_COLUMN);
+    return s;
+}
+
+static lv_obj_t* create(void) {
+    shell_t sh = shell_create("Admin panel", "Teacher profile", true);
+    shell_set_active_nav(&sh, SCREEN_ADMIN);
+    s_root = sh.root;
+
+    // Profile (identity) card.
+    lv_obj_t* profile = ui_make_card(sh.body);
+    lv_obj_set_flex_flow(profile, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(profile, 4, 0);
+    s_name = ui_make_label(profile, "", THEME_TEXT, &lv_font_montserrat_20);
+    s_email = ui_make_label(profile, "", THEME_MUTED, &lv_font_montserrat_14);
+    s_card = ui_make_label(profile, "", THEME_MUTED, &lv_font_montserrat_14);
+
+    // SD-card usage first, then settings (camera preview), password, then debug
+    // tools. Settings sits above password so the "Camera preview" button comes
+    // before "Change password".
+    s_storage = make_section(sh.body);
+    s_settings = make_section(sh.body);
+    s_security = make_section(sh.body);
+    s_debug = make_section(sh.body);
+    // Extra breathing room between the camera-preview button and the password
+    // section that follows it.
+    lv_obj_set_style_margin_top(s_security, 16, 0);
+
+    // Static sign-out button, built once (nothing to rebuild on show).
+    lv_obj_t* sign_out = ui_make_button(sh.body, "Sign Out", &theme_style_btn_danger,
+                                        sign_out_cb, nullptr);
+    lv_obj_set_width(sign_out, LV_PCT(100));
+    lv_obj_set_style_margin_top(sign_out, 24, 0);  // separate it from the sections above
+
+    return sh.root;
+}
+
+static void on_show(void*) {
+    fill_profile();
+    build_storage();
+    build_security();
+    build_settings();
+    build_debug();
+}
+
+static void on_hide(void) {
+    close_pw_modal();
+    close_wipe_confirm();
+}
+
+const screen_t scr_admin = {
+    .create = create,
+    .on_show = on_show,
+    .on_hide = on_hide,
+};

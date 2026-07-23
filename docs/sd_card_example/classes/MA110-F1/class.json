@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "code": "MA110-F1",
+  "name": "Linear Algebra",
+  "schedule": "Fri 08:00-10:00",
+  "teacher_email": "hector@dcc.ufmg.br",
+  "color": "1F9D55",
+  "roster": [
+    {
+      "id": "2022-0311"
+    },
+    {
+      "id": "2024-0021"
+    },
+    {
+      "id": "2023-0142"
+    }
+  ]
+}

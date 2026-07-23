@@ -67,6 +67,7 @@ void lvgl_port_init(st7701_lcd& lcd, gt911_touch& touch) {
     uint8_t* buf1 = (uint8_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_SPIRAM);
     uint8_t* buf2 = (uint8_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_SPIRAM);
     assert(buf1 && buf2);
+
     lv_display_set_buffers(disp, buf1, buf2, buf_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(disp, flush_cb);
 

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "students": [
+    { "id": "2023-0142", "name": "Maria Santos", "rfid_uid": null },
+    { "id": "2023-0187", "name": "John Miller", "rfid_uid": null },
+    { "id": "2023-0201", "name": "Aisha Khan", "rfid_uid": null },
+    { "id": "2022-0311", "name": "Carlos Mendes", "rfid_uid": null },
+    { "id": "2024-0021", "name": "Lucas Ferreira", "rfid_uid": null }
+  ]
+}

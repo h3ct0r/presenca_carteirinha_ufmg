@@ -1,0 +1,17 @@
+{
+    "capture_photos": false,
+    "teachers": [
+        {
+            "name": "Prof Hector Azpurua",
+            "email": "hector@dcc.ufmg.br",
+            "rfid_uid": "E0:D1:33:5F",
+            "password": "1234"
+        },
+        {
+            "name": "Prof 2",
+            "email": "2@dcc.ufmg.br",
+            "rfid_uid": "E0:D1:33:6F",
+            "password": "56789"
+        }
+    ]
+}
