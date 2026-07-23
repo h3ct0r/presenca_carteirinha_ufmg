@@ -1,5 +1,9 @@
 # RFID Attendance Device (ESP32-P4 + LVGL)
 
+<a href="https://youtube.com/shorts/oyJePKWmUqI?feature=share" target="_blank">
+   <img src="https://raw.githubusercontent.com/h3ct0r/presenca_carteirinha_ufmg/refs/heads/main/assets/carteirinha_v0.1.jpg" alt="Watch the video" width="360" />
+</a>
+
 A classroom attendance device. Students register presence by tapping an RFID
 card — or, in kiosk mode, by typing their university id. A portrait touchscreen
 runs the UI (LVGL 9); an SD card holds all data (config, students, classes,
@@ -9,10 +13,6 @@ attendance); a buzzer gives audio feedback.
 the device → picks a class → opens a dated attendance session → takes roll call
 (tap cards / tap names), enrolls students, or starts an unattended kiosk for
 students to self-check-in. Attendance can later be exported to CSV.
-
-> Status: build- and native-test-verified. It has **not** been run on physical
-> hardware yet — runtime bugs (e.g. an LVGL crash) surface only on device.
-> Treat on-device behavior as unverified and check it there.
 
 ## Hardware
 
