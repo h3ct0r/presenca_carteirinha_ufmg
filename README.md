@@ -1,5 +1,9 @@
 # RFID Attendance Device (ESP32-P4 + LVGL)
 
+<a href="https://youtube.com/shorts/oyJePKWmUqI?feature=share" target="_blank">
+   <img src="https://raw.githubusercontent.com/h3ct0r/presenca_carteirinha_ufmg/refs/heads/main/assets/carteirinha_v0.1.jpg" alt="Watch the video" width="360" />
+</a>
+
 A classroom attendance device. Students register presence by tapping an RFID
 card — or, in kiosk mode, by typing their university id. A portrait touchscreen
 runs the UI (LVGL 9); an SD card holds all data (config, students, classes,
