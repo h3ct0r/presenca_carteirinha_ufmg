@@ -124,6 +124,20 @@
     .hint { color: var(--muted); font-size: 12.5px; margin: 6px 0 0; max-width: 68ch; }
     .rows { display: flex; flex-direction: column; gap: var(--sp-2); margin: var(--sp-4) 0 var(--sp-3); }
 
+    /* student search + scrollable list (can hold up to 600 rows) */
+    .search-row { display: flex; align-items: center; gap: 14px; margin: var(--sp-4) 0 var(--sp-2); }
+    input.student-search { flex: 1; max-width: 440px; }
+    .search-count { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .student-list {
+      display: flex; flex-direction: column; gap: var(--sp-2);
+      max-height: 460px; overflow-y: auto; padding: 3px; margin-bottom: var(--sp-3);
+      scrollbar-width: thin; scrollbar-color: var(--line) transparent;
+    }
+    .student-list::-webkit-scrollbar { width: 11px; }
+    .student-list::-webkit-scrollbar-track { background: transparent; }
+    .student-list::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; border: 3px solid var(--surface); }
+    .student-list::-webkit-scrollbar-thumb:hover { background: var(--faint); }
+
     /* ---- editable rows ---- */
     .row {
       display: grid; gap: var(--sp-2) var(--sp-3); align-items: end;

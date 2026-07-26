@@ -3,7 +3,7 @@
 // logic (validate, model→files, tar, uid) lives in the unit-tested pure
 // modules imported below.
 
-import { validate } from './validate.js';
+import { validate, LIMITS } from './validate.js';
 import { buildFiles } from './model.js';
 import { makeTar } from './tarball.js';
 import { decodeCsvBytes, parseDiario, applyDiario } from './diario.js';
@@ -137,6 +137,24 @@ function syncStatus() {
   if (dlTop) dlTop.disabled = !ok;
   const review = document.getElementById('review');
   if (review) review.replaceWith(reviewSection());
+  refreshTeacherSelects();
+}
+
+// Rebuild each class's teacher dropdown from the current teachers, in place, so
+// a teacher added or edited while a class card is open shows up immediately (and
+// renamed teachers update their label) — without re-rendering the field the user
+// is typing in. Selects render in class order, matching model.classes.
+function refreshTeacherSelects() {
+  const opts = model.teachers.filter((t) => t.email);
+  document.querySelectorAll('select.teacher-select').forEach((sel, i) => {
+    const cls = model.classes[i];
+    const current = cls ? cls.teacher_email : sel.value;
+    sel.replaceChildren(
+      el('option', { value: '', text: '— pick a teacher —' }),
+      ...opts.map((t) => el('option', { value: t.email, text: t.name || t.email })),
+    );
+    sel.value = current; // stays selected if still present; blank if orphaned
+  });
 }
 
 function statusText(ok, n) {
@@ -297,7 +315,7 @@ function teachersSection() {
     : emptyState('No teachers yet. Add at least one — a teacher signs in with an RFID card or a unique digits-only password. (Teachers aren’t in the Diário CSV, so add them here.)');
 
   return el('section', {}, [
-    el('h2', {}, ['Teachers ', el('span', { class: 'count', text: `${model.teachers.length}/8` })]),
+    el('h2', {}, ['Teachers ', el('span', { class: 'count', text: `${model.teachers.length}/${LIMITS.MAX_TEACHERS}` })]),
     el('p', { class: 'hint', text: 'Each teacher needs a card or a unique digits-only password to sign in.' }),
     body,
     el('button', { class: 'add', text: '+ Add teacher', onclick: () => {
@@ -307,20 +325,56 @@ function teachersSection() {
 }
 
 // --- students -------------------------------------------------------------
+// Filters the student list by id/name; module-level so it survives re-renders.
+let studentFilter = '';
+
 function studentsSection() {
-  const body = model.students.length
-    ? el('div', { class: 'rows' }, model.students.map((s, i) =>
-        el('div', { class: 'row student' }, [
-          fieldInput('University ID', s.id, (v) => { s.id = v; }, { class: 'mono' }),
-          fieldInput('Name', s.name, (v) => { s.name = v; }),
-          fieldInput('RFID uid', s.rfid_uid, (v) => { s.rfid_uid = v; }, { class: 'mono', placeholder: 'usually blank' }),
-          removeBtn('Remove student', () => { model.students.splice(i, 1); render(); }),
-        ])))
-    : emptyState('No students yet. Import a Diário CSV above, paste an id,name list below, or add rows by hand.');
+  let body;
+  if (model.students.length) {
+    const shown = el('span', { class: 'search-count' });
+    const search = el('input', {
+      type: 'search', class: 'student-search', value: studentFilter,
+      placeholder: 'Search students by ID or name…', 'aria-label': 'Search students by ID or name',
+    });
+
+    // Each row tags itself with a searchable "id name" string; the filter just
+    // hides non-matches in place, so typing keeps focus (no re-render).
+    const rows = model.students.map((s, i) => {
+      const row = el('div', { class: 'row student' });
+      const tag = () => { row.dataset.search = `${s.id} ${s.name}`.toLowerCase(); };
+      row.append(
+        fieldInput('University ID', s.id, (v) => { s.id = v; tag(); applyStudentFilter(); }, { class: 'mono' }),
+        fieldInput('Name', s.name, (v) => { s.name = v; tag(); applyStudentFilter(); }),
+        fieldInput('RFID uid', s.rfid_uid, (v) => { s.rfid_uid = v; }, { class: 'mono', placeholder: 'usually blank' }),
+        removeBtn('Remove student', () => { model.students.splice(i, 1); render(); }),
+      );
+      tag();
+      return row;
+    });
+    const list = el('div', { class: 'student-list' }, rows);
+
+    function applyStudentFilter() {
+      const q = studentFilter.trim().toLowerCase();
+      let n = 0;
+      for (const row of rows) {
+        const hit = !q || row.dataset.search.includes(q);
+        row.style.display = hit ? '' : 'none';
+        if (hit) n++;
+      }
+      shown.textContent = q ? `${n} of ${rows.length} shown` : '';
+    }
+    search.addEventListener('input', () => { studentFilter = search.value; applyStudentFilter(); });
+    applyStudentFilter();
+
+    body = el('div', {}, [el('div', { class: 'search-row' }, [search, shown]), list]);
+  } else {
+    studentFilter = '';
+    body = emptyState('No students yet. Import a Diário CSV above, paste an id,name list below, or add rows by hand.');
+  }
 
   const csv = el('textarea', { placeholder: 'Paste "id,name" per line, then Import' });
   return el('section', {}, [
-    el('h2', {}, ['Students ', el('span', { class: 'count', text: `${model.students.length}/300` })]),
+    el('h2', {}, ['Students ', el('span', { class: 'count', text: `${model.students.length}/${LIMITS.MAX_STUDENTS}` })]),
     el('p', { class: 'hint', text: 'Cards are normally bound on the device at first tap — leave RFID uid blank unless you already know it.' }),
     body,
     el('button', { class: 'add', text: '+ Add student', onclick: () => {
@@ -352,7 +406,7 @@ function classesSection() {
     : emptyState('No classes yet. Import a Diário CSV above (it creates the class and enrolls its students), or add one by hand.');
 
   return el('section', {}, [
-    el('h2', {}, ['Classes ', el('span', { class: 'count', text: `${model.classes.length}/12` })]),
+    el('h2', {}, ['Classes ', el('span', { class: 'count', text: `${model.classes.length}/${LIMITS.MAX_CLASSES}` })]),
     el('p', { class: 'hint', text: 'A class links to one teacher; students carry their group (turma) per roster entry.' }),
     body,
     el('button', { class: 'add', text: '+ Add class', onclick: () => {
@@ -365,7 +419,7 @@ function classesSection() {
 function classCard(c, i) {
   const safeColor = /^[0-9a-fA-F]{6}$/.test(c.color) ? c.color : '272766';
 
-  const teacherSel = el('select', {}, [
+  const teacherSel = el('select', { class: 'teacher-select' }, [
     el('option', { value: '', text: '— pick a teacher —' }),
     ...model.teachers.filter((t) => t.email).map((t) =>
       el('option', { value: t.email, text: t.name || t.email })),

@@ -2,7 +2,7 @@
 # Claude Code PostToolUse hook (matcher: Write|Edit|MultiEdit).
 #
 # When an edit touches a file that DEFINES the SD-card schema (firmware headers)
-# or must MIRROR it (docs/CONFIG_IMPORT.md, the config-builder modules), run the
+# or must MIRROR it (docs/software/CONFIG_IMPORT.md, the config-builder modules), run the
 # tool's `node --test` suite — which includes test/schema-sync.test.js, the
 # drift guard that asserts validate.js still matches the firmware buffer sizes
 # and caps. On failure, exit 2 so the message is fed back to Claude to reconcile
@@ -21,14 +21,14 @@ file="$(printf '%s' "$payload" \
 
 # Only act on schema-relevant files; everything else is a no-op.
 if ! printf '%s\n' "$file" | grep -Eq \
-  '(include/app/(roster|teacher)\.h|include/services/config_service\.h|src/services/(roster|config)_service\.cpp|docs/CONFIG_IMPORT\.md|tools/config-builder/src/(validate|model|diario)\.js)$'; then
+  '(include/app/(roster|teacher)\.h|include/services/config_service\.h|src/services/(roster|config)_service\.cpp|docs/software/CONFIG_IMPORT\.md|tools/config-builder/src/(validate|model|diario)\.js)$'; then
   exit 0
 fi
 
 if ! out="$(cd "$root/tools/config-builder" && node --test 2>&1)"; then
   {
     echo "SCHEMA DRIFT — a schema file changed and tools/config-builder tests fail."
-    echo "Reconcile the firmware headers, docs/CONFIG_IMPORT.md, and the tool"
+    echo "Reconcile the firmware headers, docs/software/CONFIG_IMPORT.md, and the tool"
     echo "(validate.js LIMITS / model.js / diario.js), then rerun 'node --test'."
     echo "----- node --test (tail) -----"
     printf '%s\n' "$out" | tail -25

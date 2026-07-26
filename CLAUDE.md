@@ -2,7 +2,7 @@
 
 Classroom attendance device: students tap an RFID card (or type their ID in
 kiosk mode) to register presence. LVGL 9 touchscreen UI; all data on an SD card.
-See `docs/PROJECT_HANDOFF.md` for the full architecture, session log, and the
+See `docs/software/PROJECT_HANDOFF.md` for the full architecture, session log, and the
 open code-review backlog — this file is the always-loaded short version.
 
 ## Build & test (run BOTH after every change)

@@ -13,8 +13,8 @@ schema or rule changes, change it here first, then update both sides.
 
 > **Schema authority:** the JSON schemas + validation rules below mirror what the
 > firmware already enforces at load time in
-> [`src/services/roster_service.cpp`](../src/services/roster_service.cpp) and
-> [`src/services/config_service.cpp`](../src/services/config_service.cpp). Those
+> [`src/services/roster_service.cpp`](../../src/services/roster_service.cpp) and
+> [`src/services/config_service.cpp`](../../src/services/config_service.cpp). Those
 > files are the ground truth for the *device's* behavior; this doc restates them
 > so the web tool can validate identically **before** producing a tar. When they
 > disagree, the firmware wins and this doc is the bug.
@@ -97,7 +97,7 @@ Rules (mirror `config_service.cpp`):
 ```jsonc
 {
   "version": 1,
-  "students": [                          // 0..300 (ROSTER_MAX_STUDENTS)
+  "students": [                          // 0..600 (ROSTER_MAX_STUDENTS)
     { "id": "2023-0142", "name": "Maria Santos", "rfid_uid": null }
   ]
 }
@@ -107,7 +107,7 @@ Rules (mirror `roster_service.cpp`):
   **unique** across the file (`duplicate id`). May contain dashes.
 - `name` — ≤ 47 chars, non-empty. May contain Portuguese accented characters
   (stored UTF-8). *Device note: the LVGL fonts must include the glyphs to render
-  them — see `docs/CUSTOM_FONT_GENERATION.md`.*
+  them — see `docs/software/CUSTOM_FONT_GENERATION.md`.*
 - `rfid_uid` — `null` (unbound; the common authored state — cards are bound on
   the device at first tap) or a string ≤ 23 chars. If a string, its **normalized**
   form must be unique across students **and** must not equal any teacher's
@@ -178,8 +178,8 @@ Rules (mirror `roster_service.cpp`):
   Anything else — especially any `attendance/` path, `..`, or an absolute path —
   is **rejected and aborts the whole import** (classic tar/zip-slip defense; this
   is the S1 concern, so it is not optional).
-- **Size:** the device caps the staged tar (suggested **≤ 1 MB**; config for 300
-  students + 12 classes is well under 100 KB). Oversize → reject.
+- **Size:** the device caps the staged tar (suggested **≤ 1 MB**; config for 600
+  students + 12 classes is still well under 100 KB). Oversize → reject.
 
 ## 5. Device import flow (informative — firmware side)
 
@@ -208,7 +208,7 @@ battery/RTC) leaves a garbage staging file and a working device.
 **v1 (recommended, zero device coupling):** the config-builder only **generates
 and downloads** the `.tar`. The operator connects to the device AP and uploads it
 through the **existing** web file manager
-([`src/services/file_server.cpp`](../src/services/file_server.cpp)) into a known
+([`src/services/file_server.cpp`](../../src/services/file_server.cpp)) into a known
 drop path; a device button (or a watched path) triggers the import flow. The
 builder needs **no network code** and stays a pure static page.
 

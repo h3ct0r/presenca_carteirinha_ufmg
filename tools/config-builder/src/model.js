@@ -1,5 +1,5 @@
 // Pure, DOM-free translation of the authoring model into the three on-card
-// JSON documents defined by docs/CONFIG_IMPORT.md §3.
+// JSON documents defined by docs/software/CONFIG_IMPORT.md §3.
 //
 // The "authoring model" is the shape the UI (and fixtures/example.model.json)
 // works with — flat and convenient to edit. This module turns it into the exact

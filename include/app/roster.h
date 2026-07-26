@@ -7,9 +7,12 @@
 // university ID; classes reference them by registry index, so a student
 // enrolled in several classes has exactly one record — and one RFID binding.
 
-constexpr int ROSTER_MAX_STUDENTS = 300;
+constexpr int ROSTER_MAX_STUDENTS = 600;   // global registry cap (see the RAM note below)
 constexpr int ROSTER_MAX_CLASSES = 12;
 constexpr int ROSTER_MAX_CLASS_STUDENTS = 100;
+// NOTE: s_students[ROSTER_MAX_STUDENTS] is a static array — at 600 that is
+// 600 * sizeof(student_t) (~92 B) ≈ 54 KB of internal RAM (~+27 KB vs 300).
+// Fine on the P4's SRAM budget, but re-check free heap on device.
 
 typedef struct {
     char id[20];        // university ID, the stable key

@@ -40,7 +40,7 @@ read the status line:
 - If image looks fine but still `[none]` → look at model input size/normalization.
 
 See `docs/FACE_DETECTION.md`. Models must be at `/models/*.espdl` on the SD card
-(staged in `docs/sd_card_example/models/`); a missing model no longer crashes
+(staged in `docs/software/sd_card_example/models/`); a missing model no longer crashes
 (guarded), it runs preview-only.
 
 ### Deferred backlog (from the 2026-07-23 code review)
@@ -53,7 +53,7 @@ component extraction (Q2)**, and small UX items (**U1/U2/U3**).
 ### Offline config import — builder half M1+M2 built; device half not started
 A two-part feature to author config on a laptop and import it without losing
 attendance. The **contract** both sides follow is
-[`docs/CONFIG_IMPORT.md`](CONFIG_IMPORT.md) (authoritative tar format + schemas,
+[`docs/software/CONFIG_IMPORT.md`](CONFIG_IMPORT.md) (authoritative tar format + schemas,
 mirrored from the roster/config validators — now written, v1).
 
 1. **`tools/config-builder/`** — off-device, browser-only tool that generates a
@@ -91,6 +91,14 @@ mirrored from the roster/config validators — now written, v1).
 The config-builder lives **in this repo** on purpose (shared schema = one source
 of truth; no git to coordinate two repos; PlatformIO ignores `tools/`). It uses
 **no C++/LVGL rules** — see its directory-scoped `CLAUDE.md`.
+
+### Planned: Moodle student photos → device (design done, not built)
+Bundle student photos (downloaded from Moodle as a tar of `NAME.jpg` files) into
+the same `config.tar`, re-keyed by matrícula to `students/photos/<id>.jpg`, and
+show a student's photo on the presence-success screen. Full design + phased plan
+(browser-side name→id matching, tar contract whitelist/cap changes, firmware
+import + JPEG-on-SD display) is in [`STUDENT_PHOTOS.md`](STUDENT_PHOTOS.md).
+**Idealisation only — no code yet.**
 
 ---
 
@@ -319,7 +327,7 @@ Footer nav (`shell.cpp add_footer`, on Classes/Export/WiFi/Admin): Classes /
 Export / WiFi File Editor / Admin. Active tab highlighted; nav can be disabled
 (WiFi screen while AP up).
 
-## SD card data model (see docs/sd_card_example/)
+## SD card data model (see docs/software/sd_card_example/)
 
 ```
 /config.json      { "capture_photos":bool, "teachers":[{name,email,rfid_uid,password}] }
@@ -395,7 +403,7 @@ Docs: `docs/FACE_DETECTION.md`. Memory: `camera-face-detection.md`.
 - **Models load from SD** (`CONFIG_HUMAN_FACE_DETECT_MODEL_IN_SDCARD`,
   `SDCARD_DIR="models"`): `/models/human_face_detect_{msr,mnp}_s8_v1.espdl`. No
   packing/flashing (the `human_face_det` flash partition is unused now). Staged
-  in `docs/sd_card_example/models/`.
+  in `docs/software/sd_card_example/models/`.
 - **photo_store** (`storage/photo_store.cpp`): background writer; **JPEG via P4
   hardware encoder** (quality 85, ~300–500 KB @1080p) → `/photos/IMG_nnnn.jpg`;
   BMP only if the encoder is unavailable.

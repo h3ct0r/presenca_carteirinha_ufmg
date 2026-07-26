@@ -1,4 +1,4 @@
-// Pure, DOM-free ustar tar writer. See docs/CONFIG_IMPORT.md §4.
+// Pure, DOM-free ustar tar writer. See docs/software/CONFIG_IMPORT.md §4.
 //
 // Emits an uncompressed POSIX ustar archive. Entry names must already be
 // whitelist-clean (no leading '/', no '..') — model.js only ever produces the

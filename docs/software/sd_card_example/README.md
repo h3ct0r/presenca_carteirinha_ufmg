@@ -48,4 +48,4 @@ Notes:
   the config-builder's *Diário de Classe* CSV import. It lives on the roster
   entry (not the global student registry), so one class can hold students from
   different turmas and a student can carry a different turma per class (Maria is
-  `M1` in CS101 and `F1` in MA110). See `docs/CONFIG_IMPORT.md` §3.3.
+  `M1` in CS101 and `F1` in MA110). See `docs/software/CONFIG_IMPORT.md` §3.3.

@@ -66,7 +66,7 @@ drivers/   lcd/, touch/, rfid/, audio/
 - **Admin panel** — profile, class list, and password set/change (written back
   to `config.json`).
 - **CSV Export** — per-class attendance export to the SD card. See
-  [`docs/EXPORT.md`](docs/EXPORT.md).
+  [`docs/software/EXPORT.md`](docs/software/EXPORT.md).
 
 ## SD card data
 
@@ -78,16 +78,16 @@ drivers/   lcd/, touch/, rfid/, audio/
 /csv_export/<code>.csv       CSV attendance export (MATRICULA,FREQ)
 ```
 
-A sample card layout is in [`docs/sd_card_example/`](docs/sd_card_example/).
+A sample card layout is in [`docs/software/sd_card_example/`](docs/software/sd_card_example/).
 
 ## Documentation
 
-- [`docs/PROJECT_HANDOFF.md`](docs/PROJECT_HANDOFF.md) — architecture, screens,
+- [`docs/software/PROJECT_HANDOFF.md`](docs/software/PROJECT_HANDOFF.md) — architecture, screens,
   data model, gotchas, and the current backlog (start here to continue work).
-- [`docs/EXPORT.md`](docs/EXPORT.md) — the CSV attendance export feature.
-- [`docs/CUSTOM_FONT_GENERATION.md`](docs/CUSTOM_FONT_GENERATION.md) — building
+- [`docs/software/EXPORT.md`](docs/software/EXPORT.md) — the CSV attendance export feature.
+- [`docs/software/CUSTOM_FONT_GENERATION.md`](docs/software/CUSTOM_FONT_GENERATION.md) — building
   the custom Montserrat + FontAwesome fonts.
-- [`docs/sd_card_example/`](docs/sd_card_example/) — sample SD card contents.
+- [`docs/software/sd_card_example/`](docs/software/sd_card_example/) — sample SD card contents.
 - [`test/README.md`](test/README.md) — the native test setup.
 
 ## License

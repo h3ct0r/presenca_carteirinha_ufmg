@@ -92,7 +92,7 @@ test('student UID colliding with a teacher card is rejected', () => {
   assert.ok(has(validate(m), 'shares RFID uid') || has(validate(m), 'with a teacher'));
 });
 
-test('more than 300 students is flagged', () => {
+test('more than the student cap is flagged', () => {
   const m = clone(FIXTURE);
   m.students = Array.from({ length: LIMITS.MAX_STUDENTS + 1 }, (_, i) => ({
     id: `id-${i}`, name: `S${i}`,

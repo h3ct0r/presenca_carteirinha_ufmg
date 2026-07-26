@@ -1,5 +1,5 @@
 // Pure, DOM-free validation of the authoring model against the contract
-// (docs/CONFIG_IMPORT.md §3). Returns a flat list of structured errors so the
+// (docs/software/CONFIG_IMPORT.md §3). Returns a flat list of structured errors so the
 // UI can point at the offending row and the export button can gate on
 // `errors.length === 0`.
 //
@@ -24,7 +24,7 @@ import { uidNormalize } from './uid.js';
 // Limits mirror the firmware buffer sizes (max chars = buffer − 1) and caps.
 export const LIMITS = {
   MAX_TEACHERS: 8,
-  MAX_STUDENTS: 300,
+  MAX_STUDENTS: 600,
   MAX_CLASSES: 12,
   MAX_CLASS_ROSTER: 100,
   TEACHER_NAME: 47,

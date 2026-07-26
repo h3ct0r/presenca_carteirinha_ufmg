@@ -6,7 +6,7 @@ import. Runs on a laptop — **not** on the ESP32.
 
 - **Rules & conventions:** [`CLAUDE.md`](CLAUDE.md)
 - **Build plan / handoff:** [`SPEC.md`](SPEC.md)
-- **Output format (the contract):** [`../../docs/CONFIG_IMPORT.md`](../../docs/CONFIG_IMPORT.md)
+- **Output format (the contract):** [`../../docs/software/CONFIG_IMPORT.md`](../../docs/software/CONFIG_IMPORT.md)
 - **Deploying it (dev server + nginx):** [`DEPLOY.md`](DEPLOY.md)
 
 Status: **M1 + M2 done** (tar/uid/model core, full validation, and a working
@@ -46,7 +46,7 @@ You still assign a **teacher** to the imported class before exporting (a lone
 defined teacher is auto-assigned). `turma` lives on each `class.json` roster
 entry (`{ "id", "turma" }`) — not on the student registry — so one class can span
 turmas and a student can carry a different turma per class. See
-`docs/CONFIG_IMPORT.md` §3.3. Roster turmas are editable inline per member.
+`docs/software/CONFIG_IMPORT.md` §3.3. Roster turmas are editable inline per member.
 
 ## Develop
 - **Run / host:** it's a static single-page app (no build, no backend). Serve it

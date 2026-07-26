@@ -4,7 +4,7 @@ An off-device, browser-only tool to author the RFID attendance device's config
 and export it as a `.tar` for import. Paste-friendly handoff for a fresh session.
 
 > Read alongside: `CLAUDE.md` (this dir — the rules) and
-> `../../docs/CONFIG_IMPORT.md` (the authoritative tar/schema contract). This
+> `../../docs/software/CONFIG_IMPORT.md` (the authoritative tar/schema contract). This
 > spec says *how to build the tool*; the contract says *what the output must be*.
 
 ## 1. Objective & non-goals
@@ -21,7 +21,7 @@ managing photos or ESP-DL models; being a general SD file browser.
 
 The device already configures itself two ways (LVGL admin panel + the on-device
 web file editor), but both are awkward for **bulk** roster/class authoring. A
-laptop form with real validation is the right place to build a roster of 300
+laptop form with real validation is the right place to build a roster of 600
 students and 12 classes, and to provision several devices from one authored tree.
 The device stays a dumb, safe importer (stage → validate → merge); this tool owns
 the authoring UX.
@@ -64,7 +64,7 @@ tools/config-builder/
     tarball.test.js    # node --test (assert ustar headers, checksums, EOF blocks)
     uid.test.js        # node --test (must agree with firmware normalization)
   fixtures/
-    example.model.json # a known-good authored model (mirrors docs/sd_card_example)
+    example.model.json # a known-good authored model (mirrors docs/software/sd_card_example)
 ```
 
 Keep `validate.js`, `tarball.js`, `uid.js`, `model.js` **DOM-free and
@@ -91,7 +91,7 @@ Per-field: string length limits, digits-only passwords, 6-hex color, non-empty
 id/name/code. Cross-file (the important ones):
 - teacher passwords unique (ignoring empties) and digits-only;
 - student ids unique; UID uniqueness across students **and** teachers using
-  `uid.js` normalization; ≤ 300 students;
+  `uid.js` normalization; ≤ 600 students;
 - ≤ 12 classes; class `code` unique; every `roster[].id` exists in students;
   ≤ 100 per roster;
 - ≥ 1 teacher.
@@ -194,7 +194,7 @@ section, file+paste, per-roster turma inputs) lives in `app.js`.
 **`turma` schema field:** an optional per-student tag on each **`class.json`
 roster entry** (`{ "id", "turma" }`, ≤ 15 chars) — **not** on the student
 registry, **not** class-level. So one class can hold multiple turmas and a
-student can differ per class. See `docs/CONFIG_IMPORT.md` §3.3 and its changelog.
+student can differ per class. See `docs/software/CONFIG_IMPORT.md` §3.3 and its changelog.
 The firmware reads only `id` from a roster entry and preserves `turma` on rewrite
 (no `roster.h` struct change needed). Validated in `validate.js` (`ROSTER_TURMA`).
 
@@ -206,7 +206,7 @@ Green.
 Offline single page that: builds a valid model, blocks export while invalid with
 pointed errors, and downloads a `config.tar` that a human can upload via the
 device file manager. All pure modules unit-tested green. No CDN, no build, no
-network. `docs/CONFIG_IMPORT.md` and this tool agree.
+network. `docs/software/CONFIG_IMPORT.md` and this tool agree.
 
 ## 11. Open questions (resolve with the user before/while building)
 

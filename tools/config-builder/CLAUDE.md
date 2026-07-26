@@ -4,7 +4,7 @@
 produces a `.tar` of authored config for the RFID attendance device to import.
 The embedded-C++/LVGL/PlatformIO rules in the repo root `CLAUDE.md` do **not**
 apply here — these do. Read `SPEC.md` (this directory) for the full build plan
-and `../../docs/CONFIG_IMPORT.md` for the tar contract.
+and `../../docs/software/CONFIG_IMPORT.md` for the tar contract.
 
 ## What it is
 A single, self-contained, offline HTML page. The user fills in teachers,
@@ -18,7 +18,7 @@ the contract. No device connection, no backend, no internet.
 - **No build step, no framework, no bundler** to start. Vanilla JS + one
   self-contained `index.html`. Reach for a framework only if the form UX truly
   outgrows vanilla — and record the decision in `SPEC.md` first.
-- **The contract is `../../docs/CONFIG_IMPORT.md`.** Schemas, limits, and the
+- **The contract is `../../docs/software/CONFIG_IMPORT.md`.** Schemas, limits, and the
   path whitelist come from there. Do not invent fields. If firmware changes the
   schema, that doc changes first; keep this tool in lockstep.
 - **Validate to the contract before emitting a tar.** The whole point is to fail
@@ -41,13 +41,13 @@ the contract. No device connection, no backend, no internet.
   every change (mirrors the firmware's "test after every change" rule).
 
 ## Honesty rule
-Report changes as **"validated against docs/CONFIG_IMPORT.md and unit-tested,"**
+Report changes as **"validated against docs/software/CONFIG_IMPORT.md and unit-tested,"**
 never as "verified against the device" unless you actually round-tripped a tar
 through real firmware. The device import endpoint may not exist yet — say so.
 
 ## Keeping in sync (read this before schema work)
-The single source of truth is `../../docs/CONFIG_IMPORT.md`, which itself mirrors
+The single source of truth is `../../docs/software/CONFIG_IMPORT.md`, which itself mirrors
 `../../src/services/{roster,config}_service.cpp`. The order for any schema change:
-1. change the firmware validator, 2. update `docs/CONFIG_IMPORT.md`
+1. change the firmware validator, 2. update `docs/software/CONFIG_IMPORT.md`
 (+ changelog), 3. update this tool + its tests. A PR/change touching one without
 the others is incomplete.
