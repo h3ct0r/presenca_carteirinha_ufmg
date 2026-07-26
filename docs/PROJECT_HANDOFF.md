@@ -44,11 +44,53 @@ See `docs/FACE_DETECTION.md`. Models must be at `/models/*.espdl` on the SD card
 (guarded), it runs preview-only.
 
 ### Deferred backlog (from the 2026-07-23 code review)
-A full assessment was done; **C1 + C2 are complete**, the rest are open. See the
-"Code-review findings" section below. Highest value remaining: **C3** (file
-server blocks LVGL thread), the **D-group dead-code cleanup** (note: `photo_store`
-is no longer dead — it's the JPEG snapshot writer now), the **modal component
-extraction (Q2)**, and small UX items (**U1/U2/U3**).
+A full assessment was done; **C1, C2 and S2 are complete**, the rest are open.
+See the "Code-review findings" section below. Highest value remaining: **C3**
+(file server blocks LVGL thread), the **D-group dead-code cleanup** (note:
+`photo_store` is no longer dead — it's the JPEG snapshot writer now), the **modal
+component extraction (Q2)**, and small UX items (**U1/U2/U3**).
+
+### Offline config import — builder half M1+M2 built; device half not started
+A two-part feature to author config on a laptop and import it without losing
+attendance. The **contract** both sides follow is
+[`docs/CONFIG_IMPORT.md`](CONFIG_IMPORT.md) (authoritative tar format + schemas,
+mirrored from the roster/config validators — now written, v1).
+
+1. **`tools/config-builder/`** — off-device, browser-only tool that generates a
+   `config.tar`. **Status: M1–M4 core done** (2026-07-25). Vanilla JS, no
+   build/CDN: DOM-free `src/{uid,tarball,model,validate,diario}.js` (unit-tested,
+   **49 `node --test` cases green**) + a working `index.html`/`app.js` authoring
+   page (teachers/students/classes editors, live validation gating export, CSV
+   paste, save/load model JSON). Tar verified via system `tar` and byte-identical
+   in-browser vs Node. Validation mirrors the firmware and is intentionally
+   stricter where the contract demands (length caps, student↔teacher UID
+   collision, teacher_email resolution) — marked `[builder-stricter]` in source.
+   **Diário de Classe CSV import** (`diario.js`): reads the UFMG semicolon export
+   (matricula+nome only), handles accents/Latin-1, and auto-creates the class
+   keyed `<SEMESTER>-<ATIVIDADE>` (e.g. `2026_2-DCC219`; semester `/` → `_`, so
+   all turmas of a course+semester merge into one class) + tags each roster entry
+   with `turma`. Remaining: minor
+   UX polish (focus retention on re-render, inline field highlighting). **Not yet
+   round-tripped through real firmware.**
+
+   **`turma` schema field** (2026-07-25): a **per-student tag on each
+   `class.json` roster entry** (`{ "id", "turma" }`, ≤15) — **not** on the global
+   student registry, **not** class-level, so one class can span turmas and a
+   student differs per class. Updated end-to-end: `CONFIG_IMPORT.md` §3.3 +
+   changelog, `sd_card_example`, the tool (`validate.js` `ROSTER_TURMA`,
+   `diario.js`, per-roster UI), and a native test proving the loader accepts
+   `{id,turma}` entries. Additive/compatible — the firmware reads only `id` and
+   preserves `turma` on rewrite (DOM edit in `persist_enroll`), so **no
+   `roster.h` struct change** and file `version` stays 1.
+2. **Device import endpoint** (firmware, `src/services/…`) — stage → validate →
+   merge the tar, preserving attendance/photos. **Not started.** See
+   `CONFIG_IMPORT.md` §5 for the intended flow (back up first, sandbox unpack
+   with the §4 path whitelist, per-file atomic apply). This is the natural next
+   chunk; it can reuse the roster/config validators and `backup_store_create()`.
+
+The config-builder lives **in this repo** on purpose (shared schema = one source
+of truth; no git to coordinate two repos; PlatformIO ignores `tools/`). It uses
+**no C++/LVGL rules** — see its directory-scoped `CLAUDE.md`.
 
 ---
 
@@ -138,8 +180,8 @@ All build + native-test verified unless noted; **not run on hardware**.
   class roll call could approach 64 KB and `LV_USE_ASSERT_MALLOC=1` turns
   exhaustion into a reboot.
 
-**Native test count: 74** (7 suites; +export +photo-capture +clear-uids +
-clear-attendance +teacher-has-password tests this session).
+**Native test count: 78** (9 suites; +export +photo-capture +clear-uids +
+clear-attendance +teacher-has-password, and +backup (4 cases) this session).
 
 ---
 
@@ -154,7 +196,12 @@ Full assessment done at the user's request. Severity + status:
   (it's pumped on the LVGL timer). Acceptable for debug; move to a task + SD
   mutex if it bites.
 - **S1 file server no auth / cleartext / no path-traversal guard** — open.
-- **S2 destructive wipe has no backup/undo** — open (optionally back up first).
+- **S2 destructive wipe has no backup/undo** — ✅ done (backup-only). The debug
+  wipe now calls `backup_store_create()` (`storage/backup_store.cpp`) first,
+  snapshotting `students.json` + every class's attendance logs into `/backup/`
+  (mirrored paths, single slot cleared each time). The wipe **aborts if the
+  backup fails**. Restore is manual via the WiFi file editor (no in-app restore).
+  4 native tests.
 - **D1 dead screens** — open: `scr_student`, `scr_class_form`, `scr_teacher_reg`
   are registered but **never navigated to** (0 inbound). The two form screens
   are non-functional demo stubs. **No git in this repo → deletions are
@@ -216,7 +263,7 @@ Schematics/datasheets in `docs/`.
 
 ```sh
 pio run -e esp32p4          # build device firmware
-pio test -e native          # host unit tests (74 cases, 8 suites)
+pio test -e native          # host unit tests (78 cases, 9 suites)
 pio test -e native -f "native/test_roster"   # one suite
 ```
 
@@ -234,7 +281,8 @@ ui/        LVGL screens/components/theme — ONLY code that includes lvgl.h
 app/       pure logic: event_bus, auth, session, uid, roster/teacher types, battery_curve
 services/  own hardware + SD, run FreeRTOS tasks: config, roster, rfid, battery,
            export, wifi_ap, file_server, face_detection
-storage/   SD modules: sd_card (mount), attendance_store, photo_store (JPEG writer)
+storage/   SD modules: sd_card (mount), attendance_store, photo_store (JPEG
+           writer), backup_store (pre-wipe snapshot to /backup)
 camera/    OV02C10 sensor, csi_pipeline, auto_exposure (driver layer)
 drivers/   lcd/, touch/, rfid/, audio/
 ```
@@ -281,6 +329,8 @@ Export / WiFi File Editor / Admin. Active tab highlighted; nav can be disabled
 /classes/<CODE>/attendance/YYYY-MM-DD.jsonl   append-only {"id":..,"present":bool}
 /csv_export/<CODE>.csv     MATRICULA,FREQ export (see docs/EXPORT.md)
 /models/*.espdl            ESP-DL face-detection models (see docs/FACE_DETECTION.md)
+/backup/students/students.json + /backup/classes/<CODE>/attendance/*.jsonl
+                           pre-wipe snapshot (single slot; backup_store)
 ```
 
 - **config.json** (`config_service`): per-professor **unique digits-only**
@@ -368,15 +418,15 @@ Docs: `docs/FACE_DETECTION.md`. Memory: `camera-face-detection.md`.
   textareas must live on the screen root, not layer_top, so the keyboard floats
   above them.**
 
-## Testing (test/native/, 74 cases, 8 suites)
+## Testing (test/native/, 78 cases, 9 suites)
 
 Unity + `lib/hw_mocks/` (in-memory SD with FILE_APPEND/remove/rename/mkdir/
 totalBytes/usedBytes, fake PN532, fake JPEG, pthread FreeRTOS). Suites: core
 (uid/session/battery curve), event_bus, rfid, auth_config (+password write,
 +photo-capture, +teacher-has-password), roster (+enroll, +clear_uids), export,
-attendance (+clear). **Gotchas:** `sd_card_mount()` latches per binary (no-SD
-tests first); some tests chain shared config state (order matters). UI/LVGL,
-camera, WiFi, esp-dl are NOT native-tested.
+attendance (+clear), photo, backup (pre-wipe snapshot). **Gotchas:**
+`sd_card_mount()` latches per binary (no-SD tests first); some tests chain shared
+config state (order matters). UI/LVGL, camera, WiFi, esp-dl are NOT native-tested.
 
 ## Working style established with the user
 

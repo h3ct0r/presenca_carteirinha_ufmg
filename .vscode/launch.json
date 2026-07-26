@@ -13,7 +13,7 @@
             "request": "launch",
             "name": "PIO Debug",
             "executable": "/Users/h3ct0r/Git/presenca_carteirinha_ufmg/.pio/build/esp32p4/firmware.elf",
-            "projectEnvName": "esp32p4",
+            "projectEnvName": "native",
             "toolchainBinDir": "/Users/h3ct0r/.platformio/packages/toolchain-riscv32-esp/bin",
             "internalConsoleOptions": "openOnSessionStart",
             "preLaunchTask": {
@@ -26,7 +26,7 @@
             "request": "launch",
             "name": "PIO Debug (skip Pre-Debug)",
             "executable": "/Users/h3ct0r/Git/presenca_carteirinha_ufmg/.pio/build/esp32p4/firmware.elf",
-            "projectEnvName": "esp32p4",
+            "projectEnvName": "native",
             "toolchainBinDir": "/Users/h3ct0r/.platformio/packages/toolchain-riscv32-esp/bin",
             "internalConsoleOptions": "openOnSessionStart"
         },
@@ -35,7 +35,7 @@
             "request": "launch",
             "name": "PIO Debug (without uploading)",
             "executable": "/Users/h3ct0r/Git/presenca_carteirinha_ufmg/.pio/build/esp32p4/firmware.elf",
-            "projectEnvName": "esp32p4",
+            "projectEnvName": "native",
             "toolchainBinDir": "/Users/h3ct0r/.platformio/packages/toolchain-riscv32-esp/bin",
             "internalConsoleOptions": "openOnSessionStart",
             "loadMode": "manual"

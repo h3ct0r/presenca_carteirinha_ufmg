@@ -43,3 +43,9 @@ Notes:
   add their id to the class's `roster`.
 - A student may appear in any number of class rosters; the card binding and
   photo are shared automatically.
+- `"turma"` is an optional class-group tag (e.g. `"M1"`, `"TE1"`) on each
+  **`class.json` roster entry** — `{ "id": ..., "turma": ... }`. It's filled by
+  the config-builder's *Diário de Classe* CSV import. It lives on the roster
+  entry (not the global student registry), so one class can hold students from
+  different turmas and a student can carry a different turma per class (Maria is
+  `M1` in CS101 and `F1` in MA110). See `docs/CONFIG_IMPORT.md` §3.3.

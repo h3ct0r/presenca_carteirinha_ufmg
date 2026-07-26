@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Config Builder · RFID Attendance Device</title>
+  <style>
+    :root {
+      /* Deliberate blue-slate "device console" dark palette. Neutrals are
+         biased toward the indigo accent so they read as chosen, not default. */
+      --bg: #0e1220;
+      --surface: #161b2e;
+      --surface-2: #1d2340;
+      --surface-3: #262d51;
+      --field: #0c0f22;
+      --line: #2c3356;
+      --line-soft: #232a48;
+      --ink: #e8eaf4;
+      --muted: #9aa3c7;
+      --faint: #6d76a0;
+      --accent: #6486ff;
+      --accent-press: #4f6fe6;
+      --accent-ink: #ffffff;
+      --accent-soft: #1b2350;
+      --ok: #3ecb7f; --ok-soft: #10321f;
+      --warn: #e6b143; --warn-soft: #322609;
+      --err: #f0687e; --err-soft: #35131f; --err-line: #5a2333;
+      --radius: 12px; --radius-sm: 8px; --radius-pill: 999px;
+      --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+      --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      --shadow: 0 1px 2px rgba(0,0,0,.35), 0 10px 30px rgba(0,0,0,.22);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition: none !important; animation: none !important; }
+    }
+    code { font-family: var(--mono); font-size: .9em; background: var(--surface-2); padding: 1px 6px; border-radius: 5px; }
+
+    /* ---- brand header ---- */
+    .brand {
+      display: flex; align-items: center; gap: 14px;
+      padding: 16px 22px; border-bottom: 1px solid var(--line-soft);
+      background: linear-gradient(180deg, #151a30, #0f1324);
+    }
+    .brand-mark {
+      display: grid; place-items: center; width: 38px; height: 38px; flex: none;
+      border-radius: 10px; background: var(--accent-soft);
+      border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+      color: var(--accent);
+    }
+    .brand h1 { font-size: 17px; margin: 0; letter-spacing: -.01em; }
+    .brand .sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+
+    main { max-width: 1060px; margin: 0 auto; padding: var(--sp-5) var(--sp-4) 72px; }
+    .loading { color: var(--muted); }
+
+    /* ---- sticky action bar: live status + primary CTA, always in view ---- */
+    .actionbar {
+      position: sticky; top: 0; z-index: 30;
+      display: flex; align-items: center; gap: var(--sp-3);
+      padding: 10px 12px 10px 14px; margin-bottom: var(--sp-4);
+      background: var(--surface);
+      border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
+    }
+    @supports (backdrop-filter: blur(1px)) {
+      .actionbar { background: color-mix(in srgb, var(--surface) 84%, transparent); backdrop-filter: blur(10px) saturate(1.3); }
+    }
+    .actionbar .spacer { flex: 1; }
+
+    .pill {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 6px 13px; border-radius: var(--radius-pill);
+      font-size: 13px; font-weight: 600; letter-spacing: .01em;
+      background: transparent; color: inherit; border: 1px solid transparent;
+      cursor: pointer; font-family: inherit;
+    }
+    .pill .dot { width: 8px; height: 8px; border-radius: var(--radius-pill); flex: none; }
+    .pill.ok { color: var(--ok); background: var(--ok-soft); border-color: color-mix(in srgb, var(--ok) 32%, transparent); }
+    .pill.ok .dot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); }
+    .pill.bad { color: var(--warn); background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 32%, transparent); }
+    .pill.bad .dot { background: var(--warn); }
+    .pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    /* ---- buttons ---- */
+    button {
+      display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+      background: var(--surface-2); color: var(--ink);
+      border: 1px solid var(--line); border-radius: var(--radius-sm);
+      padding: 9px 14px; font: inherit; font-size: 14px; cursor: pointer;
+      transition: background .12s ease, border-color .12s ease, opacity .12s ease, color .12s ease;
+    }
+    button:hover { background: var(--surface-3); border-color: var(--faint); }
+    button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+    button.primary:hover { background: var(--accent-press); border-color: var(--accent-press); }
+    button.primary:disabled { opacity: .38; cursor: not-allowed; background: var(--accent); border-color: var(--accent); }
+    button.ghost { background: transparent; border-color: var(--line); }
+    button.ghost:hover { background: var(--surface-2); }
+    button.danger { color: var(--err); background: transparent; border-color: transparent; }
+    button.danger:hover { background: var(--err-soft); border-color: var(--err-line); }
+    button.small { padding: 6px 11px; font-size: 13px; }
+    button.icon { width: 38px; height: 38px; padding: 0; font-size: 15px; flex: none; }
+    button.add {
+      width: 100%; padding: 11px; background: transparent; color: var(--muted);
+      border: 1px dashed var(--line);
+    }
+    button.add:hover { border-color: var(--accent); color: var(--ink); background: var(--surface-2); }
+
+    /* ---- toolbar (model-wide file actions) ---- */
+    .toolbar { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; margin-bottom: var(--sp-4); }
+    .toolbar .spacer { flex: 1; }
+
+    /* ---- section cards ---- */
+    section { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--sp-4) var(--sp-4) var(--sp-4); margin-bottom: var(--sp-4); }
+    section > h2 { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+    .count { font: 600 12px/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); padding: 3px 8px; border-radius: var(--radius-pill); }
+    .hint { color: var(--muted); font-size: 12.5px; margin: 6px 0 0; max-width: 68ch; }
+    .rows { display: flex; flex-direction: column; gap: var(--sp-2); margin: var(--sp-4) 0 var(--sp-3); }
+
+    /* ---- editable rows ---- */
+    .row {
+      display: grid; gap: var(--sp-2) var(--sp-3); align-items: end;
+      background: var(--surface-2); border: 1px solid var(--line-soft);
+      padding: var(--sp-3); border-radius: var(--radius-sm);
+    }
+    .row.teacher { grid-template-columns: 1.3fr 1.6fr 1.1fr .9fr auto; }
+    .row.student { grid-template-columns: 1fr 1.6fr 1.2fr auto; }
+    .row .rm { align-self: end; }
+
+    label.field { display: flex; flex-direction: column; gap: 5px; min-width: 0; font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .01em; }
+    input, textarea, select {
+      width: 100%; background: var(--field); color: var(--ink);
+      border: 1px solid var(--line); border-radius: var(--radius-sm);
+      padding: 9px 10px; font: inherit; font-size: 14px;
+      transition: border-color .12s ease, box-shadow .12s ease;
+    }
+    input::placeholder, textarea::placeholder { color: var(--faint); }
+    input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+    input.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+    .input-wrap { position: relative; }
+    .input-wrap input { padding-right: 38px; }
+    .input-wrap .eye {
+      position: absolute; right: 3px; top: 50%; transform: translateY(-50%);
+      width: 30px; height: 30px; padding: 0; border: none; background: transparent;
+      color: var(--muted); display: inline-flex; align-items: center; justify-content: center;
+      cursor: pointer; border-radius: 6px;
+    }
+    .input-wrap .eye:hover { color: var(--ink); background: var(--surface-3); }
+    .input-wrap .eye:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .input-wrap .eye svg { width: 17px; height: 17px; display: block; }
+    textarea { resize: vertical; min-height: 74px; font-family: var(--mono); font-size: 13px; line-height: 1.5; }
+    input[type=color] { width: 46px; height: 38px; padding: 4px; cursor: pointer; }
+    select { appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 16px) 16px, calc(100% - 11px) 16px; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; padding-right: 30px; }
+
+    /* ---- empty states ---- */
+    .empty { padding: 18px; border: 1px dashed var(--line); border-radius: var(--radius-sm); color: var(--muted); background: var(--surface-2); font-size: 13px; margin: var(--sp-4) 0 var(--sp-3); }
+
+    /* ---- device options toggle ---- */
+    .switch { display: inline-flex; align-items: center; gap: 11px; cursor: pointer; font-size: 14px; color: var(--ink); }
+    .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+    .switch .track { position: relative; width: 40px; height: 23px; flex: none; border-radius: var(--radius-pill); background: var(--surface-3); border: 1px solid var(--line); transition: background .15s ease, border-color .15s ease; }
+    .switch .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 17px; height: 17px; border-radius: 50%; background: var(--muted); transition: transform .15s ease, background .15s ease; }
+    .switch input:checked + .track { background: var(--accent); border-color: var(--accent); }
+    .switch input:checked + .track::after { transform: translateX(17px); background: #fff; }
+    .switch input:focus-visible + .track { box-shadow: 0 0 0 3px var(--accent-soft); }
+    .opt-desc { color: var(--muted); font-size: 12.5px; margin: 8px 0 0; }
+
+    /* ---- Diário import ---- */
+    .dropzone {
+      display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+      border: 1.5px dashed var(--line); border-radius: var(--radius); padding: 18px;
+      background: var(--surface-2); transition: border-color .12s ease, background .12s ease;
+    }
+    .dropzone.dragover { border-color: var(--accent); background: var(--accent-soft); }
+    .dropzone .dz-text { color: var(--muted); font-size: 13px; }
+    details { margin-top: var(--sp-3); }
+    details > summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 4px 0; user-select: none; }
+    details > summary:hover { color: var(--ink); }
+    details[open] > summary { margin-bottom: var(--sp-2); }
+    .import-result { font-size: 12.5px; margin-top: var(--sp-3); white-space: pre-line; line-height: 1.7; font-family: var(--mono); }
+    .import-result.ok { color: var(--ok); }
+    .import-result.bad { color: var(--err); }
+
+    /* ---- class card ---- */
+    .classcard { background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius-sm); padding: var(--sp-3) var(--sp-4) var(--sp-4); }
+    .classcard-head { display: flex; align-items: center; gap: 10px; margin-bottom: var(--sp-3); }
+    .classcard-head .swatch-input { width: 22px; height: 22px; padding: 0; border: 1px solid rgba(255,255,255,.18); border-radius: 6px; flex: none; cursor: pointer; }
+    .classcard-head .swatch-input::-webkit-color-swatch-wrapper { padding: 0; }
+    .classcard-head .swatch-input::-webkit-color-swatch { border: none; border-radius: 5px; }
+    .classcard-head .classcard-title { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--ink); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .class-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-3); }
+    .class-grid .span-2 { grid-column: 1 / -1; }
+    .roster-field { margin-top: var(--sp-3); }
+    .roster-box { max-height: 168px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 4px; background: var(--field); scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+    .roster-box::-webkit-scrollbar { width: 11px; }
+    .roster-box::-webkit-scrollbar-track { background: transparent; }
+    .roster-box::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; border: 3px solid var(--field); }
+    .roster-box::-webkit-scrollbar-thumb:hover { background: var(--faint); }
+    .roster-box .roster-row { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 6px; font-size: 13px; color: var(--ink); }
+    .roster-box .roster-row:hover { background: var(--surface-2); }
+    .roster-box .roster-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .roster-box .roster-name .rid { font-family: var(--mono); color: var(--muted); }
+    .roster-box .roster-turma { width: 74px; flex: none; padding: 4px 7px; font-size: 12px; font-family: var(--mono); }
+    .roster-box .roster-turma:disabled { opacity: .35; }
+    .roster-box .roster-empty { padding: 12px; color: var(--muted); font-size: 13px; }
+    .roster-box input[type=checkbox] { width: 15px; height: 15px; flex: none; accent-color: var(--accent); cursor: pointer; }
+
+    /* ---- review / errors ---- */
+    .review-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .review-ready { display: flex; align-items: center; gap: 10px; color: var(--ok); font-size: 14px; margin-top: var(--sp-4); padding: 14px 16px; background: var(--ok-soft); border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent); border-radius: var(--radius-sm); }
+    ul.errors { list-style: none; margin: var(--sp-4) 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+    ul.errors li { display: flex; gap: 10px; align-items: baseline; padding: 9px 12px; border-radius: var(--radius-sm); background: var(--err-soft); border: 1px solid var(--err-line); color: #ffd9e0; font-size: 13px; }
+    ul.errors li .tag { flex: none; font: 600 10px/1.6 var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--warn); background: var(--warn-soft); padding: 2px 7px; border-radius: 5px; }
+    .review-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-4); }
+
+    .hidden-dl { display: none; }
+
+    /* ---- responsive ---- */
+    @media (max-width: 720px) {
+      .row.teacher, .row.student { grid-template-columns: 1fr 1fr; }
+      .row .rm { grid-column: 1 / -1; justify-self: end; }
+      .class-grid { grid-template-columns: 1fr; }
+      main { padding: var(--sp-4) var(--sp-3) 64px; }
+    }
+    @media (max-width: 460px) {
+      .row.teacher, .row.student { grid-template-columns: 1fr; }
+      .actionbar { flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+  <header class="brand">
+    <span class="brand-mark" aria-hidden="true">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4" y="4" width="16" height="16" rx="3" />
+        <path d="M9 9a4 4 0 0 1 6 0M11 11.5a1.5 1.5 0 0 1 2 0" />
+        <line x1="12" y1="14" x2="12" y2="14.5" />
+      </svg>
+    </span>
+    <div>
+      <h1>Config Builder</h1>
+      <div class="sub">Author <code>config.tar</code> for the RFID attendance device · fully offline</div>
+    </div>
+  </header>
+  <main id="app"><p class="loading">Loading…</p></main>
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>

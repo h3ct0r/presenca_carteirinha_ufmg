@@ -24,6 +24,9 @@ typedef struct {
     char schedule[40];
     char teacher_email[64];  // links to config.json's teachers
     uint32_t color;
+    // Per-student class group ("turma") lives on each class.json roster entry
+    // ({"id","turma"}); the device preserves it on rewrite but does not model it
+    // in RAM (attendance is by student index, not group).
     int16_t roster[ROSTER_MAX_CLASS_STUDENTS];  // indexes into the registry
     int roster_count;
 } class_rec_t;

@@ -1,0 +1,49 @@
+{
+  "capture_photos": false,
+  "teachers": [
+    {
+      "name": "Prof Hector Azpurua",
+      "email": "hector@dcc.ufmg.br",
+      "rfid_uid": "E0:D1:33:5F",
+      "password": "1234"
+    },
+    {
+      "name": "Prof 2",
+      "email": "2@dcc.ufmg.br",
+      "rfid_uid": "E0:D1:33:6F",
+      "password": "56789"
+    }
+  ],
+  "students": [
+    { "id": "2023-0142", "name": "Maria Santos" },
+    { "id": "2023-0187", "name": "John Miller" },
+    { "id": "2023-0201", "name": "Aisha Khan" },
+    { "id": "2022-0311", "name": "Carlos Mendes" },
+    { "id": "2024-0021", "name": "Lucas Ferreira" }
+  ],
+  "classes": [
+    {
+      "code": "CS101-M1",
+      "name": "Data Structures",
+      "schedule": "Tue/Thu 10:00-12:00",
+      "teacher_email": "hector@dcc.ufmg.br",
+      "color": "272766",
+      "roster": [
+        { "id": "2023-0142", "turma": "M1" },
+        { "id": "2023-0187", "turma": "M1" },
+        { "id": "2023-0201", "turma": "M2" }
+      ]
+    },
+    {
+      "code": "MA110-F1",
+      "name": "Calculus I",
+      "schedule": "Mon/Wed 08:00-10:00",
+      "teacher_email": "2@dcc.ufmg.br",
+      "color": "1E6F50",
+      "roster": [
+        { "id": "2022-0311", "turma": "F1" },
+        { "id": "2024-0021", "turma": "F1" }
+      ]
+    }
+  ]
+}

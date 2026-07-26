@@ -29,11 +29,13 @@ static const char* STUDENTS_JSON =
     "  { \"id\": \"2024-0021\", \"name\": \"Lucas Ferreira\" }\n"
     "] }";
 
+// Roster entries carry an optional per-student "turma" tag; the loader reads
+// only "id" and ignores turma (it's preserved on rewrite via a DOM edit).
 static const char* CLASS_CS101 =
     "{ \"version\": 1, \"code\": \"CS101-M1\", \"name\": \"Data Structures\",\n"
     "  \"schedule\": \"Tue/Thu 10:00-12:00\", \"teacher_email\": \"h@x.edu\",\n"
     "  \"color\": \"272766\",\n"
-    "  \"roster\": [ { \"id\": \"2023-0142\" }, { \"id\": \"2023-0187\" } ] }";
+    "  \"roster\": [ { \"id\": \"2023-0142\", \"turma\": \"TE1\" }, { \"id\": \"2023-0187\", \"turma\": \"TE2\" } ] }";
 
 static void expect_error_contains(const char* needle) {
     char msg[160];
@@ -113,6 +115,21 @@ static void test_class_with_unknown_student(void) {
     expect_error_contains("unknown student 9999-9999");
 }
 
+// A student may hold only one turma per class, so the loader must reject a
+// roster that lists the same id twice even when the turma tags differ.
+static void test_class_student_twice_with_different_turmas(void) {
+    mocksd_reset();
+    mocksd_add_file("/students/students.json", STUDENTS_JSON);
+    mocksd_add_file("/classes/CS101-M1/class.json",
+                    "{ \"code\": \"CS101-M1\", \"name\": \"DS\",\n"
+                    "  \"roster\": [ { \"id\": \"2023-0142\", \"turma\": \"TE1\" },\n"
+                    "                { \"id\": \"2023-0142\", \"turma\": \"TE2\" } ] }");
+    roster_service_start();
+    TEST_ASSERT_EQUAL(ROSTER_BAD_CLASS, roster_get_status());
+    expect_error_contains("CS101-M1");
+    expect_error_contains("listed twice");
+}
+
 static void test_class_dir_without_class_json(void) {
     mocksd_reset();
     mocksd_add_file("/students/students.json", STUDENTS_JSON);
@@ -160,6 +177,7 @@ static void test_accessors_expose_loaded_data(void) {
     TEST_ASSERT_EQUAL_STRING("Data Structures", cs101->name);
     TEST_ASSERT_EQUAL_STRING("h@x.edu", cs101->teacher_email);
     TEST_ASSERT_EQUAL_HEX32(0x272766, cs101->color);
+    // A roster of {"id","turma"} objects loads fine (turma is ignored here).
     TEST_ASSERT_EQUAL_INT(2, cs101->roster_count);
 
     // Roster indexes resolve to the registry, including bare-string entries.
@@ -342,6 +360,7 @@ int main(int, char**) {
     RUN_TEST(test_duplicate_student_id);
     RUN_TEST(test_duplicate_uid_across_formats);
     RUN_TEST(test_class_with_unknown_student);
+    RUN_TEST(test_class_student_twice_with_different_turmas);
     RUN_TEST(test_class_dir_without_class_json);
     RUN_TEST(test_no_classes_dir_is_ok);
     RUN_TEST(test_valid_full_layout);
