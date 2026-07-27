@@ -992,8 +992,10 @@
 #define LV_USE_BMP 0
 
 /** JPG + split JPG decoder library.
- *  Split JPG is a custom format optimized for embedded systems. */
-#define LV_USE_TJPGD 0
+ *  Split JPG is a custom format optimized for embedded systems.
+ *  Enabled to render student avatars (baseline JPEG) from the SD card via the
+ *  'S' filesystem driver (src/ui/lvgl_fs_sd.cpp). */
+#define LV_USE_TJPGD 1
 
 /** libjpeg-turbo decoder library.
  *  - Supports complete JPEG specifications and high-performance JPEG decoding. */

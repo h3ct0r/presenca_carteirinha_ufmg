@@ -2,6 +2,7 @@
 
 #include "ui/components/keyboard.h"
 #include "ui/components/status_bar.h"
+#include "ui/lvgl_fs_sd.h"
 #include "ui/screen_manager.h"
 #include "ui/screens/scr_admin.h"
 #include "ui/screens/scr_class.h"
@@ -23,6 +24,7 @@ void ui_set_card_capture(ui_card_cb_t cb) { s_card_capture = cb; }
 
 void ui_init(void) {
     theme_init();
+    lvgl_fs_sd_init();  // 'S' drive: load student avatars off the SD card
     ui_state_init();
     status_bar_create();
     keyboard_create();  // after the status bar so it stacks above on layer_top

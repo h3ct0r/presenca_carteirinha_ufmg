@@ -1,10 +1,23 @@
 # Student Photos (Moodle) → Device — Design & Implementation Plan
 
-**Status:** proposal / idealisation. **Nothing here is built.** This is a
-paste-friendly handoff so a fresh session can implement it. When work starts,
-follow the project's firmware-first sync order (contract → firmware → tool) and
-report changes as *build/test-verified, not run on hardware* until proven on the
-device.
+**Status:** partially built. The **device display side (decision #4) is
+implemented** (2026-07-27): when a student registers presence in a class
+session, the check-in feedback overlay shows their avatar from
+`/students/photos/<id>.jpg` if it exists — success *or* failure — falling back to
+a placeholder otherwise. Rendering uses the LVGL TJPGD decoder (`LV_USE_TJPGD`)
+over a read-only SD filesystem driver on drive `S`
+([`src/ui/lvgl_fs_sd.cpp`](../../src/ui/lvgl_fs_sd.cpp)); the path helper is
+[`src/ui/components/student_photo.cpp`](../../src/ui/components/student_photo.cpp)
+and the overlay lives in the session tab of
+[`src/ui/screens/scr_class.cpp`](../../src/ui/screens/scr_class.cpp). **Build-
+verified, not run on hardware.** **The ingestion side is NOT built** — nothing
+yet gets photos onto the card (the config-builder does not parse the Moodle tar,
+re-key name→id, or bundle photos into `config.tar`; the importer's §4 whitelist
+does not yet allow `students/photos/**`). Until that lands there are no avatars
+to show, so the device always falls back to the placeholder. The rest of this
+doc is the plan for that ingestion work; follow the firmware-first sync order
+(contract → firmware → tool) and report changes as *build/test-verified, not run
+on hardware* until proven on the device.
 
 Related: [`CONFIG_IMPORT.md`](CONFIG_IMPORT.md) (the tar contract this extends),
 [`PROJECT_HANDOFF.md`](PROJECT_HANDOFF.md) (project state), the config-builder in
