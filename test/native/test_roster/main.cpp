@@ -177,8 +177,10 @@ static void test_accessors_expose_loaded_data(void) {
     TEST_ASSERT_EQUAL_STRING("Data Structures", cs101->name);
     TEST_ASSERT_EQUAL_STRING("h@x.edu", cs101->teacher_email);
     TEST_ASSERT_EQUAL_HEX32(0x272766, cs101->color);
-    // A roster of {"id","turma"} objects loads fine (turma is ignored here).
+    // A roster of {"id","turma"} objects loads fine, turma tags into RAM.
     TEST_ASSERT_EQUAL_INT(2, cs101->roster_count);
+    TEST_ASSERT_EQUAL_STRING("TE1", cs101->roster_turma[0]);
+    TEST_ASSERT_EQUAL_STRING("TE2", cs101->roster_turma[1]);
 
     // Roster indexes resolve to the registry, including bare-string entries.
     const student_t* maria = roster_student_at(cs101->roster[0]);
@@ -190,6 +192,8 @@ static void test_accessors_expose_loaded_data(void) {
     TEST_ASSERT_NOT_NULL(ma110);
     TEST_ASSERT_EQUAL_STRING("Lucas Ferreira", roster_student_at(ma110->roster[0])->name);
     TEST_ASSERT_EQUAL_STRING("Maria Santos", roster_student_at(ma110->roster[1])->name);
+    // Bare-string roster entries carry no turma.
+    TEST_ASSERT_EQUAL_STRING("", ma110->roster_turma[0]);
 
     // Out of range.
     TEST_ASSERT_NULL(roster_class_at(2));
@@ -284,7 +288,8 @@ static void test_enroll_new_adds_student_and_enrolls(void) {
     int ci = roster_class_index("CS101-M1");
     int before_roster = roster_class_at(ci)->roster_count;
 
-    roster_result_t r = roster_enroll_new("CS101-M1", "2025-0500", "New Student", "DD:EE:FF:02");
+    roster_result_t r =
+        roster_enroll_new("CS101-M1", "2025-0500", "New Student", "DD:EE:FF:02", "TE3");
     TEST_ASSERT_TRUE(r.ok);
     TEST_ASSERT_EQUAL_INT(before_students + 1, roster_student_count());
     TEST_ASSERT_EQUAL_INT(before_roster + 1, roster_class_at(ci)->roster_count);
@@ -295,11 +300,25 @@ static void test_enroll_new_adds_student_and_enrolls(void) {
     TEST_ASSERT_NOT_NULL(strstr(buf, "New Student"));
     read_card("/classes/CS101-M1/class.json", buf, sizeof(buf));
     TEST_ASSERT_NOT_NULL(strstr(buf, "2025-0500"));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "TE3"));  // turma written onto the roster entry
+
+    // The turma persists across a reload and doesn't leak into the registry.
+    roster_service_start();
+    read_card("/students/students.json", buf, sizeof(buf));
+    TEST_ASSERT_NULL(strstr(buf, "TE3"));
+}
+
+static void test_enroll_new_rejects_overlong_turma(void) {
+    setup_valid();
+    roster_result_t r = roster_enroll_new("CS101-M1", "2025-0777", "Long Turma", "DD:EE:FF:77",
+                                          "THIS-TURMA-IS-WAY-TOO-LONG");
+    TEST_ASSERT_FALSE(r.ok);
+    TEST_ASSERT_NOT_NULL(strstr(r.message, "Turma"));
 }
 
 static void test_enroll_new_rejects_existing_id(void) {
     setup_valid();
-    roster_result_t r = roster_enroll_new("CS101-M1", "2023-0142", "Dup", "99:99:99:99");
+    roster_result_t r = roster_enroll_new("CS101-M1", "2023-0142", "Dup", "99:99:99:99", nullptr);
     TEST_ASSERT_FALSE(r.ok);
     TEST_ASSERT_NOT_NULL(strstr(r.message, "already exists"));
 }
@@ -318,7 +337,7 @@ static void test_enroll_rejects_professor_card(void) {
     roster_service_start();
     TEST_ASSERT_EQUAL(ROSTER_OK, roster_get_status());
 
-    roster_result_t r = roster_enroll_new("CS101-M1", "2025-0999", "Nope", "ab-cd-ef-01");
+    roster_result_t r = roster_enroll_new("CS101-M1", "2025-0999", "Nope", "ab-cd-ef-01", nullptr);
     TEST_ASSERT_FALSE(r.ok);
     TEST_ASSERT_NOT_NULL(strstr(r.message, "Prof X"));
 
@@ -349,6 +368,42 @@ static void test_clear_all_uids(void) {
     TEST_ASSERT_EQUAL_STRING("", roster_student_at(find_idx("2023-0142"))->rfid_uid);
 }
 
+// --- roster_validate_tree (import: validate a staged tree, no live mutation) -
+
+static void test_validate_tree_accepts_good_staging(void) {
+    setup_valid();  // live roster OK (3 students, 1 class)
+    mocksd_add_file("/import_staging/students/students.json", STUDENTS_JSON);
+    mocksd_add_file("/import_staging/classes/CS101-M1/class.json", CLASS_CS101);
+
+    char msg[160] = "dirty";
+    TEST_ASSERT_TRUE(roster_validate_tree("/import_staging", msg, sizeof(msg)));
+    TEST_ASSERT_EQUAL_STRING("", msg);
+    // Live tree was restored: still OK, still the three students.
+    TEST_ASSERT_EQUAL(ROSTER_OK, roster_get_status());
+    TEST_ASSERT_EQUAL(3, roster_student_count());
+}
+
+static void test_validate_tree_rejects_bad_staging_leaving_live_intact(void) {
+    // A staged class references a student absent from the staged registry.
+    mocksd_add_file("/import_staging/students/students.json", STUDENTS_JSON);
+    mocksd_add_file(
+        "/import_staging/classes/BAD/class.json",
+        "{ \"version\": 1, \"code\": \"BAD\", \"name\": \"X\", "
+        "\"roster\": [ { \"id\": \"9999-9999\" } ] }");
+
+    char msg[160];
+    TEST_ASSERT_FALSE(roster_validate_tree("/import_staging", msg, sizeof(msg)));
+    TEST_ASSERT_NOT_NULL(strstr(msg, "unknown student"));
+
+    // Live tree is intact and re-readable, and its error string is cleared.
+    TEST_ASSERT_EQUAL(ROSTER_OK, roster_get_status());
+    TEST_ASSERT_EQUAL(3, roster_student_count());
+    TEST_ASSERT_TRUE(find_idx("2023-0142") >= 0);
+    char err[160];
+    roster_get_error(err, sizeof(err));
+    TEST_ASSERT_EQUAL_STRING("", err);
+}
+
 int main(int, char**) {
     mock_freertos_set_delay_scale(1000);
     event_bus_init();
@@ -371,7 +426,10 @@ int main(int, char**) {
     RUN_TEST(test_enroll_existing_adds_to_class_roster);
     RUN_TEST(test_enroll_new_adds_student_and_enrolls);
     RUN_TEST(test_enroll_new_rejects_existing_id);
+    RUN_TEST(test_enroll_new_rejects_overlong_turma);
     RUN_TEST(test_clear_all_uids);
-    RUN_TEST(test_enroll_rejects_professor_card);  // last: leaves config loaded
+    RUN_TEST(test_enroll_rejects_professor_card);  // last of the enroll chain
+    RUN_TEST(test_validate_tree_accepts_good_staging);          // resets to a fresh valid live tree
+    RUN_TEST(test_validate_tree_rejects_bad_staging_leaving_live_intact);  // chains from above
     return UNITY_END();
 }

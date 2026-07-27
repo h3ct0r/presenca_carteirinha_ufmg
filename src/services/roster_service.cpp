@@ -53,13 +53,15 @@ static int find_student(const char* id) {
     return -1;
 }
 
-static roster_status_t load_students(void) {
+static roster_status_t load_students(const char* root) {
     s_student_count = 0;
 
-    if (!SD_MMC.exists(STUDENTS_PATH)) {
-        return fail(ROSTER_NO_STUDENTS_FILE, "Missing %s", STUDENTS_PATH);
+    char path[64];
+    snprintf(path, sizeof(path), "%s%s", root, STUDENTS_PATH);
+    if (!SD_MMC.exists(path)) {
+        return fail(ROSTER_NO_STUDENTS_FILE, "Missing %s", path);
     }
-    File f = SD_MMC.open(STUDENTS_PATH, FILE_READ);
+    File f = SD_MMC.open(path, FILE_READ);
     if (!f) return fail(ROSTER_BAD_STUDENTS, "students.json: cannot open file");
     if (f.size() > STUDENTS_MAX_BYTES) {
         f.close();
@@ -125,13 +127,13 @@ static roster_status_t load_students(void) {
     return ROSTER_OK;
 }
 
-static roster_status_t load_one_class(const char* dname) {
+static roster_status_t load_one_class(const char* root, const char* dname) {
     if (s_class_count >= ROSTER_MAX_CLASSES) {
         return fail(ROSTER_BAD_CLASS, "more than %d classes in /classes", ROSTER_MAX_CLASSES);
     }
 
-    char path[96];
-    snprintf(path, sizeof(path), "%s/%s/class.json", CLASSES_DIR, dname);
+    char path[128];
+    snprintf(path, sizeof(path), "%s%s/%s/class.json", root, CLASSES_DIR, dname);
     if (!SD_MMC.exists(path)) {
         return fail(ROSTER_BAD_CLASS, "classes/%s: class.json is missing", dname);
     }
@@ -187,9 +189,10 @@ static roster_status_t load_one_class(const char* dname) {
                 return fail(ROSTER_BAD_CLASS, "classes/%s: more than %d students in roster",
                             dname, ROSTER_MAX_CLASS_STUDENTS);
             }
-            // Entries are objects ({"id": ...}); bare strings also accepted.
+            // Entries are objects ({"id": ..., "turma": ...}); bare strings too.
             const char* sid = v.is<const char*>() ? v.as<const char*>()
                                                   : (const char*)(v["id"] | "");
+            const char* turma = v.is<const char*>() ? "" : (const char*)(v["turma"] | "");
             if (sid == nullptr || sid[0] == '\0') {
                 return fail(ROSTER_BAD_CLASS, "classes/%s: roster entry %d has no id", dname,
                             c->roster_count + 1);
@@ -205,6 +208,7 @@ static roster_status_t load_one_class(const char* dname) {
                                 dname, sid);
                 }
             }
+            snprintf(c->roster_turma[c->roster_count], sizeof(c->roster_turma[0]), "%s", turma);
             c->roster[c->roster_count++] = (int16_t)idx;
         }
     }
@@ -213,13 +217,15 @@ static roster_status_t load_one_class(const char* dname) {
     return ROSTER_OK;
 }
 
-static roster_status_t load_classes(void) {
+static roster_status_t load_classes(const char* root) {
     s_class_count = 0;
 
-    File dir = SD_MMC.open(CLASSES_DIR);
+    char cdir[48];
+    snprintf(cdir, sizeof(cdir), "%s%s", root, CLASSES_DIR);
+    File dir = SD_MMC.open(cdir);
     if (!dir || !dir.isDirectory()) {
         // Legitimate first state: a card prepared with students only.
-        ESP_LOGW(TAG, "no %s directory, starting with zero classes", CLASSES_DIR);
+        ESP_LOGW(TAG, "no %s directory, starting with zero classes", cdir);
         if (dir) dir.close();
         return ROSTER_OK;
     }
@@ -230,7 +236,7 @@ static roster_status_t load_classes(void) {
             char dname[40];
             snprintf(dname, sizeof(dname), "%s", e.name());
             e.close();
-            roster_status_t st = load_one_class(dname);
+            roster_status_t st = load_one_class(root, dname);
             if (st != ROSTER_OK) {
                 dir.close();
                 return st;
@@ -243,14 +249,17 @@ static roster_status_t load_classes(void) {
     return ROSTER_OK;
 }
 
-static roster_status_t load_all(void) {
+// Loads students + classes from a tree rooted at `root` ("" = the live SD root,
+// "/import_staging" = a staged import). Threading the prefix through lets
+// roster_validate_tree() reuse the exact loaders against a candidate tree.
+static roster_status_t load_all(const char* root) {
     if (!sd_card_mount()) {
         return fail(ROSTER_NO_SD, "No SD card, or card not readable (FAT32 required)");
     }
 
-    roster_status_t st = load_students();
+    roster_status_t st = load_students(root);
     if (st != ROSTER_OK) return st;
-    st = load_classes();
+    st = load_classes(root);
     if (st != ROSTER_OK) return st;
 
     int bound = 0;
@@ -269,9 +278,32 @@ static roster_status_t load_all(void) {
 
 static roster_status_t locked_load(void) {
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    roster_status_t st = load_all();
+    roster_status_t st = load_all("");
     xSemaphoreGive(s_lock);
     return st;
+}
+
+bool roster_validate_tree(const char* root, char* msg, size_t cap) {
+    if (msg && cap) msg[0] = '\0';
+    if (!s_lock) {
+        if (msg && cap) snprintf(msg, cap, "roster service not started");
+        return false;
+    }
+    // The loaders write the shared arrays, so we borrow them as scratch: load
+    // the staged tree, capture the verdict, then reload the live tree to put
+    // everything back. The whole dance is under the one lock the enroll writes
+    // and the retry task also take, so no other task ever sees the staging data
+    // and s_status is left untouched (validation must not change what's
+    // published). Live RAM ends matching the live SD files, whatever happens.
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    roster_status_t st = load_all(root);
+    char captured[128];
+    snprintf(captured, sizeof(captured), "%s", s_error);
+    load_all("");  // restore live state from the SD root
+    xSemaphoreGive(s_lock);
+
+    if (msg && cap) snprintf(msg, cap, "%s", st == ROSTER_OK ? "" : captured);
+    return st == ROSTER_OK;
 }
 
 static void publish(roster_status_t st) {
@@ -305,6 +337,8 @@ bool roster_service_start(void) {
     }
     return true;
 }
+
+void roster_service_reload(void) { publish(locked_load()); }
 
 roster_status_t roster_get_status(void) { return s_status; }
 
@@ -424,9 +458,10 @@ static bool persist_new_student(const char* id, const char* name, const char* ui
     return write_json_file(STUDENTS_PATH, doc);
 }
 
-// Appends {"id": student_id} to the class roster if absent. Returns true if
-// the file is consistent afterwards (already-present is success, no write).
-static bool persist_enroll(const class_rec_t* cls, const char* student_id) {
+// Appends {"id": student_id, "turma": turma?} to the class roster if absent.
+// `turma` may be NULL/empty (no tag written). Returns true if the file is
+// consistent afterwards (already-present is success, no write).
+static bool persist_enroll(const class_rec_t* cls, const char* student_id, const char* turma) {
     char path[128];
     snprintf(path, sizeof(path), "%s/%s/class.json", CLASSES_DIR, cls->dir);
     JsonDocument doc;
@@ -439,16 +474,20 @@ static bool persist_enroll(const class_rec_t* cls, const char* student_id) {
     }
     JsonObject e = roster.add<JsonObject>();
     e["id"] = student_id;
+    if (turma && turma[0]) e["turma"] = turma;
     return write_json_file(path, doc);
 }
 
-// Adds student_idx to the in-RAM class roster if not already present.
-static void ram_enroll(class_rec_t* cls, int student_idx) {
+// Adds student_idx to the in-RAM class roster if not already present, tagging
+// the entry with `turma` (may be NULL/empty).
+static void ram_enroll(class_rec_t* cls, int student_idx, const char* turma) {
     for (int i = 0; i < cls->roster_count; i++) {
         if (cls->roster[i] == student_idx) return;
     }
     if (cls->roster_count < ROSTER_MAX_CLASS_STUDENTS) {
-        cls->roster[cls->roster_count++] = (int16_t)student_idx;
+        int slot = cls->roster_count++;
+        cls->roster[slot] = (int16_t)student_idx;
+        snprintf(cls->roster_turma[slot], sizeof(cls->roster_turma[0]), "%s", turma ? turma : "");
     }
 }
 
@@ -489,10 +528,10 @@ roster_result_t roster_enroll_existing(const char* class_code, int student_idx,
         } else {
             snprintf(s_students[student_idx].rfid_uid,
                      sizeof(s_students[student_idx].rfid_uid), "%s", uid);
-            if (!persist_enroll(&s_classes[ci], s_students[student_idx].id)) {
+            if (!persist_enroll(&s_classes[ci], s_students[student_idx].id, nullptr)) {
                 r = make_result(false, "Card saved, but class.json failed");
             } else {
-                ram_enroll(&s_classes[ci], student_idx);
+                ram_enroll(&s_classes[ci], student_idx, nullptr);
                 r = make_result(true, "Registered %s", s_students[student_idx].name);
             }
         }
@@ -502,7 +541,7 @@ roster_result_t roster_enroll_existing(const char* class_code, int student_idx,
 }
 
 roster_result_t roster_enroll_new(const char* class_code, const char* id, const char* name,
-                                  const char* uid) {
+                                  const char* uid, const char* turma) {
     xSemaphoreTake(s_lock, portMAX_DELAY);
     roster_result_t r = {false, ""};
 
@@ -516,6 +555,8 @@ roster_result_t roster_enroll_new(const char* class_code, const char* id, const 
         r = make_result(false, "Student data not loaded");
     } else if (!id || !id[0] || !name || !name[0]) {
         r = make_result(false, "Name and ID are required");
+    } else if (turma && strlen(turma) > 15) {  // per CONFIG_IMPORT.md §3.3
+        r = make_result(false, "Turma too long (max 15)");
     } else if (find_student(id) >= 0) {
         r = make_result(false, "Student %s already exists", id);
     } else if (norm[0] == '\0') {
@@ -535,10 +576,10 @@ roster_result_t roster_enroll_new(const char* class_code, const char* id, const 
         snprintf(s_students[idx].id, sizeof(s_students[idx].id), "%s", id);
         snprintf(s_students[idx].name, sizeof(s_students[idx].name), "%s", name);
         snprintf(s_students[idx].rfid_uid, sizeof(s_students[idx].rfid_uid), "%s", uid);
-        if (!persist_enroll(&s_classes[ci], id)) {
+        if (!persist_enroll(&s_classes[ci], id, turma)) {
             r = make_result(false, "Student saved, but class.json failed");
         } else {
-            ram_enroll(&s_classes[ci], idx);
+            ram_enroll(&s_classes[ci], idx, turma);
             r = make_result(true, "Added %s", name);
         }
     }

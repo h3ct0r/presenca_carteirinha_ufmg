@@ -46,6 +46,10 @@ typedef struct {
 // so the idle screen's first frame reflects the real state.
 bool config_service_start(void);
 
+// Re-reads /config.json and republishes the status. For the importer to call
+// after applying a new config. LVGL/import thread.
+void config_service_reload(void);
+
 // Current status. Safe to read from any task.
 config_status_t config_get_status(void);
 
@@ -98,6 +102,13 @@ config_result_t config_set_password(const char* email, const char* rfid_uid,
 // professor. Returns {ok,message} — on failure nothing is written. Call on the
 // UI/LVGL thread (does SD I/O).
 config_result_t config_set_rfid(const char* email, const char* rfid_uid, const char* new_uid);
+
+// Validates a staged config tree rooted at `root` (e.g. "/import_staging") with
+// the exact live rules, WITHOUT mutating shared state — used by the config
+// importer to check a tar before applying it. Reads "<root>/config.json".
+// Returns true when valid; on failure fills `msg` with the reason (empty on
+// success). Writes no shared state; call on the import (LVGL) thread (SD I/O).
+bool config_validate_tree(const char* root, char* msg, size_t cap);
 
 // Device-wide setting: whether to capture a student photo with the onboard
 // camera when presence is registered. False unless config.json has

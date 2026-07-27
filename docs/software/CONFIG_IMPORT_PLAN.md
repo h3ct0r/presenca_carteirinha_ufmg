@@ -5,8 +5,23 @@ contract). That file is the *what* (schemas, the merge-don't-replace table, the
 §4 path whitelist); **this file is the *how*** for the firmware side — the
 device import endpoint that the contract calls "not yet built."
 
-Status: **planned, not yet implemented.** The `tools/config-builder/` already
-produces a valid `config.tar`; nothing on the device unpacks one yet.
+Status: **implemented (2026-07-27).** All seven steps below are built, native-
+test-verified, and firmware-build-verified — **not yet run on hardware** (the
+LVGL modal flow and SD I/O timing surface only on device). See the
+`CONFIG_IMPORT.md` §5/§6 changelog for the shipped contract.
+
+Two decisions were refined during implementation:
+- **Web upload targets the SD root**, not a separate `/import/` dir. Uploading
+  `config.tar` to root via the Wi-Fi file manager lands it at `/config.tar` —
+  the identical path an inserted card uses — so there is one detection/import
+  path (`import_service_pending()` / `import_service_run()`), not two.
+- **Revert is an overlay, not a true rollback.** `import_service_revert()`
+  restores the authored files from `/backup/previous/`, but because import
+  (and revert) merge rather than replace (§2), a class the import *added* is not
+  removed by a revert. A roster whose new `students.json` orphans a pre-existing
+  class's roster will surface as a normal roster error after reload (recoverable
+  by fixing the card). Single backup slot (`/backup/previous/`); numbered
+  history is a later bump.
 
 ## Decisions locked in
 
@@ -171,10 +186,11 @@ device-only.
   prevents a re-import loop; **revert works by running the importer against
   `backup_store_root()`**.
 
-### Step 5 — web drop path (trigger B, no builder changes)
-- Convention: operator uploads `config.tar` to `/import/` via the existing file
-  manager (`file_server.cpp` already has `/api/upload?dir=`). No `/api/import`
-  (v2 stays deferred).
+### Step 5 — web drop path (trigger B, no firmware changes)
+- Convention (final): operator uploads `config.tar` to the **SD root** via the
+  existing file manager (`file_server.cpp` already has `/api/upload?dir=`),
+  landing it at `/config.tar` — the same path an inserted card uses, so the SD
+  detection/import path handles both. No new dir, no `/api/import` (v2 deferred).
 
 ### Step 6 — UI triggers + confirm-first modal (device build-verified only)
 - Shared confirm modal → `import_service_run`.

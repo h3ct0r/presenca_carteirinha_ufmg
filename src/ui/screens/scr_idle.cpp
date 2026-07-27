@@ -7,8 +7,10 @@
 #include "app/teacher.h"
 #include "audio/beeper.h"
 #include "services/config_service.h"
+#include "services/import_service.h"
 #include "services/roster_service.h"
 #include "ui/components/keyboard.h"
+#include "ui/components/toast.h"
 #include "ui/screen_manager.h"
 #include "ui/theme/theme.h"
 #include "ui/ui_state.h"
@@ -34,6 +36,8 @@ static lv_obj_t* s_denied = nullptr;    // transient "access denied" pill
 static lv_timer_t* s_denied_timer = nullptr;
 static lv_obj_t* s_pw_modal = nullptr;
 static lv_obj_t* s_pw_ta = nullptr;
+static lv_obj_t* s_import_btn = nullptr;    // "Import config from SD" (in the error panel)
+static lv_obj_t* s_import_modal = nullptr;  // confirm overlay
 
 // define the new custom monserrat as default
 // this font was created by fontawesome and has extra characters
@@ -151,6 +155,67 @@ static void open_pw_modal(lv_event_t*) {
     lv_obj_set_flex_grow(ok, 1);
 }
 
+// ---- config import (offline config.tar) -----------------------------------
+
+static void close_import_modal(void) {
+    if (s_import_modal) {
+        lv_obj_delete(s_import_modal);
+        s_import_modal = nullptr;
+    }
+}
+
+static void import_cancel_cb(lv_event_t*) { close_import_modal(); }
+
+static void import_confirm_cb(lv_event_t*) {
+    close_import_modal();
+    // Runs the full pipeline (backup -> validate -> apply -> reload). On success
+    // the reload republishes config/roster status, so the observers refresh the
+    // gate panel on their own — nothing to do here but report.
+    import_result_t r = import_service_run(import_service_tar_path());
+    ui_toast_show(r.message, r.ok);
+}
+
+static void open_import_confirm(lv_event_t*) {
+    if (s_import_modal) return;
+
+    s_import_modal = lv_obj_create(s_root);
+    lv_obj_remove_style_all(s_import_modal);
+    lv_obj_set_size(s_import_modal, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(s_import_modal, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(s_import_modal, LV_OPA_50, 0);
+    lv_obj_add_flag(s_import_modal, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(s_import_modal, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* card = ui_make_card(s_import_modal);
+    lv_obj_set_width(card, LV_PCT(86));
+    lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(card, 12, 0);
+
+    ui_make_label(card, LV_SYMBOL_DOWNLOAD "  Import configuration", THEME_PRIMARY,
+                  &lv_font_montserrat_20);
+    lv_obj_t* hint = ui_make_label(
+        card,
+        "A config.tar was found on the SD card. Import it to set up this device? Any existing "
+        "configuration is backed up first.",
+        THEME_MUTED, &lv_font_montserrat_14);
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(hint, LV_PCT(100));
+
+    lv_obj_t* row = lv_obj_create(card);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(row, 10, 0);
+    lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* cancel =
+        ui_make_button(row, "Cancel", &theme_style_btn_outline, import_cancel_cb, nullptr);
+    lv_obj_set_flex_grow(cancel, 1);
+    lv_obj_t* ok = ui_make_button(row, "Import", &theme_style_btn_primary, import_confirm_cb,
+                                  nullptr);
+    lv_obj_set_flex_grow(ok, 1);
+}
+
 // ---- static content -------------------------------------------------------
 
 static lv_obj_t* make_card_glyph(lv_obj_t* parent) {
@@ -228,6 +293,11 @@ static void build_error(lv_obj_t* root) {
     lv_obj_set_style_text_align(s_error_msg, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(s_error_msg, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(s_error_msg, LV_PCT(90));
+
+    // Offered only when a config.tar is waiting on the SD card (see update_gate).
+    s_import_btn = ui_make_button(s_error, LV_SYMBOL_DOWNLOAD "  Import config from SD",
+                                  &theme_style_btn_primary, open_import_confirm, nullptr);
+    lv_obj_add_flag(s_import_btn, LV_OBJ_FLAG_HIDDEN);
 }
 
 // The gate panel reflects two independent checks: config.json (teachers /
@@ -263,6 +333,14 @@ static void update_gate_cb(lv_observer_t*, lv_subject_t*) {
 
     lv_obj_add_flag(s_prompt, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(s_error, LV_OBJ_FLAG_HIDDEN);
+
+    // Surface the one-tap SD import whenever a config.tar is waiting — the
+    // primary path for setting up a brand-new device with no valid config yet.
+    if (import_service_pending()) {
+        lv_obj_remove_flag(s_import_btn, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_import_btn, LV_OBJ_FLAG_HIDDEN);
+    }
 
     const char* title = "Configuration needed";
     char msg[160];
@@ -393,6 +471,7 @@ static lv_obj_t* create(void) {
 
 static void on_hide(void) {
     close_pw_modal();
+    close_import_modal();
     if (s_denied_timer) {
         lv_timer_delete(s_denied_timer);
         s_denied_timer = nullptr;

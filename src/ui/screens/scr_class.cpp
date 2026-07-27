@@ -13,6 +13,7 @@
 #include "storage/attendance_store.h"
 #include "ui/components/keyboard.h"
 #include "ui/components/shell.h"
+#include "ui/components/student_photo.h"
 #include "ui/components/toast.h"
 #include "ui/screen_manager.h"
 #include "ui/theme/theme.h"
@@ -58,10 +59,12 @@ static lv_obj_t* s_search_ta = nullptr;
 static lv_obj_t* s_results = nullptr;
 static lv_obj_t* s_manual_id_ta = nullptr;
 static lv_obj_t* s_manual_name_ta = nullptr;
+static lv_obj_t* s_manual_turma_ta = nullptr;
 static int s_sel_idx = -1;         // selected existing student (registry index)
 static bool s_sel_is_new = false;  // selecting a manually-entered new student
 static char s_new_id[20];
 static char s_new_name[48];
+static char s_new_turma[16];       // optional class-group tag (class.json only)
 
 // Enrollment lock: the Enroll tab is gated behind a professor card/password.
 static bool s_unlocked = false;
@@ -70,6 +73,16 @@ static lv_obj_t* s_kiosk_btn = nullptr;
 static lv_obj_t* s_unlock_modal = nullptr;
 static lv_obj_t* s_unlock_ta = nullptr;
 static bool s_unlock_goto_enroll = false;  // jump to Enroll after a successful unlock
+
+// Transient "presence registered" feedback overlay (photo + name + status),
+// shown on each session card tap and auto-dismissed.
+static lv_obj_t* s_fb_overlay = nullptr;
+static lv_timer_t* s_fb_timer = nullptr;
+
+// Count of roster students who have an avatar on the SD card. Computed once per
+// class entry (on_show) — never in the per-scan rebuild — since it does one SD
+// lookup per student.
+static int s_photo_count = 0;
 
 static void rebuild_content(void);
 static void enroll_goto(enroll_state_t st);
@@ -87,6 +100,64 @@ static void back_cb(lv_event_t*) { scr_mgr_show(SCREEN_CLASSES, nullptr); }
 // --- Session tab: date picker + roll call -----------------------------------
 
 // registry index of the roster student whose card matches, or -1.
+// Counts roster students whose avatar file exists on the card. One SD lookup
+// per student, so it is called once on class entry, not on every rebuild.
+static int count_students_with_photos(void) {
+    if (!s_cls) return 0;
+    int n = 0;
+    for (int j = 0; j < s_cls->roster_count; j++) {
+        const student_t* st = roster_student_at(s_cls->roster[j]);
+        if (st && student_photo_exists(st->id)) n++;
+    }
+    return n;
+}
+
+// This student's turma in the current class (by registry index), or "".
+static const char* class_turma_for_student(int student_idx) {
+    if (!s_cls) return "";
+    for (int j = 0; j < s_cls->roster_count; j++) {
+        if (s_cls->roster[j] == student_idx) return s_cls->roster_turma[j];
+    }
+    return "";
+}
+
+// Builds a "TE1: 12   TE2: 8   (none): 3" breakdown of the class by turma into
+// `out` (ASCII only — the Montserrat glyph set is limited). Untagged students
+// group under "(none)". Returns true if at least one student carries a turma tag
+// (so the caller can hide the stat otherwise).
+static bool format_turma_stats(char* out, size_t cap) {
+    out[0] = '\0';
+    if (!s_cls) return false;
+    struct { const char* name; int count; } groups[ROSTER_MAX_CLASS_STUDENTS];
+    int ng = 0;
+    bool any = false;
+    for (int j = 0; j < s_cls->roster_count; j++) {
+        const char* t = s_cls->roster_turma[j][0] ? s_cls->roster_turma[j] : "(none)";
+        if (s_cls->roster_turma[j][0]) any = true;
+        int g = -1;
+        for (int k = 0; k < ng; k++) {
+            if (strcmp(groups[k].name, t) == 0) {
+                g = k;
+                break;
+            }
+        }
+        if (g < 0) {
+            g = ng++;
+            groups[g].name = t;
+            groups[g].count = 0;
+        }
+        groups[g].count++;
+    }
+    size_t len = 0;
+    for (int k = 0; k < ng && len < cap; k++) {
+        int w = snprintf(out + len, cap - len, "%s%s: %d", k ? "    " : "", groups[k].name,
+                         groups[k].count);
+        if (w < 0 || (size_t)w >= cap - len) break;
+        len += (size_t)w;
+    }
+    return any;
+}
+
 static int roster_student_by_uid(const char* uid_hex) {
     char norm[32];
     uid_normalize(uid_hex, norm, sizeof(norm));
@@ -108,14 +179,115 @@ static void rebuild_session_open(void) {
 }
 
 // A card tap during an open session marks that student present.
+// Tears down the transient presence-feedback overlay and frees the photo it
+// decoded. Safe to call when nothing is showing.
+static void close_presence_feedback(void) {
+    if (s_fb_timer) {
+        lv_timer_delete(s_fb_timer);
+        s_fb_timer = nullptr;
+    }
+    if (s_fb_overlay) {
+        lv_obj_delete(s_fb_overlay);  // LVGL frees the decoded image cache itself
+        s_fb_overlay = nullptr;
+    }
+}
+
+static void fb_timer_cb(lv_timer_t*) {
+    // One-shot timer: LVGL deletes it after this callback returns, so drop our
+    // handle first — close_presence_feedback() must not delete it a second time.
+    s_fb_timer = nullptr;
+    close_presence_feedback();
+}
+static void fb_dismiss_cb(lv_event_t*) { close_presence_feedback(); }
+
+// Shows a full-screen feedback card for a card tap: the student's photo (if one
+// exists on the SD card, otherwise a placeholder), their name/id, and a colored
+// status line. `st` is NULL for an unrecognized card. Auto-dismisses; a tap or
+// the next scan closes it early. The photo is shown whether or not the
+// attendance write succeeded — the caller picks the color/text accordingly.
+static void show_presence_feedback(const student_t* st, const char* turma, uint32_t color,
+                                   const char* status_icon, const char* status_text) {
+    close_presence_feedback();  // replace any prior overlay (and free its photo)
+
+    // Parented to the screen root, not s_content, so the roll-call rebuild that
+    // follows a scan doesn't delete it.
+    s_fb_overlay = lv_obj_create(s_sh.root);
+    lv_obj_remove_style_all(s_fb_overlay);
+    lv_obj_add_flag(s_fb_overlay, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    lv_obj_set_size(s_fb_overlay, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(s_fb_overlay, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(s_fb_overlay, LV_OPA_40, 0);
+    lv_obj_add_flag(s_fb_overlay, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(s_fb_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(s_fb_overlay, fb_dismiss_cb, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t* card = ui_make_card(s_fb_overlay);
+    lv_obj_set_width(card, LV_PCT(80));
+    lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(card, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(card, 12, 0);
+    lv_obj_set_style_border_color(card, lv_color_hex(color), 0);
+    lv_obj_set_style_border_width(card, 3, 0);
+
+    // Photo when one exists on the card; a neutral placeholder avatar otherwise.
+    char photo_src[80];
+    if (st && student_photo_src(st->id, photo_src, sizeof(photo_src))) {
+        lv_obj_t* img = lv_image_create(card);
+        lv_image_set_src(img, photo_src);  // LVGL + TJPGD decode from the 'S' drive
+    } else {
+        const int SZ = 120;
+        lv_obj_t* ph = lv_obj_create(card);
+        lv_obj_remove_flag(ph, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_size(ph, SZ, SZ);
+        lv_obj_set_style_radius(ph, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(ph, lv_color_hex(color), 0);
+        lv_obj_set_style_bg_opa(ph, LV_OPA_20, 0);
+        lv_obj_set_style_border_width(ph, 0, 0);
+        lv_obj_center(ui_make_label(ph, LV_SYMBOL_IMAGE, color, &lv_font_montserrat_32));
+    }
+
+    if (st) {
+        ui_make_label(card, st->name, THEME_TEXT, &lv_font_montserrat_20);
+        char idline[40];
+        snprintf(idline, sizeof(idline), "ID %s", st->id);
+        ui_make_label(card, idline, THEME_MUTED, &lv_font_montserrat_14);
+        if (turma && turma[0]) {
+            char tline[32];
+            snprintf(tline, sizeof(tline), "Turma %s", turma);
+            ui_make_label(card, tline, THEME_PRIMARY, &lv_font_montserrat_20);
+        }
+    }
+
+    char status[80];
+    snprintf(status, sizeof(status), "%s  %s", status_icon, status_text);
+    ui_make_label(card, status, color, &lv_font_montserrat_20);
+
+    s_fb_timer = lv_timer_create(fb_timer_cb, 2600, nullptr);
+    lv_timer_set_repeat_count(s_fb_timer, 1);
+}
+
 static void on_session_card(const char* uid_hex) {
     int idx = roster_student_by_uid(uid_hex);
     if (idx < 0) {
         beeper_error();
-        ui_toast_show("Card not recognized in this class", false);
+        show_presence_feedback(nullptr, nullptr, THEME_DANGER, LV_SYMBOL_CLOSE,
+                               "Card not recognized");
     } else {
-        beeper_beep();
-        attendance_set(roster_student_at(idx)->id, true);
+        const student_t* st = roster_student_at(idx);
+        const char* turma = class_turma_for_student(idx);
+        // Show the student's photo regardless of whether the SD write succeeds;
+        // a failed write still marks them present in RAM, so say so honestly.
+        bool ok = attendance_set(st->id, true);
+        if (ok) {
+            beeper_beep();
+        } else {
+            beeper_error();
+        }
+        show_presence_feedback(st, turma, ok ? THEME_SUCCESS : THEME_WARNING,
+                               ok ? LV_SYMBOL_OK : LV_SYMBOL_WARNING,
+                               ok ? "Presence registered" : "Marked (save failed)");
     }
     rebuild_session_open();  // refresh + re-arm the card capture
 }
@@ -181,6 +353,20 @@ static void build_session_open(void) {
     lv_bar_set_value(bar, present, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(bar, lv_color_hex(THEME_BORDER), LV_PART_MAIN);
     lv_obj_set_style_bg_color(bar, lv_color_hex(THEME_SUCCESS), LV_PART_INDICATOR);
+
+    char photo_txt[48];
+    snprintf(photo_txt, sizeof(photo_txt), LV_SYMBOL_IMAGE "  %d/%d with photo", s_photo_count,
+             total);
+    ui_make_label(summary, photo_txt, THEME_MUTED, &lv_font_montserrat_14);
+
+    char turma_txt[160];
+    if (format_turma_stats(turma_txt, sizeof(turma_txt))) {
+        char line[192];
+        snprintf(line, sizeof(line), LV_SYMBOL_LIST "  Turmas:  %s", turma_txt);
+        lv_obj_t* tl = ui_make_label(summary, line, THEME_MUTED, &lv_font_montserrat_14);
+        lv_label_set_long_mode(tl, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(tl, LV_PCT(100));
+    }
 
     lv_obj_t* close = ui_make_button(summary, "Close session", &theme_style_btn_outline,
                                      close_session_cb, nullptr);
@@ -393,6 +579,7 @@ static void add_manual_cb(lv_event_t*) {
     const char* q = s_search_ta ? lv_textarea_get_text(s_search_ta) : "";
     snprintf(s_new_name, sizeof(s_new_name), "%s", q);
     s_new_id[0] = '\0';
+    s_new_turma[0] = '\0';
     enroll_goto(ENROLL_MANUAL);
 }
 
@@ -494,6 +681,7 @@ static void manual_continue_cb(lv_event_t*) {
     }
     snprintf(s_new_id, sizeof(s_new_id), "%s", id);
     snprintf(s_new_name, sizeof(s_new_name), "%s", name);
+    snprintf(s_new_turma, sizeof(s_new_turma), "%s", lv_textarea_get_text(s_manual_turma_ta));
     s_sel_is_new = true;
     enroll_goto(ENROLL_WAIT);
 }
@@ -515,6 +703,10 @@ static void build_enroll_manual(void) {
                                               LV_KEYBOARD_MODE_TEXT_LOWER);
     if (s_new_name[0]) lv_textarea_set_text(s_manual_name_ta, s_new_name);
 
+    ui_make_label(card, "Turma (optional)", THEME_TEXT, &lv_font_montserrat_14);
+    s_manual_turma_ta = keyboard_make_textarea(card, "e.g. TE1", 15, LV_KEYBOARD_MODE_TEXT_UPPER);
+    if (s_new_turma[0]) lv_textarea_set_text(s_manual_turma_ta, s_new_turma);
+
     lv_obj_t* cont = ui_make_button(card, "Continue to card", &theme_style_btn_primary,
                                     manual_continue_cb, nullptr);
     lv_obj_set_width(cont, LV_PCT(100));
@@ -532,7 +724,7 @@ static void on_enroll_card(const char* uid_hex) {
     roster_result_t r;
     const char* sid;
     if (s_sel_is_new) {
-        r = roster_enroll_new(s_cls->code, s_new_id, s_new_name, uid_hex);
+        r = roster_enroll_new(s_cls->code, s_new_id, s_new_name, uid_hex, s_new_turma);
         sid = s_new_id;
     } else {
         r = roster_enroll_existing(s_cls->code, s_sel_idx, uid_hex);
@@ -787,6 +979,7 @@ static void rebuild_content(void) {
     // Leaving any enroll sub-state: no card should be captured for enroll.
     ui_set_card_capture(nullptr);
     keyboard_hide();
+    close_presence_feedback();  // don't let a scan overlay linger across tabs
 
     // Swap only the active/idle look, preserving the button's height, flex
     // grow and press feedback (which lv_obj_remove_style_all would wipe).
@@ -865,6 +1058,7 @@ static void on_show(void* arg) {
         s_tab = TAB_SESSION;
         s_unlocked = false;  // re-lock enrollment on each class entry
     }
+    s_photo_count = count_students_with_photos();  // once per entry, not per scan
     update_lock_state();
     update_kiosk_btn();
     lv_label_set_text(s_sh.title, s_cls ? s_cls->name : "?");
@@ -881,6 +1075,7 @@ static void on_show(void* arg) {
 static void on_hide(void) {
     keyboard_hide();
     ui_set_card_capture(nullptr);
+    close_presence_feedback();
 }
 
 const screen_t scr_class = {
