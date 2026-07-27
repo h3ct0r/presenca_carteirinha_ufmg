@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "esp32-hal-log.h"
+
 #include "app/session.h"
 #include "services/config_service.h"
 #include "services/roster_service.h"
@@ -13,6 +15,7 @@
 #include "ui/components/toast.h"
 #include "ui/screen_manager.h"
 #include "ui/theme/theme.h"
+#include "ui/ui.h"
 #include "ui/ui_state.h"
 
 // Profile identity labels, filled in on_show from the logged-in session.
@@ -24,6 +27,7 @@ static lv_obj_t* s_card = nullptr;
 static lv_obj_t* s_root = nullptr;      // shell root, parent for the modals
 static lv_obj_t* s_storage = nullptr;   // SD-card usage meter
 static lv_obj_t* s_security = nullptr;  // password section
+static lv_obj_t* s_rfid = nullptr;      // professor RFID card section
 static lv_obj_t* s_settings = nullptr;  // device settings (photo capture)
 static lv_obj_t* s_debug = nullptr;     // debug tools section
 
@@ -36,8 +40,17 @@ static lv_obj_t* s_pw_modal = nullptr;
 static lv_obj_t* s_pw_new = nullptr;
 static lv_obj_t* s_pw_confirm = nullptr;
 
+// "Tap the new card" modal for changing the professor's own RFID card.
+static lv_obj_t* s_rfid_modal = nullptr;
+
+// Debug card-reader modal (prints whatever card is tapped).
+static lv_obj_t* s_reader_modal = nullptr;
+static lv_obj_t* s_reader_uid = nullptr;  // label that shows the last UID read
+
 static void build_security(void);
+static void build_rfid(void);
 static void build_storage(void);
+static void fill_profile(void);
 
 static void sign_out_cb(lv_event_t*) {
     session_set(nullptr);
@@ -219,6 +232,100 @@ static void build_security(void) {
     lv_obj_set_width(btn, LV_PCT(100));
 }
 
+// --- professor RFID card ----------------------------------------------------
+
+static void close_rfid_modal(void) {
+    if (s_rfid_modal) {
+        ui_set_card_capture(nullptr);  // stop diverting scans to us
+        lv_obj_delete(s_rfid_modal);
+        s_rfid_modal = nullptr;
+    }
+}
+
+// Runs on the LVGL thread when a card is tapped while the modal is open.
+static void on_rfid_card(const char* uid_hex) {
+    const teacher_t* t = session_get();
+    config_result_t r = config_set_rfid(t ? t->email : "", t ? t->rfid_uid : "", uid_hex);
+    ui_toast_show(r.message, r.ok);
+    if (r.ok) {
+        // Keep the session identity in sync so a later change still matches us
+        // (the rfid_uid fallback identity would otherwise use the stale UID).
+        if (t) {
+            teacher_t updated = *t;
+            snprintf(updated.rfid_uid, sizeof(updated.rfid_uid), "%s", uid_hex);
+            session_set(&updated);
+        }
+        close_rfid_modal();
+        fill_profile();  // profile card shows the card too
+        build_rfid();    // refresh the "card set" status
+    } else {
+        ui_set_card_capture(on_rfid_card);  // let them try another card
+    }
+}
+
+static void rfid_cancel_cb(lv_event_t*) { close_rfid_modal(); }
+
+static void open_rfid_modal(void) {
+    if (s_rfid_modal) return;
+
+    s_rfid_modal = lv_obj_create(s_root);
+    lv_obj_remove_style_all(s_rfid_modal);
+    lv_obj_add_flag(s_rfid_modal, LV_OBJ_FLAG_IGNORE_LAYOUT);  // full-screen overlay
+    lv_obj_set_size(s_rfid_modal, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(s_rfid_modal, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(s_rfid_modal, LV_OPA_50, 0);
+    lv_obj_add_flag(s_rfid_modal, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(s_rfid_modal, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* card = ui_make_card(s_rfid_modal);
+    lv_obj_set_width(card, LV_PCT(88));
+    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 80);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(card, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(card, 12, 0);
+    lv_obj_set_style_pad_ver(card, 20, 0);
+
+    ui_make_label(card, LV_SYMBOL_SD_CARD, THEME_ACCENT, &lv_font_montserrat_32);
+    ui_make_label(card, "Tap your new card", THEME_PRIMARY, &lv_font_montserrat_20);
+    lv_obj_t* hint = ui_make_label(
+        card, "Hold the RFID card near the reader. It replaces your current login card.",
+        THEME_MUTED, &lv_font_montserrat_14);
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(hint, LV_PCT(100));
+
+    lv_obj_t* cancel = ui_make_button(card, "Cancel", &theme_style_btn_outline, rfid_cancel_cb,
+                                      nullptr);
+    lv_obj_set_width(cancel, LV_PCT(100));
+
+    ui_set_card_capture(on_rfid_card);  // divert the next scan here
+}
+
+static void change_rfid_cb(lv_event_t*) { open_rfid_modal(); }
+
+static void build_rfid(void) {
+    lv_obj_clean(s_rfid);
+    const teacher_t* t = session_get();
+    bool has = t && t->rfid_uid[0];
+
+    lv_obj_t* card = ui_make_card(s_rfid);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(card, 8, 0);
+
+    ui_make_label(card, "RFID card", THEME_PRIMARY, &lv_font_montserrat_20);
+    if (has) {
+        char line[80];
+        snprintf(line, sizeof(line), "Your login card: %s", t->rfid_uid);
+        ui_make_label(card, line, THEME_SUCCESS, &lv_font_montserrat_14);
+    } else {
+        ui_make_label(card, "No card bound. Add one to log in by tapping instead of typing.",
+                      THEME_MUTED, &lv_font_montserrat_14);
+    }
+
+    lv_obj_t* btn = ui_make_button(card, has ? "Change card" : "Set card",
+                                   &theme_style_btn_primary, change_rfid_cb, nullptr);
+    lv_obj_set_width(btn, LV_PCT(100));
+}
+
 // --- device settings --------------------------------------------------------
 
 static void camera_preview_cb(lv_event_t*) { scr_mgr_show(SCREEN_CAMERA, nullptr); }
@@ -352,6 +459,67 @@ static void debug_toggle_cb(lv_event_t* e) {
     }
 }
 
+// --- debug card reader ------------------------------------------------------
+
+static void close_reader_modal(void) {
+    if (s_reader_modal) {
+        ui_set_card_capture(nullptr);
+        lv_obj_delete(s_reader_modal);
+        s_reader_modal = nullptr;
+        s_reader_uid = nullptr;
+    }
+}
+
+// Prints each tapped card's UID and stays armed for the next one.
+static void on_reader_card(const char* uid_hex) {
+    ESP_LOGI("admin", "debug card reader: %s", uid_hex);
+    if (s_reader_uid) {
+        lv_label_set_text(s_reader_uid, uid_hex);
+        lv_obj_set_style_text_color(s_reader_uid, lv_color_hex(THEME_SUCCESS), 0);
+    }
+    ui_set_card_capture(on_reader_card);  // keep reading
+}
+
+static void reader_close_cb(lv_event_t*) { close_reader_modal(); }
+
+static void open_reader_modal(void) {
+    if (s_reader_modal) return;
+
+    s_reader_modal = lv_obj_create(s_root);
+    lv_obj_remove_style_all(s_reader_modal);
+    lv_obj_add_flag(s_reader_modal, LV_OBJ_FLAG_IGNORE_LAYOUT);  // full-screen overlay
+    lv_obj_set_size(s_reader_modal, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(s_reader_modal, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(s_reader_modal, LV_OPA_50, 0);
+    lv_obj_add_flag(s_reader_modal, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(s_reader_modal, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* card = ui_make_card(s_reader_modal);
+    lv_obj_set_width(card, LV_PCT(88));
+    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 80);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(card, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(card, 12, 0);
+    lv_obj_set_style_pad_ver(card, 20, 0);
+
+    ui_make_label(card, LV_SYMBOL_SD_CARD, THEME_ACCENT, &lv_font_montserrat_32);
+    ui_make_label(card, "Card reader", THEME_PRIMARY, &lv_font_montserrat_20);
+    ui_make_label(card, "Tap any card to read its UID", THEME_MUTED, &lv_font_montserrat_14);
+
+    s_reader_uid = ui_make_label(card, "Waiting for card...", THEME_MUTED, &lv_font_montserrat_20);
+    lv_label_set_long_mode(s_reader_uid, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(s_reader_uid, LV_PCT(100));
+    lv_obj_set_style_text_align(s_reader_uid, LV_TEXT_ALIGN_CENTER, 0);
+
+    lv_obj_t* close = ui_make_button(card, "Close", &theme_style_btn_outline, reader_close_cb,
+                                     nullptr);
+    lv_obj_set_width(close, LV_PCT(100));
+
+    ui_set_card_capture(on_reader_card);
+}
+
+static void reader_open_cb(lv_event_t*) { open_reader_modal(); }
+
 static void build_debug(void) {
     lv_obj_clean(s_debug);
 
@@ -359,6 +527,11 @@ static void build_debug(void) {
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(card, 8, 0);
     ui_make_label(card, "Debug", THEME_PRIMARY, &lv_font_montserrat_20);
+
+    // Card reader — always available; harmless and handy for reading a UID.
+    lv_obj_t* reader = ui_make_button(card, LV_SYMBOL_SD_CARD "  Read a card",
+                                      &theme_style_btn_outline, reader_open_cb, nullptr);
+    lv_obj_set_width(reader, LV_PCT(100));
 
     lv_obj_t* row = lv_obj_create(card);
     lv_obj_remove_style_all(row);
@@ -413,6 +586,7 @@ static lv_obj_t* create(void) {
     s_storage = make_section(sh.body);
     s_settings = make_section(sh.body);
     s_security = make_section(sh.body);
+    s_rfid = make_section(sh.body);
     s_debug = make_section(sh.body);
     // Extra breathing room between the camera-preview button and the password
     // section that follows it.
@@ -431,12 +605,15 @@ static void on_show(void*) {
     fill_profile();
     build_storage();
     build_security();
+    build_rfid();
     build_settings();
     build_debug();
 }
 
 static void on_hide(void) {
     close_pw_modal();
+    close_rfid_modal();
+    close_reader_modal();
     close_wipe_confirm();
 }
 

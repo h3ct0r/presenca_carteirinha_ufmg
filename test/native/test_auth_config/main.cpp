@@ -14,6 +14,7 @@
 #include "mock_freertos.h"
 #include "mock_sd.h"
 #include "services/config_service.h"
+#include "services/roster_service.h"
 
 void setUp(void) {
     app_event_t ev;
@@ -284,6 +285,65 @@ static void test_change_password_replaces_old(void) {
     TEST_ASSERT_EQUAL_STRING("Prof A", who.name);
 }
 
+// --- config_set_rfid (Admin panel card editing) -----------------------------
+// Continues the chain: config currently has Prof A (a@x, AA:00) and
+// Prof B (b@x, BB:00).
+
+static void test_set_rfid_changes_card(void) {
+    config_result_t r = config_set_rfid("a@x", "AA:00", "CC:11:22:33");
+    TEST_ASSERT_TRUE(r.ok);
+    // The new card now identifies Prof A; the old one no longer matches anyone.
+    teacher_t who = {};
+    TEST_ASSERT_TRUE(config_find_teacher_by_uid("CC:11:22:33", &who));
+    TEST_ASSERT_EQUAL_STRING("Prof A", who.name);
+    TEST_ASSERT_FALSE(config_find_teacher_by_uid("AA:00", nullptr));
+}
+
+static void test_set_rfid_rejects_duplicate(void) {
+    // Prof B carries BB:00; Prof A must not be allowed to take it, even when it
+    // is written in a different but equivalent format.
+    config_result_t r = config_set_rfid("a@x", "CC:11:22:33", "bb-00");
+    TEST_ASSERT_FALSE(r.ok);
+    TEST_ASSERT_NOT_NULL(strstr(r.message, "another professor"));
+    // Prof A's card is unchanged.
+    TEST_ASSERT_TRUE(config_find_teacher_by_uid("CC:11:22:33", nullptr));
+}
+
+static void test_set_rfid_rejects_empty(void) {
+    config_result_t r = config_set_rfid("a@x", "CC:11:22:33", "");
+    TEST_ASSERT_FALSE(r.ok);
+    TEST_ASSERT_TRUE(config_find_teacher_by_uid("CC:11:22:33", nullptr));
+}
+
+// Self-contained: seeds both a config and a student roster so the cross-service
+// "is this card a student's?" guard can be exercised.
+static void test_set_rfid_rejects_student_card(void) {
+    mocksd_reset();
+    mocksd_add_file("/config.json",
+                    "{ \"teachers\": [\n"
+                    "  { \"name\": \"Prof A\", \"email\": \"a@x\", \"rfid_uid\": \"AA:00\" }\n"
+                    "] }");
+    mocksd_add_file("/students/students.json",
+                    "{ \"version\": 1, \"students\": [\n"
+                    "  { \"id\": \"2023-0142\", \"name\": \"Maria Santos\", "
+                    "\"rfid_uid\": \"04:A3:1B:2C\" }\n"
+                    "] }");
+    config_service_start();
+    roster_service_start();
+    TEST_ASSERT_EQUAL(CONFIG_OK, config_get_status());
+    TEST_ASSERT_EQUAL(ROSTER_OK, roster_get_status());
+
+    // Maria's card (in a different format) is refused, naming her.
+    config_result_t r = config_set_rfid("a@x", "AA:00", "04-a3-1b-2c");
+    TEST_ASSERT_FALSE(r.ok);
+    TEST_ASSERT_NOT_NULL(strstr(r.message, "Maria Santos"));
+    TEST_ASSERT_FALSE(config_find_teacher_by_uid("04:A3:1B:2C", nullptr));
+
+    // A card that belongs to nobody is still accepted.
+    config_result_t ok = config_set_rfid("a@x", "AA:00", "DE:AD:BE:EF");
+    TEST_ASSERT_TRUE(ok.ok);
+}
+
 int main(int, char**) {
     // Park the services' background retry loops far beyond the test run.
     mock_freertos_set_delay_scale(1000);
@@ -305,6 +365,10 @@ int main(int, char**) {
     RUN_TEST(test_set_password_rejects_duplicate);
     RUN_TEST(test_set_password_rejects_non_numeric);
     RUN_TEST(test_change_password_replaces_old);
+    RUN_TEST(test_set_rfid_changes_card);      // chain continues from the password tests
+    RUN_TEST(test_set_rfid_rejects_duplicate);
+    RUN_TEST(test_set_rfid_rejects_empty);
+    RUN_TEST(test_set_rfid_rejects_student_card);    // self-contained (own config + roster)
     RUN_TEST(test_photo_capture_defaults_off);       // self-contained (own config)
     RUN_TEST(test_photo_capture_parsed_and_persisted);
     return UNITY_END();

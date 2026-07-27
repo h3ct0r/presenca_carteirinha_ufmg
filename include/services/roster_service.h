@@ -55,6 +55,15 @@ const student_t* roster_student_at(int idx);
 // Index of the class with this code, or -1.
 int roster_class_index(const char* code);
 
+// True if `uid` (in any format — canonicalized internally) is currently bound
+// to a student. On a match, copies that student's name into name_out (may be
+// NULL, cap the buffer size). Returns false when the roster isn't loaded, so
+// the caller can't rely on it as proof of "no student" when the SD data is
+// broken. Mirrors the professor-collision guard the enroll path applies to
+// students; used by config_set_rfid to keep a professor from taking a card
+// that already belongs to a student. LVGL-thread reads are safe.
+bool roster_uid_belongs_to_student(const char* uid, char* name_out, size_t cap);
+
 // --- Enrollment writes (SD card) -------------------------------------------
 //
 // Bind a student's RFID card and make sure they are in a class's roster,

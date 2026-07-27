@@ -370,6 +370,18 @@ static int uid_owner(const char* norm_uid, int except) {
     return -1;
 }
 
+bool roster_uid_belongs_to_student(const char* uid, char* name_out, size_t cap) {
+    if (name_out && cap) name_out[0] = '\0';
+    if (!uid || uid[0] == '\0' || roster_get_status() != ROSTER_OK) return false;
+    char norm[32];
+    uid_normalize(uid, norm, sizeof(norm));
+    if (norm[0] == '\0') return false;
+    int owner = uid_owner(norm, -1);
+    if (owner < 0) return false;
+    if (name_out) snprintf(name_out, cap, "%s", s_students[owner].name);
+    return true;
+}
+
 // Does this normalized UID belong to one of the professors in config.json? A
 // student must never be given a card that unlocks the device. Copies the
 // professor's name into name_out on a match.

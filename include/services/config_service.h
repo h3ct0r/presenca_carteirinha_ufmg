@@ -91,6 +91,14 @@ typedef struct {
 config_result_t config_set_password(const char* email, const char* rfid_uid,
                                     const char* new_password);
 
+// Sets (or replaces) the RFID card UID of the professor identified by `email`
+// (falls back to `rfid_uid` when email is empty), rewriting /config.json
+// atomically and reloading. The new UID must be non-empty and, once
+// canonicalized (see uid_normalize), must not already be bound to another
+// professor. Returns {ok,message} — on failure nothing is written. Call on the
+// UI/LVGL thread (does SD I/O).
+config_result_t config_set_rfid(const char* email, const char* rfid_uid, const char* new_uid);
+
 // Device-wide setting: whether to capture a student photo with the onboard
 // camera when presence is registered. False unless config.json has
 // "capture_photos": true (and status is CONFIG_OK). Thread-safe.

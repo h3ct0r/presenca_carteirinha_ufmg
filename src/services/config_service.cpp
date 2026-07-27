@@ -13,6 +13,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "services/roster_service.h"
 #include "storage/sd_card.h"
 
 static const char* TAG = "config";
@@ -348,6 +349,84 @@ config_result_t config_set_password(const char* email, const char* rfid_uid,
 
     publish(load_config());  // reflect the new state everywhere
     return result(true, "Password saved");
+}
+
+config_result_t config_set_rfid(const char* email, const char* rfid_uid, const char* new_uid) {
+    if (!new_uid || new_uid[0] == '\0') {
+        return result(false, "Tap a card first");
+    }
+    if (strlen(new_uid) >= sizeof(((teacher_t*)0)->rfid_uid)) {
+        return result(false, "Card ID too long");
+    }
+    if (config_get_status() != CONFIG_OK) {
+        return result(false, "Fix config.json first");
+    }
+
+    char new_norm[48];
+    uid_normalize(new_uid, new_norm, sizeof(new_norm));
+    if (new_norm[0] == '\0') {
+        return result(false, "Card ID has no usable characters");
+    }
+
+    // A professor must not claim a card that is already a student's, or tapping
+    // it would both unlock the device and register attendance. Mirrors the
+    // professor-collision guard roster_enroll_* applies in the other direction.
+    char student_name[48];
+    if (roster_uid_belongs_to_student(new_uid, student_name, sizeof(student_name))) {
+        return result(false, "Card belongs to student %s", student_name);
+    }
+
+    // Re-read the file so we preserve any fields we don't model. Heap buffer
+    // (not a 2 KB stack array) for the same reason as config_set_password: this
+    // runs inside an LVGL callback and load_config() adds another 2 KB below.
+    File f = SD_MMC.open(CONFIG_PATH, FILE_READ);
+    if (!f) return result(false, "Could not open config.json");
+    char* buf = (char*)malloc(2048);
+    if (!buf) {
+        f.close();
+        return result(false, "Out of memory");
+    }
+    size_t n = f.readBytes(buf, 2047);
+    buf[n] = '\0';
+    f.close();
+
+    JsonDocument doc;
+    if (deserializeJson(doc, buf)) {
+        free(buf);
+        return result(false, "config.json unreadable");
+    }
+
+    JsonArray teachers = doc["teachers"].as<JsonArray>();
+    JsonObject me;
+    for (JsonObject t : teachers) {
+        const char* e = t["email"] | "";
+        const char* u = t["rfid_uid"] | "";
+        bool match = (email && email[0]) ? (strcmp(e, email) == 0)
+                                         : (rfid_uid && rfid_uid[0] && strcmp(u, rfid_uid) == 0);
+        if (match) {
+            me = t;
+            continue;
+        }
+        // Uniqueness: no other professor may already carry this card.
+        char other_norm[48];
+        uid_normalize(u, other_norm, sizeof(other_norm));
+        if (other_norm[0] && strcmp(other_norm, new_norm) == 0) {
+            free(buf);
+            return result(false, "Already bound to another professor");
+        }
+    }
+    if (me.isNull()) {
+        free(buf);
+        return result(false, "Your account is not in config.json");
+    }
+
+    me["rfid_uid"] = new_uid;
+    bool wrote = write_config_file(doc);
+    free(buf);  // done with doc; free before load_config()'s own read buffer
+    if (!wrote) return result(false, "Could not save to SD card");
+
+    publish(load_config());  // reflect the new state everywhere
+    return result(true, "Card updated");
 }
 
 bool config_photo_capture_enabled(void) {
