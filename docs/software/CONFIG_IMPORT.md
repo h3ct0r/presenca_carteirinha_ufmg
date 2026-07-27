@@ -181,36 +181,58 @@ Rules (mirror `roster_service.cpp`):
 - **Size:** the device caps the staged tar (suggested **≤ 1 MB**; config for 600
   students + 12 classes is still well under 100 KB). Oversize → reject.
 
-## 5. Device import flow (informative — firmware side)
+## 5. Device import flow (firmware side — IMPLEMENTED)
 
-Documented here so the builder author knows the guarantees. Implemented later in
-firmware; not this doc's deliverable.
+Implemented in [`src/services/import_service.cpp`](../../src/services/import_service.cpp)
+(`import_service_run`). Guarantees, in order:
 
-1. **Receive** the tar over the AP (see §6), streaming to a staging file on SD
-   (never buffer in the 128 KB LVGL heap).
-2. **Back up first:** call `backup_store_create()` (the S2 pre-wipe snapshot) so
-   the prior config is always recoverable if the operator dislikes the result.
-3. **Unpack** into a sandbox dir (e.g. `/import_staging/`), applying the §4
-   whitelist to every entry name.
-4. **Validate** the staged JSON with the same rules as §3 (reuse the
-   roster/config validators). **Any failure → discard staging, live config
-   untouched.**
-5. **Apply** by moving each authored file into place with the project's atomic
-   `temp → remove → rename` pattern (per file — FAT has no atomic dir swap, and
-   attendance dirs must be preserved in place).
-6. **Reload** config + roster services and report a result string to the UI.
+1. **Read** the staged tar (`/config.tar`) into a size-capped heap buffer
+   (≤ 1 MB, from PSRAM — never the 128 KB LVGL heap).
+2. **Structural + §4 check:** parse the ustar and enforce the name whitelist on
+   every entry ([`src/app/ustar.cpp`](../../src/app/ustar.cpp)). A disallowed
+   path (`..`, absolute, non-whitelisted) aborts here — before anything is
+   touched.
+3. **Back up first:** `backup_store_create()`
+   ([`src/storage/backup_store.cpp`](../../src/storage/backup_store.cpp))
+   snapshots the current authored files into `/backup/previous/`. If the backup
+   fails, the import aborts — never modify live config without a safety net.
+4. **Unpack** into `/import_staging/` (cleaned first, so a stale class from a
+   prior run can't leak in), re-applying the §4 whitelist per entry.
+5. **Validate** the staged tree with the exact live rules, WITHOUT mutating live
+   state — `config_validate_tree()` / `roster_validate_tree()`. **Any failure →
+   discard staging, live config untouched.**
+6. **Apply** each authored file into place with the atomic `temp → remove →
+   rename` pattern, per file (FAT has no atomic dir swap; attendance / photos /
+   models / backup are preserved in place).
+7. **Reload** config + roster services (`*_service_reload()`), which republish
+   status so the UI refreshes on its own.
+8. **Sentinel:** on the SD path, rename `/config.tar → /config.tar.imported` so
+   it is not re-imported on the next boot.
 
-Because live config is only touched in step 5, a power loss mid-upload (no
-battery/RTC) leaves a garbage staging file and a working device.
+Live config is only touched at step 6, so a power loss earlier leaves a working
+device. **Revert:** `import_service_revert()` re-applies `/backup/previous/` as
+a tree (validate + apply + reload, no new backup). Because import is an overlay
+(§2), a revert restores the authored files but does **not** remove a class the
+import *added* — removing a class stays a separate, explicit action.
 
 ## 6. Upload interface
 
-**v1 (recommended, zero device coupling):** the config-builder only **generates
-and downloads** the `.tar`. The operator connects to the device AP and uploads it
-through the **existing** web file manager
-([`src/services/file_server.cpp`](../../src/services/file_server.cpp)) into a known
-drop path; a device button (or a watched path) triggers the import flow. The
-builder needs **no network code** and stays a pure static page.
+**v1 (implemented):** the config-builder only **generates and downloads** the
+`.tar`. To install it, the operator gets `config.tar` onto the **SD-card root** —
+either by copying it there on a laptop, or by uploading it to root through the
+device's Wi-Fi file manager
+([`src/services/file_server.cpp`](../../src/services/file_server.cpp)). Either way
+it lands at `/config.tar`, which the device detects (`import_service_pending()`)
+and offers to apply **confirm-first**:
+- the **idle screen** shows "Import config from SD" whenever a valid config is
+  missing — the new-device path, reachable with no login;
+- the **Admin panel** shows "Import configuration" for a logged-in professor
+  (the field-update path), plus "Restore previous configuration" when a backup
+  exists.
+
+Uploading to the SD root reuses the exact same detection as inserting a card that
+already has the tar, so there is one code path, not two. The builder needs **no**
+network code and stays a pure static page.
 
 **v2 (optional later):** a dedicated `POST /api/import` on the device
 (`multipart/form-data`, field `archive`), gated by a professor password field, so
@@ -229,6 +251,16 @@ worse than the current file editor — do not ship one.
 - The tar itself is unversioned; the file schemas version themselves.
 
 ### Changelog
+- **2026-07-27** — **device import side implemented** (§5, §6 v1). Added the
+  on-device ustar reader (`app/ustar`), the pre-apply snapshot
+  (`storage/backup_store`, `/backup/previous/`), and the pipeline
+  (`services/import_service`: structural+§4 check → backup → staged unpack →
+  non-mutating validate → atomic apply → reload → sentinel), with `revert`.
+  Config/roster loaders gained non-mutating `*_validate_tree` seams. Trigger is
+  a `config.tar` at the SD root (inserted or uploaded to root), applied
+  confirm-first from the idle screen (new device) or the Admin panel (field
+  update). No tar-format or schema change. No firmware `POST /api/import` (v2
+  still deferred).
 - **2026-07-25** — added an optional **per-student `turma`** tag (≤ 15 chars) on
   each **`class.json` roster entry** (`{ "id", "turma" }`), populated by the
   config-builder's *Diário de Classe* CSV import. It lives on the roster entry —

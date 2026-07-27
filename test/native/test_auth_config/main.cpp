@@ -344,6 +344,45 @@ static void test_set_rfid_rejects_student_card(void) {
     TEST_ASSERT_TRUE(ok.ok);
 }
 
+// --- config_validate_tree (import: validate a staged tree, no live mutation) -
+
+static void test_validate_tree_accepts_good_staging(void) {
+    mocksd_reset();
+    mocksd_add_file("/config.json", VALID_CONFIG);  // live config (2 teachers)
+    mocksd_add_file("/import_staging/config.json",
+                    "{ \"teachers\": [ { \"name\": \"Prof New\", \"email\": \"new@x\", "
+                    "\"rfid_uid\": \"AB:CD\", \"password\": \"321\" } ] }");
+    config_service_start();
+    TEST_ASSERT_EQUAL(CONFIG_OK, config_get_status());
+
+    char msg[128] = "dirty";
+    TEST_ASSERT_TRUE(config_validate_tree("/import_staging", msg, sizeof(msg)));
+    TEST_ASSERT_EQUAL_STRING("", msg);  // cleared on success
+}
+
+static void test_validate_tree_rejects_bad_staging_leaving_live_intact(void) {
+    // Live is still VALID_CONFIG from the test above (2 teachers, OK).
+    mocksd_add_file("/import_staging/config.json",
+                    "{ \"teachers\": [ { \"name\": \"A\", \"email\": \"a\", \"password\": \"9\" },"
+                    " { \"name\": \"B\", \"email\": \"b\", \"password\": \"9\" } ] }");
+    char msg[128];
+    TEST_ASSERT_FALSE(config_validate_tree("/import_staging", msg, sizeof(msg)));
+    TEST_ASSERT_NOT_NULL(strstr(msg, "share the same password"));
+
+    // The live config is untouched: still OK, still the two original teachers.
+    TEST_ASSERT_EQUAL(CONFIG_OK, config_get_status());
+    device_config_t cfg;
+    config_get(&cfg);
+    TEST_ASSERT_EQUAL(2, cfg.teacher_count);
+    TEST_ASSERT_TRUE(config_find_teacher_by_password("1234", nullptr));  // original still valid
+}
+
+static void test_validate_tree_reports_missing_config(void) {
+    char msg[128];
+    TEST_ASSERT_FALSE(config_validate_tree("/no_such_root", msg, sizeof(msg)));
+    TEST_ASSERT_NOT_NULL(strstr(msg, "not found"));
+}
+
 int main(int, char**) {
     // Park the services' background retry loops far beyond the test run.
     mock_freertos_set_delay_scale(1000);
@@ -369,6 +408,9 @@ int main(int, char**) {
     RUN_TEST(test_set_rfid_rejects_duplicate);
     RUN_TEST(test_set_rfid_rejects_empty);
     RUN_TEST(test_set_rfid_rejects_student_card);    // self-contained (own config + roster)
+    RUN_TEST(test_validate_tree_accepts_good_staging);          // loads its own live + staging
+    RUN_TEST(test_validate_tree_rejects_bad_staging_leaving_live_intact);  // chains from above
+    RUN_TEST(test_validate_tree_reports_missing_config);        // chains from above
     RUN_TEST(test_photo_capture_defaults_off);       // self-contained (own config)
     RUN_TEST(test_photo_capture_parsed_and_persisted);
     return UNITY_END();

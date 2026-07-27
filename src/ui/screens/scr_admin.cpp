@@ -7,8 +7,10 @@
 
 #include "app/session.h"
 #include "services/config_service.h"
+#include "services/import_service.h"
 #include "services/roster_service.h"
 #include "storage/attendance_store.h"
+#include "storage/backup_store.h"
 #include "storage/sd_card.h"
 #include "ui/components/keyboard.h"
 #include "ui/components/shell.h"
@@ -47,10 +49,18 @@ static lv_obj_t* s_rfid_modal = nullptr;
 static lv_obj_t* s_reader_modal = nullptr;
 static lv_obj_t* s_reader_uid = nullptr;  // label that shows the last UID read
 
+// Config-import section + shared confirm overlay (import / revert).
+static lv_obj_t* s_import = nullptr;
+static lv_obj_t* s_confirm_modal = nullptr;
+static void (*s_confirm_action)(void) = nullptr;
+
 static void build_security(void);
 static void build_rfid(void);
 static void build_storage(void);
+static void build_import(void);
 static void fill_profile(void);
+static void import_btn_cb(lv_event_t*);
+static void revert_btn_cb(lv_event_t*);
 
 static void sign_out_cb(lv_event_t*) {
     session_set(nullptr);
@@ -556,6 +566,127 @@ static void build_debug(void) {
     lv_obj_set_width(cap, LV_PCT(100));
 }
 
+// --- config import ----------------------------------------------------------
+
+static void close_confirm(void) {
+    if (s_confirm_modal) {
+        lv_obj_delete(s_confirm_modal);
+        s_confirm_modal = nullptr;
+    }
+    s_confirm_action = nullptr;
+}
+
+static void confirm_cancel_cb(lv_event_t*) { close_confirm(); }
+
+static void confirm_ok_cb(lv_event_t*) {
+    void (*act)(void) = s_confirm_action;
+    close_confirm();
+    if (act) act();
+}
+
+// A generic "Cancel / Confirm" overlay that runs `action` on confirm. Parented
+// to the shell root and escaping its flex flow, like the wipe confirmation.
+static void open_confirm(const char* title, const char* msg, void (*action)(void)) {
+    if (s_confirm_modal) return;
+    s_confirm_action = action;
+
+    s_confirm_modal = lv_obj_create(s_root);
+    lv_obj_remove_style_all(s_confirm_modal);
+    lv_obj_add_flag(s_confirm_modal, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    lv_obj_set_size(s_confirm_modal, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(s_confirm_modal, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(s_confirm_modal, LV_OPA_50, 0);
+    lv_obj_add_flag(s_confirm_modal, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(s_confirm_modal, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* card = ui_make_card(s_confirm_modal);
+    lv_obj_set_width(card, LV_PCT(88));
+    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 80);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(card, 12, 0);
+
+    ui_make_label(card, title, THEME_PRIMARY, &lv_font_montserrat_20);
+    lv_obj_t* hint = ui_make_label(card, msg, THEME_MUTED, &lv_font_montserrat_14);
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(hint, LV_PCT(100));
+
+    lv_obj_t* row = lv_obj_create(card);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(row, 10, 0);
+    lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* cancel =
+        ui_make_button(row, "Cancel", &theme_style_btn_outline, confirm_cancel_cb, nullptr);
+    lv_obj_set_flex_grow(cancel, 1);
+    lv_obj_t* ok = ui_make_button(row, "Confirm", &theme_style_btn_primary, confirm_ok_cb, nullptr);
+    lv_obj_set_flex_grow(ok, 1);
+}
+
+static void do_import(void) {
+    import_result_t r = import_service_run(import_service_tar_path());
+    ui_toast_show(r.message, r.ok);
+    // Config/roster changed; refresh the sections that reflect them.
+    build_import();
+    build_storage();
+    fill_profile();
+}
+
+static void do_revert(void) {
+    import_result_t r = import_service_revert();
+    ui_toast_show(r.message, r.ok);
+    build_import();
+    fill_profile();
+}
+
+static void import_btn_cb(lv_event_t*) {
+    open_confirm("Import configuration?",
+                 "This replaces the current configuration with the config.tar on the SD card. "
+                 "The previous configuration is backed up first.",
+                 do_import);
+}
+
+static void revert_btn_cb(lv_event_t*) {
+    open_confirm("Restore previous configuration?",
+                 "This re-applies the last backed-up configuration.", do_revert);
+}
+
+static void build_import(void) {
+    lv_obj_clean(s_import);
+
+    lv_obj_t* card = ui_make_card(s_import);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(card, 8, 0);
+    ui_make_label(card, "Configuration import", THEME_PRIMARY, &lv_font_montserrat_20);
+
+    if (import_service_pending()) {
+        lv_obj_t* m = ui_make_label(
+            card,
+            "A config.tar is on the SD card. Importing replaces the current configuration; the "
+            "previous one is backed up first.",
+            THEME_TEXT, &lv_font_montserrat_14);
+        lv_label_set_long_mode(m, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(m, LV_PCT(100));
+        lv_obj_t* btn = ui_make_button(card, LV_SYMBOL_DOWNLOAD "  Import configuration",
+                                       &theme_style_btn_primary, import_btn_cb, nullptr);
+        lv_obj_set_width(btn, LV_PCT(100));
+    } else {
+        lv_obj_t* m = ui_make_label(
+            card,
+            "To import, upload a config.tar to the SD card root (Wi-Fi file manager) or insert a "
+            "card that has one, then reopen this panel.",
+            THEME_MUTED, &lv_font_montserrat_14);
+        lv_label_set_long_mode(m, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(m, LV_PCT(100));
+    }
+
+    if (backup_store_exists()) {
+        lv_obj_t* rb = ui_make_button(card, LV_SYMBOL_LOOP "  Restore previous configuration",
+                                      &theme_style_btn_outline, revert_btn_cb, nullptr);
+        lv_obj_set_width(rb, LV_PCT(100));
+    }
+}
+
 // --- screen -----------------------------------------------------------------
 
 // Adds a rebuilt-on-show section container to the shell body.
@@ -587,6 +718,7 @@ static lv_obj_t* create(void) {
     s_settings = make_section(sh.body);
     s_security = make_section(sh.body);
     s_rfid = make_section(sh.body);
+    s_import = make_section(sh.body);
     s_debug = make_section(sh.body);
     // Extra breathing room between the camera-preview button and the password
     // section that follows it.
@@ -606,6 +738,7 @@ static void on_show(void*) {
     build_storage();
     build_security();
     build_rfid();
+    build_import();
     build_settings();
     build_debug();
 }
@@ -614,6 +747,7 @@ static void on_hide(void) {
     close_pw_modal();
     close_rfid_modal();
     close_reader_modal();
+    close_confirm();
     close_wipe_confirm();
 }
 

@@ -37,6 +37,10 @@ typedef enum : uint8_t {
 // on every state change.
 bool roster_service_start(void);
 
+// Re-reads the student/class layout and republishes the status. For the
+// importer to call after applying a new roster. LVGL/import thread.
+void roster_service_reload(void);
+
 roster_status_t roster_get_status(void);
 
 // Human-readable reason for the current failure ("classes/CS101-M1: unknown
@@ -54,6 +58,16 @@ const student_t* roster_student_at(int idx);
 
 // Index of the class with this code, or -1.
 int roster_class_index(const char* code);
+
+// Validates a staged roster tree rooted at `root` (e.g. "/import_staging") with
+// the exact live rules, WITHOUT changing what the service publishes — used by
+// the config importer to check a tar before applying it. Reads
+// "<root>/students/students.json" and "<root>/classes/<CODE>/class.json".
+// Returns true when valid; on failure fills `msg` with the reason (empty on
+// success). Internally borrows the shared arrays as scratch and restores the
+// live tree before returning, all under the roster lock; call on the import
+// (LVGL) thread (SD I/O).
+bool roster_validate_tree(const char* root, char* msg, size_t cap);
 
 // True if `uid` (in any format — canonicalized internally) is currently bound
 // to a student. On a match, copies that student's name into name_out (may be
@@ -82,9 +96,11 @@ roster_result_t roster_enroll_existing(const char* class_code, int student_idx,
                                        const char* uid);
 
 // Adds a brand-new student (id/name/uid) to the registry and enrolls them in
-// class_code.
+// class_code, tagging the class-roster entry with `turma` (may be NULL/empty;
+// max 15 chars — see CONFIG_IMPORT.md §3.3). The turma lives only on the
+// class.json roster entry, not the global registry.
 roster_result_t roster_enroll_new(const char* class_code, const char* id, const char* name,
-                                  const char* uid);
+                                  const char* uid, const char* turma);
 
 // DEBUG: unbinds every student's RFID card — clears rfid_uid in RAM and rewrites
 // students.json with all bindings null. Returns false on write failure. Class

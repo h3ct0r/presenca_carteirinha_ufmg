@@ -5,6 +5,7 @@
 #include <SD_MMC.h>
 #include <ctype.h>
 #include <stdarg.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "app/event_bus.h"
@@ -26,47 +27,57 @@ static config_status_t s_status = CONFIG_NO_SD;
 static device_config_t s_config = {};
 static char s_error[128] = "";
 
-// Records the failure reason (shown on the idle screen) and returns status.
-static config_status_t fail(config_status_t st, const char* fmt, ...) {
+// Writes the failure reason into the caller's `err` buffer (not shared state)
+// and returns the status. Non-mutating, so the import validator can reuse it.
+static config_status_t cfg_fail(char* err, size_t cap, config_status_t st, const char* fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    xSemaphoreTake(s_lock, portMAX_DELAY);
-    vsnprintf(s_error, sizeof(s_error), fmt, ap);
-    xSemaphoreGive(s_lock);
+    if (err && cap) vsnprintf(err, cap, fmt, ap);
     va_end(ap);
-    ESP_LOGE(TAG, "%s", s_error);
+    if (err) ESP_LOGE(TAG, "%s", err);
     return st;
 }
 
-// Reads and parses /config.json. Logs the raw file contents on the way (the
-// requested boot-time debug aid). Does not touch shared state unless it
-// succeeds. Returns the resulting status.
-static config_status_t load_config(void) {
+// Reads, parses, and validates a config.json at `path` into the caller-provided
+// `out`, writing any failure reason into `err`. Touches NO shared state
+// (s_config / s_error), so both the live loader and config_validate_tree() can
+// call it. Reads into a heap buffer (not a 2 KB stack array) because validation
+// runs deep inside the import call chain on the LVGL thread, where an extra 2 KB
+// on the stack plus a JsonDocument would risk the loopTask stack. Logs the raw
+// file contents on the way (the boot-time debug aid). Returns the status.
+static config_status_t parse_config_file(const char* path, device_config_t* out, char* err,
+                                         size_t errcap) {
+    if (out) *out = device_config_t{};
+
     if (!sd_card_mount()) {
-        return fail(CONFIG_NO_SD, "No SD card, or card not readable (FAT32 required)");
+        return cfg_fail(err, errcap, CONFIG_NO_SD,
+                        "No SD card, or card not readable (FAT32 required)");
     }
-
-    if (!SD_MMC.exists(CONFIG_PATH)) {
-        return fail(CONFIG_NO_FILE, "config.json not found on the SD card root");
+    if (!SD_MMC.exists(path)) {
+        return cfg_fail(err, errcap, CONFIG_NO_FILE, "config.json not found on the SD card root");
     }
-
-    File f = SD_MMC.open(CONFIG_PATH, FILE_READ);
+    File f = SD_MMC.open(path, FILE_READ);
     if (!f) {
-        return fail(CONFIG_NO_FILE, "config.json could not be opened");
+        return cfg_fail(err, errcap, CONFIG_NO_FILE, "config.json could not be opened");
     }
-
-    char buf[2048];
-    size_t n = f.readBytes(buf, sizeof(buf) - 1);
+    char* buf = (char*)malloc(2048);
+    if (!buf) {
+        f.close();
+        return cfg_fail(err, errcap, CONFIG_BAD_JSON, "Out of memory reading config.json");
+    }
+    size_t n = f.readBytes(buf, 2047);
     buf[n] = '\0';
     f.close();
 
     // Boot-time debug: dump exactly what's on the card.
-    ESP_LOGI(TAG, "%s (%u bytes):\n%s", CONFIG_PATH, (unsigned)n, buf);
+    ESP_LOGI(TAG, "%s (%u bytes):\n%s", path, (unsigned)n, buf);
 
     JsonDocument doc;
-    DeserializationError err = deserializeJson(doc, buf);
-    if (err) {
-        return fail(CONFIG_BAD_JSON, "config.json: %s", err.c_str());
+    DeserializationError jerr = deserializeJson(doc, buf);
+    if (jerr) {
+        config_status_t st = cfg_fail(err, errcap, CONFIG_BAD_JSON, "config.json: %s", jerr.c_str());
+        free(buf);
+        return st;
     }
 
     device_config_t parsed = {};
@@ -75,21 +86,17 @@ static config_status_t load_config(void) {
             ESP_LOGW(TAG, "more than %d teachers listed, extras ignored", CONFIG_MAX_TEACHERS);
             break;
         }
-        const char* name = t["name"] | "";
-        const char* email = t["email"] | "";
-        const char* uid = t["rfid_uid"] | "";
-        const char* pw = t["password"] | "";
         teacher_t* dst = &parsed.teachers[parsed.teacher_count++];
-        snprintf(dst->name, sizeof(dst->name), "%s", name);
-        snprintf(dst->email, sizeof(dst->email), "%s", email);
-        snprintf(dst->rfid_uid, sizeof(dst->rfid_uid), "%s", uid);
-        snprintf(dst->password, sizeof(dst->password), "%s", pw);
+        snprintf(dst->name, sizeof(dst->name), "%s", (const char*)(t["name"] | ""));
+        snprintf(dst->email, sizeof(dst->email), "%s", (const char*)(t["email"] | ""));
+        snprintf(dst->rfid_uid, sizeof(dst->rfid_uid), "%s", (const char*)(t["rfid_uid"] | ""));
+        snprintf(dst->password, sizeof(dst->password), "%s", (const char*)(t["password"] | ""));
     }
-
     parsed.capture_photos = doc["capture_photos"] | false;
+    free(buf);  // parsed holds its own copies now; doc/buf are done with
 
     if (parsed.teacher_count == 0) {
-        return fail(CONFIG_BAD_JSON, "config.json lists no teachers");
+        return cfg_fail(err, errcap, CONFIG_BAD_JSON, "config.json lists no teachers");
     }
 
     // Passwords are entered on numeric keypads, so they must be digits-only.
@@ -99,9 +106,9 @@ static config_status_t load_config(void) {
         if (pw[0] == '\0') continue;
         for (const char* c = pw; *c; c++) {
             if (!isdigit((unsigned char)*c)) {
-                return fail(CONFIG_NON_NUMERIC_PASSWORD,
-                            "%s has a non-numeric password (digits only)",
-                            parsed.teachers[i].name);
+                return cfg_fail(err, errcap, CONFIG_NON_NUMERIC_PASSWORD,
+                                "%s has a non-numeric password (digits only)",
+                                parsed.teachers[i].name);
             }
         }
     }
@@ -112,24 +119,38 @@ static config_status_t load_config(void) {
         if (parsed.teachers[i].password[0] == '\0') continue;
         for (int j = i + 1; j < parsed.teacher_count; j++) {
             if (strcmp(parsed.teachers[i].password, parsed.teachers[j].password) == 0) {
-                return fail(CONFIG_DUP_PASSWORD, "%s and %s share the same password",
-                            parsed.teachers[i].name, parsed.teachers[j].name);
+                return cfg_fail(err, errcap, CONFIG_DUP_PASSWORD,
+                                "%s and %s share the same password", parsed.teachers[i].name,
+                                parsed.teachers[j].name);
             }
         }
     }
 
-    xSemaphoreTake(s_lock, portMAX_DELAY);
-    s_config = parsed;
-    s_error[0] = '\0';
-    xSemaphoreGive(s_lock);
-
-    ESP_LOGI(TAG, "config loaded: %d teacher(s)", parsed.teacher_count);
+    if (out) *out = parsed;
+    ESP_LOGI(TAG, "config parsed: %d teacher(s)", parsed.teacher_count);
     for (int i = 0; i < parsed.teacher_count; i++) {
         ESP_LOGI(TAG, "  teacher[%d] name='%s' email='%s' uid='%s' password=%s", i,
                  parsed.teachers[i].name, parsed.teachers[i].email, parsed.teachers[i].rfid_uid,
                  parsed.teachers[i].password[0] ? "set" : "(none)");
     }
     return CONFIG_OK;
+}
+
+// Live loader: parse the on-card /config.json and publish it into shared state.
+static config_status_t load_config(void) {
+    device_config_t parsed;
+    char err[128];
+    config_status_t st = parse_config_file(CONFIG_PATH, &parsed, err, sizeof(err));
+
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (st == CONFIG_OK) {
+        s_config = parsed;
+        s_error[0] = '\0';
+    } else {
+        snprintf(s_error, sizeof(s_error), "%s", err);
+    }
+    xSemaphoreGive(s_lock);
+    return st;
 }
 
 static void publish(config_status_t st) {
@@ -164,6 +185,8 @@ bool config_service_start(void) {
     }
     return true;
 }
+
+void config_service_reload(void) { publish(load_config()); }
 
 config_status_t config_get_status(void) { return s_status; }
 
@@ -427,6 +450,16 @@ config_result_t config_set_rfid(const char* email, const char* rfid_uid, const c
 
     publish(load_config());  // reflect the new state everywhere
     return result(true, "Card updated");
+}
+
+bool config_validate_tree(const char* root, char* msg, size_t cap) {
+    char path[96];
+    snprintf(path, sizeof(path), "%s/config.json", root ? root : "");
+    device_config_t scratch;
+    char err[128];
+    config_status_t st = parse_config_file(path, &scratch, err, sizeof(err));
+    if (msg && cap) snprintf(msg, cap, "%s", st == CONFIG_OK ? "" : err);
+    return st == CONFIG_OK;
 }
 
 bool config_photo_capture_enabled(void) {
