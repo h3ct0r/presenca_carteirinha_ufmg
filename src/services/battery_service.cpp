@@ -18,7 +18,7 @@ static constexpr int BAT_ADC_PIN = 53;
 // Reverse of the resistor divider: V_BAT = V_node * (R52 + R57) / R57.
 static constexpr float DIVIDER_GAIN = (68.0f + 100.0f) / 100.0f;  // 1.68
 
-static constexpr uint32_t SAMPLE_PERIOD_MS = 5000;
+static constexpr uint32_t SAMPLE_PERIOD_MS = 10000;
 static constexpr int OVERSAMPLE = 16;  // average out ADC noise
 
 static void battery_task(void*) {
@@ -40,8 +40,8 @@ static void battery_task(void*) {
         ev.power.mv = (uint16_t)vbat_mv;
         event_bus_post(&ev);
 
-        ESP_LOGI(TAG, "node=%umV vbat=%umV pct=%u", (unsigned)node_mv, (unsigned)vbat_mv,
-                 ev.power.pct);
+        // ESP_LOGI(TAG, "node=%umV vbat=%umV pct=%u", (unsigned)node_mv, (unsigned)vbat_mv,
+        //          ev.power.pct);
         vTaskDelay(pdMS_TO_TICKS(SAMPLE_PERIOD_MS));
     }
 }

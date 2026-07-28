@@ -1,6 +1,7 @@
 #include "ui/screens/scr_class_stats.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "app/roster.h"
@@ -21,6 +22,8 @@ static const class_rec_t* s_cls = nullptr;
 static lv_obj_t* s_name_ta = nullptr;
 static lv_obj_t* s_sched_ta = nullptr;
 static lv_obj_t* s_capture_dd = nullptr;
+static lv_obj_t* s_timed_sw = nullptr;
+static lv_obj_t* s_min_ta = nullptr;
 static uint32_t s_sel_color = 0;
 static lv_obj_t* s_swatches[8] = {};
 
@@ -125,8 +128,11 @@ static void save_cb(lv_event_t*) {
         case 2: capture = 0; break;
         default: capture = -1; break;
     }
-    roster_result_t r =
-        roster_class_update_settings(s_cls->code, name, sched, s_sel_color, capture);
+    bool timed = lv_obj_has_state(s_timed_sw, LV_STATE_CHECKED);
+    int min_min = atoi(lv_textarea_get_text(s_min_ta));
+    if (min_min < 1) min_min = 45;
+    roster_result_t r = roster_class_update_settings(s_cls->code, name, sched, s_sel_color, capture,
+                                                     timed, min_min);
     ui_toast_show(r.message, r.ok);
     if (r.ok) scr_mgr_show(SCREEN_CLASSES, nullptr);  // list reflects the new name/color
 }
@@ -173,6 +179,24 @@ static void build_settings(lv_obj_t* parent) {
     uint32_t sel = (s_cls->capture_photos == 1) ? 1 : (s_cls->capture_photos == 0) ? 2 : 0;
     lv_dropdown_set_selected(s_capture_dd, sel);
 
+    // Timed attendance: a switch + the minimum-minutes threshold.
+    lv_obj_t* trow = lv_obj_create(card);
+    lv_obj_remove_style_all(trow);
+    lv_obj_set_size(trow, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(trow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(trow, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_remove_flag(trow, LV_OBJ_FLAG_SCROLLABLE);
+    ui_make_label(trow, "Timed attendance (tap in / out)", THEME_TEXT, &lv_font_montserrat_14);
+    s_timed_sw = lv_switch_create(trow);
+    if (s_cls->timed_attendance) lv_obj_add_state(s_timed_sw, LV_STATE_CHECKED);
+
+    ui_make_label(card, "Minimum minutes present", THEME_TEXT, &lv_font_montserrat_14);
+    s_min_ta = keyboard_make_textarea(card, "45", 4, LV_KEYBOARD_MODE_NUMBER);
+    char minbuf[8];
+    snprintf(minbuf, sizeof(minbuf), "%d", s_cls->min_attendance_min);
+    lv_textarea_set_text(s_min_ta, minbuf);
+
     lv_obj_t* save = ui_make_button(card, "Save settings", &theme_style_btn_primary, save_cb,
                                     nullptr);
     lv_obj_set_width(save, LV_PCT(100));
@@ -184,11 +208,19 @@ static lv_obj_t* create(void) {
     s_sh = shell_create("", "Statistics & settings", false);
     shell_set_back(&s_sh, back_cb);
 
+    // sh.body is the vertical scroll container. Give it a keyboard-height bottom
+    // pad so a focused field can scroll clear of the 300 px on-screen keyboard
+    // (SCROLL_ON_FOCUS keeps the field inside the content area, which this pad
+    // now ends above the keyboard) and so the last fields are reachable.
+    lv_obj_set_style_pad_bottom(s_sh.body, 320, 0);
+
     s_content = lv_obj_create(s_sh.body);
     lv_obj_remove_style_all(s_content);
     lv_obj_set_size(s_content, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(s_content, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(s_content, 10, 0);
+    // Let scroll gestures bubble up to sh.body instead of being caught here.
+    lv_obj_remove_flag(s_content, LV_OBJ_FLAG_SCROLLABLE);
     return s_sh.root;
 }
 

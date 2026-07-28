@@ -107,13 +107,15 @@ roster_result_t roster_enroll_new(const char* class_code, const char* id, const 
 // (config_photo_capture_enabled). A NULL class inherits the device flag.
 bool class_capture_enabled(const class_rec_t* cls);
 
-// Updates a class's editable metadata (name, schedule, color) and its photo-
-// capture override (`capture`: -1 inherit, 0 off, 1 on), rewriting
+// Updates a class's editable metadata (name, schedule, color), its photo-
+// capture override (`capture`: -1 inherit, 0 off, 1 on), and its timed-
+// attendance settings (`timed` + `min_attendance_min`), rewriting
 // /classes/<dir>/class.json atomically and updating the in-RAM record. The
 // roster (and each entry's turma) is preserved. Returns {ok,message}. Call on
 // the LVGL thread (SD I/O).
 roster_result_t roster_class_update_settings(const char* class_code, const char* name,
-                                             const char* schedule, uint32_t color, int8_t capture);
+                                             const char* schedule, uint32_t color, int8_t capture,
+                                             bool timed, int min_attendance_min);
 
 // DEBUG: unbinds every student's RFID card — clears rfid_uid in RAM and rewrites
 // students.json with all bindings null. Returns false on write failure. Class

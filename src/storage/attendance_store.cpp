@@ -17,15 +17,73 @@ static constexpr int ID_LEN = 20;
 static char s_dir[24] = "";
 static char s_date[12] = "";
 static bool s_open = false;
+
+// Present students in the open session, with their measured minutes (0 when
+// unknown — single-tap check-ins). Parallel arrays kept in sync.
 static char s_present[MAX_PRESENT][ID_LEN];
+static int s_present_min[MAX_PRESENT];
 static int s_present_count = 0;
+
+// Timed mode: students who tapped in and haven't tapped out. RAM only — a
+// reboot voids in-progress measurements (no RTC; monotonic clock resets).
+static char s_tapin_id[MAX_PRESENT][ID_LEN];
+static long long s_tapin_us[MAX_PRESENT];
+static int s_tapin_count = 0;
 
 static void att_path(const char* dir, const char* date, char* out, size_t cap) {
     snprintf(out, cap, "/classes/%s/attendance/%s.jsonl", dir, date);
 }
 
-// Applies one presence record to a present-id set (add on present, remove on
-// absent). set/count are in/out.
+// --- present set (with minutes) ---------------------------------------------
+
+static int present_find(const char* id) {
+    for (int i = 0; i < s_present_count; i++) {
+        if (strcmp(s_present[i], id) == 0) return i;
+    }
+    return -1;
+}
+
+// Adds/updates (present) or removes (absent) an id, keeping s_present_min aligned.
+static void present_set(const char* id, bool present, int minutes) {
+    int f = present_find(id);
+    if (present) {
+        if (f < 0) {
+            if (s_present_count >= MAX_PRESENT) return;
+            f = s_present_count++;
+            snprintf(s_present[f], ID_LEN, "%s", id);
+        }
+        s_present_min[f] = minutes;
+    } else if (f >= 0) {
+        int last = --s_present_count;  // swap-remove
+        snprintf(s_present[f], ID_LEN, "%s", s_present[last]);
+        s_present_min[f] = s_present_min[last];
+    }
+}
+
+// --- in-progress tap-in set -------------------------------------------------
+
+static int tapin_find(const char* id) {
+    for (int i = 0; i < s_tapin_count; i++) {
+        if (strcmp(s_tapin_id[i], id) == 0) return i;
+    }
+    return -1;
+}
+
+static void tapin_remove(int f) {
+    int last = --s_tapin_count;  // swap-remove
+    snprintf(s_tapin_id[f], ID_LEN, "%s", s_tapin_id[last]);
+    s_tapin_us[f] = s_tapin_us[last];
+}
+
+static void tapin_add(const char* id, long long us) {
+    if (s_tapin_count >= MAX_PRESENT) return;
+    int i = s_tapin_count++;
+    snprintf(s_tapin_id[i], ID_LEN, "%s", id);
+    s_tapin_us[i] = us;
+}
+
+// --- generic present-only fold (history counts) -----------------------------
+
 static void set_apply(char set[][ID_LEN], int* count, const char* id, bool present) {
     int found = -1;
     for (int i = 0; i < *count; i++) {
@@ -42,8 +100,6 @@ static void set_apply(char set[][ID_LEN], int* count, const char* id, bool prese
     }
 }
 
-// Reads a JSONL attendance file and folds it into set/count. Returns false on
-// a read error; a missing file yields an empty set (true).
 static bool fold_file(const char* path, char set[][ID_LEN], int* count) {
     *count = 0;
     if (!SD_MMC.exists(path)) return true;
@@ -72,35 +128,41 @@ static bool fold_file(const char* path, char set[][ID_LEN], int* count) {
     return true;
 }
 
-bool attendance_open(const char* class_dir, const char* date) {
-    attendance_close();
-    snprintf(s_dir, sizeof(s_dir), "%s", class_dir);
-    snprintf(s_date, sizeof(s_date), "%s", date);
-    s_open = true;
-
-    char path[80];
-    att_path(class_dir, date, path, sizeof(path));
-    bool ok = fold_file(path, s_present, &s_present_count);
-    ESP_LOGI(TAG, "open %s %s: %d present%s", class_dir, date, s_present_count,
-             ok ? "" : " (read error)");
-    return ok;
-}
-
-bool attendance_is_open(void) { return s_open; }
-const char* attendance_dir(void) { return s_open ? s_dir : ""; }
-const char* attendance_date(void) { return s_open ? s_date : ""; }
-bool attendance_is_present(const char* id) {
-    for (int i = 0; i < s_present_count; i++) {
-        if (strcmp(s_present[i], id) == 0) return true;
+// Folds the open session's file into s_present / s_present_min (last record per
+// id wins, carrying its "min"). In-progress state is NOT persisted, so it starts
+// empty on (re)open.
+static bool fold_open(const char* path) {
+    s_present_count = 0;
+    s_tapin_count = 0;
+    if (!SD_MMC.exists(path)) return true;
+    File f = SD_MMC.open(path, FILE_READ);
+    if (!f) return false;
+    size_t sz = f.size();
+    char* buf = (char*)malloc(sz + 1);
+    if (!buf) {
+        f.close();
+        return false;
     }
-    return false;
+    size_t n = f.readBytes(buf, sz);
+    buf[n] = '\0';
+    f.close();
+
+    char* save = nullptr;
+    for (char* line = strtok_r(buf, "\n", &save); line; line = strtok_r(nullptr, "\n", &save)) {
+        if (line[0] != '{') continue;
+        JsonDocument doc;
+        if (deserializeJson(doc, line)) continue;
+        const char* id = doc["id"] | "";
+        bool present = doc["present"] | false;
+        int minutes = doc["min"] | 0;
+        if (id[0]) present_set(id, present, minutes);
+    }
+    free(buf);
+    return true;
 }
-int attendance_present_count(void) { return s_present_count; }
 
-bool attendance_set(const char* id, bool present) {
-    if (!s_open || !id || !id[0]) return false;
-    set_apply(s_present, &s_present_count, id, present);
-
+// Appends one JSONL record, optionally with the "min" field.
+static bool append_record(const char* id, bool present, int minutes, bool with_min) {
     char adir[64];
     snprintf(adir, sizeof(adir), "/classes/%s/attendance", s_dir);
     if (!SD_MMC.exists(adir)) SD_MMC.mkdir(adir);
@@ -112,12 +174,102 @@ bool attendance_set(const char* id, bool present) {
         ESP_LOGE(TAG, "append open failed: %s", path);
         return false;
     }
-    char line[64];
-    int len = snprintf(line, sizeof(line), "{\"id\":\"%s\",\"present\":%s}\n", id,
+    char line[80];
+    int len;
+    if (with_min) {
+        len = snprintf(line, sizeof(line), "{\"id\":\"%s\",\"present\":%s,\"min\":%d}\n", id,
+                       present ? "true" : "false", minutes);
+    } else {
+        len = snprintf(line, sizeof(line), "{\"id\":\"%s\",\"present\":%s}\n", id,
                        present ? "true" : "false");
+    }
     size_t w = f.write((const uint8_t*)line, len);
     f.close();
     return w == (size_t)len;
+}
+
+// --- session ----------------------------------------------------------------
+
+bool attendance_open(const char* class_dir, const char* date) {
+    attendance_close();
+    snprintf(s_dir, sizeof(s_dir), "%s", class_dir);
+    snprintf(s_date, sizeof(s_date), "%s", date);
+    s_open = true;
+
+    char path[80];
+    att_path(class_dir, date, path, sizeof(path));
+    bool ok = fold_open(path);
+    ESP_LOGI(TAG, "open %s %s: %d present%s", class_dir, date, s_present_count,
+             ok ? "" : " (read error)");
+    return ok;
+}
+
+bool attendance_is_open(void) { return s_open; }
+const char* attendance_dir(void) { return s_open ? s_dir : ""; }
+const char* attendance_date(void) { return s_open ? s_date : ""; }
+bool attendance_is_present(const char* id) { return present_find(id) >= 0; }
+int attendance_present_count(void) { return s_present_count; }
+
+bool attendance_set(const char* id, bool present) {
+    if (!s_open || !id || !id[0]) return false;
+    // A manual override clears any in-progress timing for this student.
+    int t = tapin_find(id);
+    if (t >= 0) tapin_remove(t);
+    present_set(id, present, 0);
+    return append_record(id, present, 0, false);
+}
+
+att_state_t attendance_tap(const char* id, long long now_us, int threshold_min) {
+    att_state_t r = {ATT_ABSENT, 0};
+    if (!s_open || !id || !id[0]) return r;
+
+    int p = present_find(id);
+    if (p >= 0) {  // already finalized present — an extra tap is a no-op
+        r.status = ATT_PRESENT;
+        r.minutes = s_present_min[p];
+        return r;
+    }
+
+    int t = tapin_find(id);
+    if (t < 0) {  // first tap: record arrival
+        tapin_add(id, now_us);
+        r.status = ATT_IN_PROGRESS;
+        return r;
+    }
+
+    // Second tap: finalize.
+    int minutes = (int)((now_us - s_tapin_us[t]) / 60000000LL);
+    if (minutes < 0) minutes = 0;
+    tapin_remove(t);
+    if (minutes >= threshold_min) {
+        present_set(id, true, minutes);
+        append_record(id, true, minutes, true);
+        r.status = ATT_PRESENT;
+    } else {
+        // Records the short visit (folds to absent) so the duration isn't lost.
+        append_record(id, false, minutes, true);
+        r.status = ATT_LEFT_EARLY;
+    }
+    r.minutes = minutes;
+    return r;
+}
+
+att_state_t attendance_tap_state(const char* id, long long now_us) {
+    att_state_t r = {ATT_ABSENT, 0};
+    if (!s_open || !id || !id[0]) return r;
+    int t = tapin_find(id);
+    if (t >= 0) {
+        r.status = ATT_IN_PROGRESS;
+        r.minutes = (int)((now_us - s_tapin_us[t]) / 60000000LL);
+        if (r.minutes < 0) r.minutes = 0;
+        return r;
+    }
+    int p = present_find(id);
+    if (p >= 0) {
+        r.status = ATT_PRESENT;
+        r.minutes = s_present_min[p];
+    }
+    return r;
 }
 
 void attendance_close(void) {
@@ -125,6 +277,7 @@ void attendance_close(void) {
     s_dir[0] = '\0';
     s_date[0] = '\0';
     s_present_count = 0;
+    s_tapin_count = 0;
 }
 
 int attendance_list_dates(const char* class_dir, char dates[][12], int max) {

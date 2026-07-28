@@ -147,6 +147,87 @@ static void test_clear_removes_all_sessions(void) {
     TEST_ASSERT_EQUAL_INT(0, attendance_clear(DIR));  // idempotent: nothing left
 }
 
+// --- timed (double-tap) attendance ------------------------------------------
+
+static const long long MIN_US = 60000000LL;  // one minute in microseconds
+
+static void test_timed_present_when_over_threshold(void) {
+    mocksd_reset();
+    attendance_open(DIR, "2026-07-20");
+
+    // Tap in at t=0: in progress, not yet counted.
+    att_state_t s = attendance_tap("2023-0142", 0, 45);
+    TEST_ASSERT_EQUAL_INT(ATT_IN_PROGRESS, s.status);
+    TEST_ASSERT_FALSE(attendance_is_present("2023-0142"));
+    TEST_ASSERT_EQUAL_INT(0, attendance_present_count());
+
+    // A poll partway through reports the running minutes.
+    s = attendance_tap_state("2023-0142", 30 * MIN_US);
+    TEST_ASSERT_EQUAL_INT(ATT_IN_PROGRESS, s.status);
+    TEST_ASSERT_EQUAL_INT(30, s.minutes);
+
+    // Tap out at t=52 min: present, minutes recorded and persisted.
+    s = attendance_tap("2023-0142", 52 * MIN_US, 45);
+    TEST_ASSERT_EQUAL_INT(ATT_PRESENT, s.status);
+    TEST_ASSERT_EQUAL_INT(52, s.minutes);
+    TEST_ASSERT_TRUE(attendance_is_present("2023-0142"));
+    TEST_ASSERT_EQUAL_INT(1, attendance_present_count());
+
+    char buf[256];
+    read_file("/classes/CS101-M1/attendance/2026-07-20.jsonl", buf, sizeof(buf));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"min\":52"));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"present\":true"));
+}
+
+static void test_timed_left_early_not_present(void) {
+    mocksd_reset();
+    attendance_open(DIR, "2026-07-20");
+    attendance_tap("2023-0142", 0, 45);
+    att_state_t s = attendance_tap("2023-0142", 12 * MIN_US, 45);  // out after 12 min
+    TEST_ASSERT_EQUAL_INT(ATT_LEFT_EARLY, s.status);
+    TEST_ASSERT_EQUAL_INT(12, s.minutes);
+    TEST_ASSERT_FALSE(attendance_is_present("2023-0142"));
+    TEST_ASSERT_EQUAL_INT(0, attendance_present_count());
+}
+
+static void test_timed_no_tapout_is_absent(void) {
+    mocksd_reset();
+    attendance_open(DIR, "2026-07-20");
+    attendance_tap("2023-0142", 0, 45);  // in, never out
+    // Still in progress live...
+    TEST_ASSERT_EQUAL_INT(ATT_IN_PROGRESS,
+                          attendance_tap_state("2023-0142", 90 * MIN_US).status);
+    // ...but not present, and a reopen (in-progress is RAM-only) shows absent.
+    TEST_ASSERT_FALSE(attendance_is_present("2023-0142"));
+    attendance_open(DIR, "2026-07-20");
+    TEST_ASSERT_EQUAL_INT(0, attendance_present_count());
+    TEST_ASSERT_EQUAL_INT(ATT_ABSENT, attendance_tap_state("2023-0142", 0).status);
+}
+
+static void test_manual_override_clears_in_progress(void) {
+    mocksd_reset();
+    attendance_open(DIR, "2026-07-20");
+    attendance_tap("2023-0142", 0, 45);  // in progress
+    TEST_ASSERT_TRUE(attendance_set("2023-0142", true));  // professor forces present
+    TEST_ASSERT_TRUE(attendance_is_present("2023-0142"));
+    // The in-progress record was cleared, so a later tap starts a fresh cycle
+    // (already-present -> no-op returning PRESENT).
+    att_state_t s = attendance_tap("2023-0142", 10 * MIN_US, 45);
+    TEST_ASSERT_EQUAL_INT(ATT_PRESENT, s.status);
+}
+
+static void test_timed_present_survives_reopen(void) {
+    mocksd_reset();
+    attendance_open(DIR, "2026-07-20");
+    attendance_tap("2023-0142", 0, 45);
+    attendance_tap("2023-0142", 50 * MIN_US, 45);  // present, 50 min
+    attendance_open(DIR, "2026-07-20");            // reopen folds the file
+    TEST_ASSERT_TRUE(attendance_is_present("2023-0142"));
+    att_state_t s = attendance_tap_state("2023-0142", 0);
+    TEST_ASSERT_EQUAL_INT(ATT_PRESENT, s.status);
+    TEST_ASSERT_EQUAL_INT(50, s.minutes);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_fresh_session_is_empty);
@@ -157,5 +238,10 @@ int main(int, char**) {
     RUN_TEST(test_list_dates_newest_first);
     RUN_TEST(test_present_for_does_not_disturb_open_session);
     RUN_TEST(test_clear_removes_all_sessions);
+    RUN_TEST(test_timed_present_when_over_threshold);
+    RUN_TEST(test_timed_left_early_not_present);
+    RUN_TEST(test_timed_no_tapout_is_absent);
+    RUN_TEST(test_manual_override_clears_in_progress);
+    RUN_TEST(test_timed_present_survives_reopen);
     return UNITY_END();
 }

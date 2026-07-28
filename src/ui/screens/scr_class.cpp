@@ -9,6 +9,7 @@
 #include "app/auth.h"
 #include "app/uid.h"
 #include "audio/beeper.h"
+#include "esp_timer.h"
 #include "services/roster_service.h"
 #include "storage/attendance_store.h"
 #include "ui/components/keyboard.h"
@@ -287,17 +288,46 @@ static void on_session_card(const char* uid_hex) {
     } else {
         const student_t* st = roster_student_at(idx);
         const char* turma = class_turma_for_student(idx);
-        // Show the student's photo regardless of whether the SD write succeeds;
-        // a failed write still marks them present in RAM, so say so honestly.
-        bool ok = attendance_set(st->id, true);
-        if (ok) {
-            beeper_beep();
+        if (s_cls->timed_attendance) {
+            // Two-tap timing: first tap starts, second finalizes vs. threshold.
+            att_state_t s =
+                attendance_tap(st->id, esp_timer_get_time(), s_cls->min_attendance_min);
+            uint32_t color = THEME_ACCENT;
+            const char* icon = LV_SYMBOL_OK;
+            char text[56];
+            switch (s.status) {
+                case ATT_PRESENT:
+                    color = THEME_SUCCESS;
+                    snprintf(text, sizeof(text), "Present - %d min", s.minutes);
+                    beeper_beep();
+                    break;
+                case ATT_LEFT_EARLY:
+                    color = THEME_WARNING;
+                    icon = LV_SYMBOL_WARNING;
+                    snprintf(text, sizeof(text), "Left early - %d/%d min", s.minutes,
+                             s_cls->min_attendance_min);
+                    beeper_error();
+                    break;
+                case ATT_IN_PROGRESS:
+                default:
+                    snprintf(text, sizeof(text), "Checked in - tap again to leave");
+                    beeper_beep();
+                    break;
+            }
+            show_presence_feedback(st, turma, color, icon, text);
         } else {
-            beeper_error();
+            // Single tap = present. Show the photo regardless of the SD write;
+            // a failed write still marks them present in RAM, so say so honestly.
+            bool ok = attendance_set(st->id, true);
+            if (ok) {
+                beeper_beep();
+            } else {
+                beeper_error();
+            }
+            show_presence_feedback(st, turma, ok ? THEME_SUCCESS : THEME_WARNING,
+                                   ok ? LV_SYMBOL_OK : LV_SYMBOL_WARNING,
+                                   ok ? "Presence registered" : "Marked (save failed)");
         }
-        show_presence_feedback(st, turma, ok ? THEME_SUCCESS : THEME_WARNING,
-                               ok ? LV_SYMBOL_OK : LV_SYMBOL_WARNING,
-                               ok ? "Presence registered" : "Marked (save failed)");
     }
     rebuild_session_open();  // refresh + re-arm the card capture
 }
@@ -367,6 +397,29 @@ static void build_session_open(void) {
                                      close_session_cb, nullptr);
     lv_obj_set_width(close, LV_PCT(100));
 
+    // Kiosk (unattended check-in) and Enroll, available during the open session.
+    // No password: the professor is already logged in, and kiosk's own exit gate
+    // covers the unattended case.
+    lv_obj_t* actions = lv_obj_create(s_content);
+    lv_obj_remove_style_all(actions);
+    lv_obj_set_size(actions, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(actions, 10, 0);
+    lv_obj_remove_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* kiosk = ui_make_button(actions, GLYPH_KIOSK "  Kiosk", &theme_style_btn_outline,
+                                     kiosk_cb, nullptr);
+    lv_obj_set_style_text_font(lv_obj_get_child(kiosk, 0), &font_montserrat_custom_20, 0);
+    lv_obj_set_flex_grow(kiosk, 1);
+    lv_obj_t* enroll = ui_make_button(actions, "Enroll", &theme_style_btn_outline, enroll_btn_cb,
+                                      nullptr);
+    lv_obj_set_flex_grow(enroll, 1);
+
+    if (total == 0) {
+        lv_obj_t* card = ui_make_card(s_content);
+        lv_obj_center(ui_make_label(card, "No students enrolled in this class yet.",
+                                    THEME_MUTED, &lv_font_montserrat_14));
+    }
+
     // Instructional callout — deliberately NOT button-shaped: soft orange fill
     // with an amber left rule and alert icon so it reads as a notice, not a tap
     // target. Icon + text sit in a left-aligned row.
@@ -382,29 +435,6 @@ static void build_session_open(void) {
     ui_make_label(banner, LV_SYMBOL_WARNING, THEME_WARNING, &lv_font_montserrat_20);
     ui_make_label(banner, "Class open: Tap a card, or tap a name to log it.", THEME_TEXT, &lv_font_montserrat_14);
 
-    // Kiosk (unattended check-in) and Enroll, available during the open session.
-    // No password: the professor is already logged in, and kiosk's own exit gate
-    // covers the unattended case.
-    lv_obj_t* actions = lv_obj_create(s_content);
-    lv_obj_remove_style_all(actions);
-    lv_obj_set_size(actions, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(actions, 10, 0);
-    lv_obj_remove_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t* kiosk = ui_make_button(actions, GLYPH_KIOSK "  Kiosk", &theme_style_btn_outline,
-                                     kiosk_cb, nullptr);
-    lv_obj_set_style_text_font(lv_obj_get_child(kiosk, 0), &font_montserrat_custom_20, 0);
-    lv_obj_set_flex_grow(kiosk, 1);
-    lv_obj_t* enroll = ui_make_button(actions, "Enroll", &theme_style_btn_primary, enroll_btn_cb,
-                                      nullptr);
-    lv_obj_set_flex_grow(enroll, 1);
-
-    if (total == 0) {
-        lv_obj_t* card = ui_make_card(s_content);
-        lv_obj_center(ui_make_label(card, "No students enrolled in this class yet.",
-                                    THEME_MUTED, &lv_font_montserrat_14));
-    }
-
     // Render the roll call alphabetically by name, not roster/registry order.
     int order[ROSTER_MAX_CLASS_STUDENTS];
     for (int j = 0; j < total; j++) order[j] = s_cls->roster[j];
@@ -416,11 +446,29 @@ static void build_session_open(void) {
         if (!st) continue;
         bool here = attendance_is_present(st->id);
 
+        // In timed mode a student may be "in class N min" without being present
+        // yet; reflect that with an amber chip and a running-minutes subtitle.
+        uint32_t bg = here ? THEME_SUCCESS_SOFT : THEME_SURFACE;
+        uint32_t edge = here ? THEME_SUCCESS : THEME_BORDER;
+        const char* trail_icon = here ? LV_SYMBOL_OK : "";
+        uint32_t trail_color = here ? THEME_SUCCESS : THEME_MUTED;
+        char sub[40] = "";
+        if (s_cls->timed_attendance) {
+            att_state_t s = attendance_tap_state(st->id, esp_timer_get_time());
+            if (s.status == ATT_IN_PROGRESS) {
+                bg = THEME_WARNING_SOFT;
+                edge = THEME_WARNING;
+                trail_icon = LV_SYMBOL_REFRESH;
+                trail_color = THEME_WARNING;
+                snprintf(sub, sizeof(sub), "in class %d min", s.minutes);
+            } else if (s.status == ATT_PRESENT) {
+                snprintf(sub, sizeof(sub), "present %d min", s.minutes);
+            }
+        }
+
         lv_obj_t* chip = ui_make_card(s_content);
-        lv_obj_set_style_bg_color(chip, lv_color_hex(here ? THEME_SUCCESS_SOFT : THEME_SURFACE),
-                                  0);
-        lv_obj_set_style_border_color(chip, lv_color_hex(here ? THEME_SUCCESS : THEME_BORDER),
-                                      0);
+        lv_obj_set_style_bg_color(chip, lv_color_hex(bg), 0);
+        lv_obj_set_style_border_color(chip, lv_color_hex(edge), 0);
         lv_obj_set_flex_flow(chip, LV_FLEX_FLOW_ROW);
         lv_obj_set_flex_align(chip, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
                               LV_FLEX_ALIGN_CENTER);
@@ -434,10 +482,10 @@ static void build_session_open(void) {
         lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_style_pad_row(col, 2, 0);
         ui_make_label(col, st->name, THEME_TEXT, &lv_font_montserrat_14);
-        ui_make_label(col, st->id, here ? THEME_SUCCESS : THEME_MUTED, &lv_font_montserrat_14);
+        ui_make_label(col, sub[0] ? sub : st->id, here ? THEME_SUCCESS : THEME_MUTED,
+                      &lv_font_montserrat_14);
 
-        ui_make_label(chip, here ? LV_SYMBOL_OK : "", here ? THEME_SUCCESS : THEME_MUTED,
-                      &lv_font_montserrat_20);
+        ui_make_label(chip, trail_icon, trail_color, &lv_font_montserrat_20);
     }
 
     ui_set_card_capture(on_session_card);
@@ -928,6 +976,11 @@ static void rebuild_content(void) {
 
     lv_obj_clean(s_content);
     if (!s_cls) return;
+    // Only the enroll view uses the on-screen keyboard; give sh.body a
+    // keyboard-height bottom pad there so a focused field scrolls clear of the
+    // 300 px keyboard (SCROLL_ON_FOCUS keeps it inside the content area, which
+    // this pad ends above the keyboard). Other views use the normal 12 px pad.
+    lv_obj_set_style_pad_bottom(s_sh.body, s_view == VIEW_ENROLL ? 320 : 12, 0);
     switch (s_view) {
         case VIEW_HUB:
             build_hub();
@@ -980,6 +1033,9 @@ static lv_obj_t* create(void) {
     lv_obj_set_size(s_content, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(s_content, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(s_content, 10, 0);
+    // Let scroll gestures bubble up to sh.body (the vertical scroll container)
+    // rather than being caught by this inner container.
+    lv_obj_remove_flag(s_content, LV_OBJ_FLAG_SCROLLABLE);
 
     return s_sh.root;
 }

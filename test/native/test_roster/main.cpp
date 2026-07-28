@@ -418,15 +418,17 @@ static void test_class_capture_and_settings(void) {
     TEST_ASSERT_EQUAL_INT(1, roster_class_at(0)->capture_photos);
     TEST_ASSERT_TRUE(class_capture_enabled(roster_class_at(0)));
 
-    // Rename + new schedule/color, and turn capture OFF.
-    roster_result_t r =
-        roster_class_update_settings("CS101-M1", "Data Structures II", "Wed 8h", 0xABCDEF, 0);
+    // Rename + new schedule/color, turn capture OFF, enable timed (60 min).
+    roster_result_t r = roster_class_update_settings("CS101-M1", "Data Structures II", "Wed 8h",
+                                                     0xABCDEF, 0, true, 60);
     TEST_ASSERT_TRUE(r.ok);
     TEST_ASSERT_EQUAL_STRING("Data Structures II", roster_class_at(0)->name);
     TEST_ASSERT_EQUAL_STRING("Wed 8h", roster_class_at(0)->schedule);
     TEST_ASSERT_EQUAL_HEX32(0xABCDEF, roster_class_at(0)->color);
     TEST_ASSERT_EQUAL_INT(0, roster_class_at(0)->capture_photos);
     TEST_ASSERT_FALSE(class_capture_enabled(roster_class_at(0)));
+    TEST_ASSERT_TRUE(roster_class_at(0)->timed_attendance);
+    TEST_ASSERT_EQUAL_INT(60, roster_class_at(0)->min_attendance_min);
 
     // Persisted, and the roster + turma survived the rewrite.
     char buf[512];
@@ -438,9 +440,12 @@ static void test_class_capture_and_settings(void) {
     roster_service_start();
     TEST_ASSERT_EQUAL_INT(0, roster_class_at(0)->capture_photos);
     TEST_ASSERT_EQUAL_STRING("TE1", roster_class_at(0)->roster_turma[0]);
+    TEST_ASSERT_TRUE(roster_class_at(0)->timed_attendance);       // timed persisted
+    TEST_ASSERT_EQUAL_INT(60, roster_class_at(0)->min_attendance_min);
 
     // Setting capture back to "inherit" (-1) removes the key from class.json.
-    r = roster_class_update_settings("CS101-M1", "Data Structures II", "Wed 8h", 0xABCDEF, -1);
+    r = roster_class_update_settings("CS101-M1", "Data Structures II", "Wed 8h", 0xABCDEF, -1, false,
+                                     45);
     TEST_ASSERT_TRUE(r.ok);
     read_card("/classes/CS101-M1/class.json", buf, sizeof(buf));
     TEST_ASSERT_NULL(strstr(buf, "capture_photos"));

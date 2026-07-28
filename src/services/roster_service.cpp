@@ -183,6 +183,9 @@ static roster_status_t load_one_class(const char* root, const char* dname) {
     // Optional per-class photo-capture override: present bool -> 0/1, absent -> -1
     // (inherit the device-wide flag).
     c->capture_photos = doc["capture_photos"].is<bool>() ? (doc["capture_photos"] ? 1 : 0) : -1;
+    // Optional timed (double-tap) attendance.
+    c->timed_attendance = doc["timed_attendance"] | false;
+    c->min_attendance_min = (int16_t)(doc["min_attendance_min"] | 45);
 
     JsonArray roster = doc["roster"].as<JsonArray>();
     if (roster.isNull()) {
@@ -620,8 +623,8 @@ bool class_capture_enabled(const class_rec_t* cls) {
 }
 
 roster_result_t roster_class_update_settings(const char* class_code, const char* name,
-                                             const char* schedule, uint32_t color,
-                                             int8_t capture) {
+                                             const char* schedule, uint32_t color, int8_t capture,
+                                             bool timed, int min_attendance_min) {
     xSemaphoreTake(s_lock, portMAX_DELAY);
     roster_result_t r = {false, ""};
 
@@ -651,6 +654,9 @@ roster_result_t roster_class_update_settings(const char* class_code, const char*
             } else {
                 doc["capture_photos"] = (capture != 0);
             }
+            if (min_attendance_min < 1) min_attendance_min = 1;
+            doc["timed_attendance"] = timed;
+            doc["min_attendance_min"] = min_attendance_min;
             if (!write_json_file(path, doc)) {
                 r = make_result(false, "Could not save class.json");
             } else {
@@ -658,6 +664,8 @@ roster_result_t roster_class_update_settings(const char* class_code, const char*
                 snprintf(c->schedule, sizeof(c->schedule), "%s", schedule ? schedule : "");
                 c->color = color & 0xFFFFFF;
                 c->capture_photos = capture;
+                c->timed_attendance = timed;
+                c->min_attendance_min = (int16_t)min_attendance_min;
                 r = make_result(true, "Settings saved");
             }
         }

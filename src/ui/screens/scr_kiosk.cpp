@@ -9,6 +9,7 @@
 #include "app/teacher.h"
 #include "app/uid.h"
 #include "audio/beeper.h"
+#include "esp_timer.h"
 #include "services/roster_service.h"
 #include "storage/attendance_store.h"
 #include "ui/components/keyboard.h"
@@ -182,12 +183,52 @@ static void show_invalid(const char* typed) {
     s_timer = lv_timer_create(result_timer_cb, RESULT_MS, nullptr);
 }
 
+// Timed-mode result panel: checked in (accent), present (green), or left early
+// (red), each with the photo and the measured/running minutes.
+static void show_timed_result(const student_t* st, att_state_t s) {
+    uint32_t bg;
+    const char* head;
+    char sub[48];
+    switch (s.status) {
+        case ATT_PRESENT:
+            bg = THEME_SUCCESS;
+            head = "Present";
+            snprintf(sub, sizeof(sub), "%d minutes", s.minutes);
+            beeper_beep();
+            break;
+        case ATT_LEFT_EARLY:
+            bg = THEME_DANGER;
+            head = "Left early";
+            snprintf(sub, sizeof(sub), "only %d minutes", s.minutes);
+            beeper_error();
+            break;
+        case ATT_IN_PROGRESS:
+        default:
+            bg = THEME_ACCENT;
+            head = "Checked in";
+            snprintf(sub, sizeof(sub), "tap again when you leave");
+            beeper_beep();
+            break;
+    }
+    lv_obj_t* p = make_result(bg);
+    kiosk_photo(p, st);
+    kiosk_label(p, head, &lv_font_montserrat_32);
+    kiosk_label(p, st->name, &lv_font_montserrat_32);
+    kiosk_label(p, sub, &lv_font_montserrat_20);
+    s_timer = lv_timer_create(result_timer_cb, RESULT_MS, nullptr);
+}
+
 // --- check-in ---------------------------------------------------------------
 
 static void check_in(const student_t* st) {
+    if (s_id_ta) lv_textarea_set_text(s_id_ta, "");  // clear the field on success
+    if (s_cls && s_cls->timed_attendance) {
+        show_timed_result(st, attendance_tap(st->id, esp_timer_get_time(),
+                                             s_cls->min_attendance_min));
+        return;
+    }
     bool already = attendance_is_present(st->id);
     if (!already) attendance_set(st->id, true);
-    if (s_id_ta) lv_textarea_set_text(s_id_ta, "");  // clear the field on success
     show_success(st, already);
 }
 

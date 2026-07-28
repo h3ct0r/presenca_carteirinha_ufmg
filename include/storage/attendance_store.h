@@ -32,6 +32,37 @@ int attendance_present_count(void);
 // false on a write error (memory is still updated so the UI stays in sync).
 bool attendance_set(const char* student_id, bool present);
 
+// --- Timed (double-tap) attendance ------------------------------------------
+//
+// In timed mode a student taps twice: once on arrival, once on leaving. They
+// only count as present if (leave - arrive) >= threshold. Duration is measured
+// from a monotonic clock (esp_timer_get_time), so it works without an RTC. The
+// in-progress "tapped in, not out" state lives in RAM only — a reboot voids it.
+// Finalized results are written to the same JSONL with an extra "min" field:
+//   {"id":"2023-0142","present":true,"min":52}
+
+typedef enum {
+    ATT_ABSENT = 0,    // not tapped (or tapped out too early)
+    ATT_IN_PROGRESS,   // tapped in, waiting for the tap-out
+    ATT_PRESENT,       // tapped out with enough minutes
+    ATT_LEFT_EARLY,    // tapped out below the threshold (not counted present)
+} att_status_t;
+
+typedef struct {
+    att_status_t status;
+    int minutes;  // elapsed so far (IN_PROGRESS) or measured (PRESENT/LEFT_EARLY)
+} att_state_t;
+
+// Handles a timed tap for a student in the open session. First tap records the
+// arrival (RAM); the second finalizes: present (writes present+min) when the
+// gap is >= threshold_min, else left-early. `now_us` is a monotonic timestamp
+// (microseconds). Returns the resulting state.
+att_state_t attendance_tap(const char* student_id, long long now_us, int threshold_min);
+
+// The student's current timed state in the open session (for the roll call).
+// now_us lets IN_PROGRESS report the minutes elapsed so far.
+att_state_t attendance_tap_state(const char* student_id, long long now_us);
+
 // Ends the open session (clears memory; the log is already on disk).
 void attendance_close(void);
 

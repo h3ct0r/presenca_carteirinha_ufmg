@@ -5,9 +5,9 @@ an open session, removes the redundant re-auth locks, and adds a per-class
 settings/statistics screen with per-class photo capture and a timed
 double-tap attendance mode.
 
-Status: **planned.** Phase 1 in progress. Device-only UI is build-verified, not
-run on hardware; the timed-attendance decision logic lives in `attendance_store`
-so it is native-testable.
+Status: **all three phases implemented** (build- and native-test-verified, not
+run on hardware). The timed-attendance decision logic lives in `attendance_store`
+and is fully native-tested; the screens/tap UX are device-only.
 
 ## Locked decisions
 - **Nav:** state-aware class **hub** (Session · History, plus a "Resume session"
@@ -83,3 +83,36 @@ back/title, with a context-aware back (deeper view → hub → classes list).
   tap UX is device-only.
 - The strict "must tap out ⇒ absent" rule leans on students tapping out — the
   timed roll call / kiosk should show a clear "tap again when you leave" hint.
+
+### Changelog
+
+- **2026-07-28** — **Phase 3: timed (double-tap) attendance.** `attendance_store`
+  gained the tap state machine (`attendance_tap`, `attendance_tap_state`) — first
+  tap = arrival, second = leave, present iff `leave − arrive ≥ threshold`, with
+  a monotonic clock (no RTC) and RAM-only in-progress state. Finalized results
+  write `{"present","min"}` to the same JSONL (backward-compatible fold).
+  `class.json` gained `timed_attendance` + `min_attendance_min` (default 45),
+  surfaced as a switch + minutes field in the ⚙ settings screen. Session
+  roll-call, the check-in overlay, and kiosk now branch on timed mode
+  (in-progress / present-N-min / left-early feedback). Native: +5
+  `test_attendance` cases + a `test_roster` round-trip. **Build- and
+  native-test-verified, not run on hardware.**
+- **2026-07-28** — **Phase 2: per-class statistics & settings screen**
+  (`scr_class_stats`, `SCREEN_CLASS_STATS`), opened from a ⚙ button on each class
+  card. Shows student/photo/turma/attendance-rate stats and edits name, schedule,
+  color (swatch picker), and a per-class **photo-capture override** (inherit /
+  on / off). Added `class_rec_t.capture_photos`, `class_capture_enabled()`, and
+  `roster_class_update_settings()` (atomic class.json rewrite preserving roster +
+  turma). Native: `test_class_capture_and_settings`. Later fix: the screen
+  scrolls (inner container no longer captures the gesture) and a keyboard-height
+  bottom pad keeps focused fields clear of the on-screen keyboard.
+- **2026-07-28** — **Phase 1: navigation + auth reorg.** The class screen went
+  from a 3-tab bar (Session / History / Enroll) to a **view stack**: a state-aware
+  hub (Session · History, plus a "Resume session" card and a header "session
+  open" chip), an open-session view carrying **Kiosk** and **Enroll** buttons, and
+  a context-aware back. Removed the enroll re-auth (`s_unlocked` + unlock modal +
+  header lock button); Kiosk/Enroll are entered without a password (the professor
+  is already logged in), while the **kiosk *exit*** keeps its gate — switched to
+  the shared **numeric** keypad. Exiting kiosk returns into the running session,
+  and student photos now appear on the kiosk confirmation too. Pure LVGL —
+  build-verified, not run on hardware.
