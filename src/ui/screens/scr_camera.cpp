@@ -115,17 +115,21 @@ static lv_obj_t* create(void) {
     lv_obj_set_style_bg_opa(holder, LV_OPA_COVER, 0);
     lv_obj_remove_flag(holder, LV_OBJ_FLAG_SCROLLABLE);
 
-    s_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
-    s_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
-    s_dsc.header.w = FACE_PREVIEW_W;
-    s_dsc.header.h = FACE_PREVIEW_H;
-    s_dsc.header.stride = FACE_PREVIEW_W * 2;
-    s_dsc.data_size = FACE_PREVIEW_W * FACE_PREVIEW_H * 2;
-    s_dsc.data = s_buf;
-
     s_img = lv_image_create(holder);
     lv_obj_set_pos(s_img, 0, 0);
-    lv_image_set_src(s_img, &s_dsc);
+    // Only bind the descriptor when the buffer actually allocated — pointing an
+    // lv_image at NULL data crashes the renderer. If PSRAM is exhausted the
+    // preview stays blank and the status line (set in on_show) explains why.
+    if (s_buf) {
+        s_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+        s_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+        s_dsc.header.w = FACE_PREVIEW_W;
+        s_dsc.header.h = FACE_PREVIEW_H;
+        s_dsc.header.stride = FACE_PREVIEW_W * 2;
+        s_dsc.data_size = FACE_PREVIEW_W * FACE_PREVIEW_H * 2;
+        s_dsc.data = s_buf;
+        lv_image_set_src(s_img, &s_dsc);
+    }
 
     for (int i = 0; i < FACE_MAX_BOXES; i++) {
         lv_obj_t* b = lv_obj_create(holder);

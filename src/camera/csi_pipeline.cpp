@@ -14,6 +14,19 @@
 
 static const char* TAG = "csi_pipe";
 
+// Bring-up must fail gracefully, not abort. ESP_ERROR_CHECK panics (and reboots
+// the whole device) on any driver error, which on the camera screen shows as a
+// blue panel and a reset. Instead, log the failing call and return false so
+// face_detection_start() reports "camera init FAILED" and the UI stays alive.
+#define CSI_TRY(call)                                            \
+    do {                                                         \
+        esp_err_t err_ = (call);                                 \
+        if (err_ != ESP_OK) {                                    \
+            ESP_LOGE(TAG, "%s failed: 0x%x", #call, err_);       \
+            return false;                                        \
+        }                                                        \
+    } while (0)
+
 static esp_cam_ctlr_handle_t s_cam = NULL;
 static isp_proc_handle_t s_isp = NULL;
 static uint8_t* s_buf[2] = {NULL, NULL};  // DMA ping-pong frame buffers
@@ -117,7 +130,7 @@ bool csi_pipeline_init(uint16_t w, uint16_t h) {
         .on_get_new_trans = on_get_new_trans,
         .on_trans_finished = on_trans_finished,
     };
-    ESP_ERROR_CHECK(esp_cam_ctlr_register_event_callbacks(s_cam, &cbs, NULL));
+    CSI_TRY(esp_cam_ctlr_register_event_callbacks(s_cam, &cbs, NULL));
 
     esp_isp_processor_cfg_t isp_cfg = {};
     isp_cfg.clk_src = ISP_CLK_SRC_DEFAULT;
@@ -133,22 +146,22 @@ bool csi_pipeline_init(uint16_t w, uint16_t h) {
         ESP_LOGE(TAG, "esp_isp_new_processor failed: 0x%x", err);
         return false;
     }
-    ESP_ERROR_CHECK(esp_isp_enable(s_isp));
+    CSI_TRY(esp_isp_enable(s_isp));
 
     // Color pipeline: vendor CCM (neutral WB to start; AWB loop adjusts it)
     // and the vendor 0.518 gamma curve on all three channels
     apply_ccm(1.0f, 1.0f);
-    ESP_ERROR_CHECK(esp_isp_ccm_enable(s_isp));
+    CSI_TRY(esp_isp_ccm_enable(s_isp));
 
     isp_gamma_curve_points_t pts;
-    ESP_ERROR_CHECK(esp_isp_gamma_fill_curve_points(gamma_curve, &pts));
-    ESP_ERROR_CHECK(esp_isp_gamma_configure(s_isp, COLOR_COMPONENT_R, &pts));
-    ESP_ERROR_CHECK(esp_isp_gamma_configure(s_isp, COLOR_COMPONENT_G, &pts));
-    ESP_ERROR_CHECK(esp_isp_gamma_configure(s_isp, COLOR_COMPONENT_B, &pts));
-    ESP_ERROR_CHECK(esp_isp_gamma_enable(s_isp));
+    CSI_TRY(esp_isp_gamma_fill_curve_points(gamma_curve, &pts));
+    CSI_TRY(esp_isp_gamma_configure(s_isp, COLOR_COMPONENT_R, &pts));
+    CSI_TRY(esp_isp_gamma_configure(s_isp, COLOR_COMPONENT_G, &pts));
+    CSI_TRY(esp_isp_gamma_configure(s_isp, COLOR_COMPONENT_B, &pts));
+    CSI_TRY(esp_isp_gamma_enable(s_isp));
 
-    ESP_ERROR_CHECK(esp_cam_ctlr_enable(s_cam));
-    ESP_ERROR_CHECK(esp_cam_ctlr_start(s_cam));
+    CSI_TRY(esp_cam_ctlr_enable(s_cam));
+    CSI_TRY(esp_cam_ctlr_start(s_cam));
 
     ESP_LOGI(TAG, "CSI pipeline up: %ux%u RAW10(GBRG) -> RGB565, 2 lanes @810Mbps", w, h);
     return true;

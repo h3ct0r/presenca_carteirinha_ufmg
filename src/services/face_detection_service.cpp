@@ -181,15 +181,24 @@ static void detection_task(void*) {
     }
 
     // esp-dl does NOT check its own model-load failure — it dereferences the
-    // broken model and hard-faults. So only construct the detector once both
-    // model files are present; otherwise run preview-only (no crash).
+    // broken model and hard-faults (a device reset). So only construct the
+    // detector when both model files are present AND non-empty; a 0-byte or
+    // truncated file (a failed SD copy) is the common way this crashes.
+    // NOTE: a genuinely corrupt but full-size model still faults inside esp-dl —
+    // that is an esp-dl limitation we can't guard from here.
+    static constexpr size_t MIN_MODEL_BYTES = 1024;  // any real model is far larger
+    bool models_ok = have_msr && have_mnp && sz_msr >= MIN_MODEL_BYTES && sz_mnp >= MIN_MODEL_BYTES;
     HumanFaceDetect* detect = nullptr;
-    if (have_msr && have_mnp) {
+    if (models_ok) {
         set_status("loading model...");
         detect = new HumanFaceDetect();
         detect->set_score_thr(0.3f, 0);   // stage 0 (MSR): proposals
         detect->set_score_thr(0.45f, 1);  // stage 1 (MNP): final accept
         set_status("model ready");
+    } else if (have_msr && have_mnp) {
+        set_status("model file empty/truncated - preview only");
+        ESP_LOGW(TAG, "model file too small (msr=%uB mnp=%uB); preview only", (unsigned)sz_msr,
+                 (unsigned)sz_mnp);
     } else {
         set_status("no model on SD (put .espdl in /models) - preview only");
         ESP_LOGW(TAG, "model files missing on SD (%s / %s); preview only", MODEL_MSR, MODEL_MNP);
@@ -258,9 +267,16 @@ static void detection_task(void*) {
 bool face_detection_start(void) {
     if (s_running) return true;
 
-    s_st.lock = xSemaphoreCreateMutex();
-    if (!s_st.lock) return false;
+    // Allocate the lock and preview buffers ONCE and reuse them across retries.
+    // A camera-init failure returns early below with s_running still false, so a
+    // re-entry into the screen would otherwise leak the mutex and 2x253 KB of
+    // PSRAM every time, eventually exhausting PSRAM and crashing elsewhere.
+    if (!s_st.lock) {
+        s_st.lock = xSemaphoreCreateMutex();
+        if (!s_st.lock) return false;
+    }
     for (int i = 0; i < 2; i++) {
+        if (s_st.preview[i]) continue;
         s_st.preview[i] =
             (uint8_t*)heap_caps_aligned_calloc(128, 1, PREVIEW_BYTES, MALLOC_CAP_SPIRAM);
         if (!s_st.preview[i]) {
