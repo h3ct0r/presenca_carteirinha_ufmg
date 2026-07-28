@@ -189,37 +189,6 @@ static void test_teacher_has_password(void) {
     TEST_ASSERT_EQUAL_STRING("Prof Hector Azpurua", who.name);
 }
 
-static void test_photo_capture_defaults_off(void) {
-    mocksd_reset();
-    mocksd_add_file("/config.json",
-                    "{ \"teachers\": [ { \"name\": \"A\", \"rfid_uid\": \"AA:00\" } ] }");
-    config_service_start();
-    TEST_ASSERT_EQUAL(CONFIG_OK, config_get_status());
-    TEST_ASSERT_FALSE(config_photo_capture_enabled());  // absent -> off
-}
-
-static void test_photo_capture_parsed_and_persisted(void) {
-    mocksd_reset();
-    mocksd_add_file("/config.json",
-                    "{ \"capture_photos\": true,\n"
-                    "  \"teachers\": [ { \"name\": \"A\", \"rfid_uid\": \"AA:00\" } ] }");
-    config_service_start();
-    TEST_ASSERT_TRUE(config_photo_capture_enabled());
-
-    // Toggle off, persist, and confirm both RAM and the file reflect it.
-    config_result_t r = config_set_photo_capture(false);
-    TEST_ASSERT_TRUE(r.ok);
-    TEST_ASSERT_FALSE(config_photo_capture_enabled());
-
-    char buf[256];
-    size_t n = mocksd_read_file("/config.json", buf, sizeof(buf) - 1);
-    buf[n] = '\0';
-    TEST_ASSERT_NOT_NULL(strstr(buf, "\"capture_photos\": false"));
-    // Reload from disk confirms persistence.
-    config_service_start();
-    TEST_ASSERT_FALSE(config_photo_capture_enabled());
-}
-
 static void test_teacher_list_is_capped(void) {
     char json[2048];
     int n = snprintf(json, sizeof(json), "{ \"teachers\": [");
@@ -411,7 +380,5 @@ int main(int, char**) {
     RUN_TEST(test_validate_tree_accepts_good_staging);          // loads its own live + staging
     RUN_TEST(test_validate_tree_rejects_bad_staging_leaving_live_intact);  // chains from above
     RUN_TEST(test_validate_tree_reports_missing_config);        // chains from above
-    RUN_TEST(test_photo_capture_defaults_off);       // self-contained (own config)
-    RUN_TEST(test_photo_capture_parsed_and_persisted);
     return UNITY_END();
 }

@@ -130,12 +130,12 @@ All build + native-test verified unless noted; **not run on hardware**.
 - **Debug section**: a toggle reveals a red **"Delete all cards & attendance"**
   button → confirm modal → `roster_clear_all_uids()` (clears every rfid_uid,
   rewrites students.json) + `attendance_clear(dir)` for every class. 2 tests.
-- **Settings section**: **"Attendance photos"** toggle → config `capture_photos`
-  (see below) + a **"Camera preview"** button → `SCREEN_CAMERA`.
+- **Camera section**: a **"Camera preview"** button → `SCREEN_CAMERA`. Photo
+  check-in is configured **per class** (in the class ⚙ settings), not device-wide.
 
 **config_service**
-- `capture_photos` bool added to config.json + `device_config_t`
-  (`config_photo_capture_enabled()`, `config_set_photo_capture()`).
+- No capture flag in config.json — photo check-in is a per-class option
+  (`class.json` `capture_photos` + `face_verify_seconds`, see roster_service).
 - **C2**: lightweight lookups `config_find_teacher_by_uid/by_password`,
   `config_teacher_has_password` — iterate under the lock, copy out only the
   matched teacher, so callers don't put a ~1.5 KB `device_config_t` on the LVGL
@@ -330,10 +330,12 @@ Export / WiFi File Editor / Admin. Active tab highlighted; nav can be disabled
 ## SD card data model (see docs/software/sd_card_example/)
 
 ```
-/config.json      { "capture_photos":bool, "teachers":[{name,email,rfid_uid,password}] }
+/config.json      { "teachers":[{name,email,rfid_uid,password}] }
 /students/students.json   { version, students:[{id,name,rfid_uid|null}] }
-/students/photos/<id>.jpg (planned)
-/classes/<CODE>/class.json  { version,code,name,schedule,teacher_email,color,roster:[{id}] }
+/students/photos/<id>.jpg (reference avatar)   /students/checkins/<id>/*.jpg (face-verify)
+/classes/<CODE>/class.json  { version,code,name,schedule,teacher_email,color,
+                              capture_photos?,face_verify_seconds?,timed_attendance?,min_attendance_min?,
+                              roster:[{id,turma?}] }
 /classes/<CODE>/attendance/YYYY-MM-DD.jsonl   append-only {"id":..,"present":bool}
 /csv_export/<CODE>.csv     MATRICULA,FREQ export (see docs/EXPORT.md)
 /models/*.espdl            ESP-DL face-detection models (see docs/FACE_DETECTION.md)
@@ -342,8 +344,9 @@ Export / WiFi File Editor / Admin. Active tab highlighted; nav can be disabled
 ```
 
 - **config.json** (`config_service`): per-professor **unique digits-only**
-  passwords (`CONFIG_DUP_PASSWORD` / `CONFIG_NON_NUMERIC_PASSWORD`), plus the
-  device `capture_photos` flag. Lightweight lookups avoid whole-struct copies.
+  passwords (`CONFIG_DUP_PASSWORD` / `CONFIG_NON_NUMERIC_PASSWORD`). Photo
+  check-in is per-class (class.json), not a device flag. Lightweight lookups
+  avoid whole-struct copies.
 - **Registry model:** students are a global registry keyed by university id;
   classes reference by index; one record + one card binding per student.
 - **roster_service:** loads + strictly validates; writes are atomic
@@ -408,8 +411,9 @@ Docs: `docs/FACE_DETECTION.md`. Memory: `camera-face-detection.md`.
   hardware encoder** (quality 85, ~300–500 KB @1080p) → `/photos/IMG_nnnn.jpg`;
   BMP only if the encoder is unavailable.
 - **Status: see "START HERE" — camera inits on hardware, model loads, but 0
-  faces detected.** `capture_photos` config flag exists but per-student capture
-  at check-in is not wired yet.
+  faces detected.** Per-student face-verify check-in is wired (kiosk-only,
+  per-class `capture_photos`; saves `/students/checkins/<id>/*.jpg`) but is
+  build-verified only — see docs/software/FACE_CHECKIN.md.
 
 ## Theme / fonts / toast
 

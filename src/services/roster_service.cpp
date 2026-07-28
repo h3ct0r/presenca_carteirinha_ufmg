@@ -180,9 +180,12 @@ static roster_status_t load_one_class(const char* root, const char* dname) {
     if (col[0] == '#') col++;
     c->color = (uint32_t)strtoul(col, nullptr, 16);
 
-    // Optional per-class photo-capture override: present bool -> 0/1, absent -> -1
-    // (inherit the device-wide flag).
-    c->capture_photos = doc["capture_photos"].is<bool>() ? (doc["capture_photos"] ? 1 : 0) : -1;
+    // Optional per-class photo check-in + its face-verify countdown.
+    c->capture_photos = doc["capture_photos"] | false;
+    int fvs = doc["face_verify_seconds"] | FACE_VERIFY_SECONDS_DEFAULT;
+    if (fvs < FACE_VERIFY_SECONDS_MIN) fvs = FACE_VERIFY_SECONDS_MIN;
+    if (fvs > FACE_VERIFY_SECONDS_MAX) fvs = FACE_VERIFY_SECONDS_MAX;
+    c->face_verify_seconds = (int16_t)fvs;
     // Optional timed (double-tap) attendance.
     c->timed_attendance = doc["timed_attendance"] | false;
     c->min_attendance_min = (int16_t)(doc["min_attendance_min"] | 45);
@@ -614,17 +617,12 @@ bool roster_clear_all_uids(void) {
     return ok;
 }
 
-bool class_capture_enabled(const class_rec_t* cls) {
-    if (cls) {
-        if (cls->capture_photos == 0) return false;
-        if (cls->capture_photos == 1) return true;
-    }
-    return config_photo_capture_enabled();  // -1 (or NULL class) inherits the device flag
-}
+bool class_capture_enabled(const class_rec_t* cls) { return cls && cls->capture_photos; }
 
 roster_result_t roster_class_update_settings(const char* class_code, const char* name,
-                                             const char* schedule, uint32_t color, int8_t capture,
-                                             bool timed, int min_attendance_min) {
+                                             const char* schedule, uint32_t color, bool capture,
+                                             int face_verify_seconds, bool timed,
+                                             int min_attendance_min) {
     xSemaphoreTake(s_lock, portMAX_DELAY);
     roster_result_t r = {false, ""};
 
@@ -646,15 +644,16 @@ roster_result_t roster_class_update_settings(const char* class_code, const char*
         } else {
             char color_hex[8];
             snprintf(color_hex, sizeof(color_hex), "%06X", (unsigned)(color & 0xFFFFFF));
+            if (face_verify_seconds < FACE_VERIFY_SECONDS_MIN)
+                face_verify_seconds = FACE_VERIFY_SECONDS_MIN;
+            if (face_verify_seconds > FACE_VERIFY_SECONDS_MAX)
+                face_verify_seconds = FACE_VERIFY_SECONDS_MAX;
+            if (min_attendance_min < 1) min_attendance_min = 1;
             doc["name"] = name;
             doc["schedule"] = schedule ? schedule : "";
             doc["color"] = color_hex;
-            if (capture < 0) {
-                doc.remove("capture_photos");  // inherit -> no key
-            } else {
-                doc["capture_photos"] = (capture != 0);
-            }
-            if (min_attendance_min < 1) min_attendance_min = 1;
+            doc["capture_photos"] = capture;
+            doc["face_verify_seconds"] = face_verify_seconds;
             doc["timed_attendance"] = timed;
             doc["min_attendance_min"] = min_attendance_min;
             if (!write_json_file(path, doc)) {
@@ -664,6 +663,7 @@ roster_result_t roster_class_update_settings(const char* class_code, const char*
                 snprintf(c->schedule, sizeof(c->schedule), "%s", schedule ? schedule : "");
                 c->color = color & 0xFFFFFF;
                 c->capture_photos = capture;
+                c->face_verify_seconds = (int16_t)face_verify_seconds;
                 c->timed_attendance = timed;
                 c->min_attendance_min = (int16_t)min_attendance_min;
                 r = make_result(true, "Settings saved");

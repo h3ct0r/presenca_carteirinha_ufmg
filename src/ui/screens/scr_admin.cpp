@@ -1,6 +1,7 @@
 #include "ui/screens/scr_admin.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "esp32-hal-log.h"
@@ -340,44 +341,17 @@ static void build_rfid(void) {
 
 static void camera_preview_cb(lv_event_t*) { scr_mgr_show(SCREEN_CAMERA, nullptr); }
 
-static void photo_toggle_cb(lv_event_t* e) {
-    lv_obj_t* sw = (lv_obj_t*)lv_event_get_target(e);
-    bool want = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    config_result_t r = config_set_photo_capture(want);
-    ui_toast_show(r.message, r.ok);
-    if (!r.ok) {
-        // Persist failed — snap the switch back to the stored value.
-        if (config_photo_capture_enabled()) {
-            lv_obj_add_state(sw, LV_STATE_CHECKED);
-        } else {
-            lv_obj_remove_state(sw, LV_STATE_CHECKED);
-        }
-    }
-}
-
 static void build_settings(void) {
     lv_obj_clean(s_settings);
 
     lv_obj_t* card = ui_make_card(s_settings);
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(card, 8, 0);
-    ui_make_label(card, "Attendance photos", THEME_PRIMARY, &lv_font_montserrat_20);
-
-    lv_obj_t* row = lv_obj_create(card);
-    lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
-    lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    ui_make_label(row, "Take a photo on check-in", THEME_TEXT, &lv_font_montserrat_14);
-    lv_obj_t* sw = lv_switch_create(row);
-    if (config_photo_capture_enabled()) lv_obj_add_state(sw, LV_STATE_CHECKED);
-    lv_obj_add_event_cb(sw, photo_toggle_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+    ui_make_label(card, "Camera", THEME_PRIMARY, &lv_font_montserrat_20);
 
     lv_obj_t* cap = ui_make_label(
-        card, "When on, the onboard camera captures each student's photo as their presence "
-              "is registered.",
+        card, "Photo check-in (face verify) is configured per class in its settings. Use the "
+              "preview to aim and test the camera.",
         THEME_MUTED, &lv_font_montserrat_14);
     lv_label_set_long_mode(cap, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(cap, LV_PCT(100));

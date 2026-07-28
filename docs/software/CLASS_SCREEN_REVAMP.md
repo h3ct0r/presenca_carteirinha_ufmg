@@ -17,8 +17,9 @@ and is fully native-tested; the screens/tap UX are device-only.
   keypad (passwords are digits-only). Delete the Enroll tab, the header lock
   button, and the unlock modal.
 - **Per-class settings (⚙ on each class card):** statistics + per-class **photo
-  capture** (overrides the device-wide flag) + **timed attendance** (on/off +
-  threshold, default 45 min) + **edit name / schedule / color**.
+  check-in** (on/off + face-verify seconds; class-only, no device-wide flag) +
+  **timed attendance** (on/off + threshold, default 45 min) + **edit name /
+  schedule / color**.
 - **Timed attendance:** two taps — tap in (arrival) then tap out (leaving).
   Present **iff** `out − in ≥ threshold` **and** the student tapped out; a student
   who taps in but never taps out is **absent** at session close. **Store the
@@ -39,10 +40,10 @@ Open-Session ─Enroll─▶ Enroll (no unlock; search → manual + turma → ta
 ```
 
 ## Data-model changes (all optional → existing cards unaffected)
-- **class.json:** `capture_photos` (override; absent = inherit device global),
-  `timed_attendance` (bool), `min_attendance_min` (int, default 45).
-- **class_rec_t:** matching RAM fields, with an "unset ⇒ inherit global" flag for
-  capture.
+- **class.json:** `capture_photos` (bool), `face_verify_seconds` (int, default 15,
+  clamp 3–60), `timed_attendance` (bool), `min_attendance_min` (int, default 45).
+  Photo check-in is class-only — there is no device-wide capture flag.
+- **class_rec_t:** matching RAM fields.
 - **attendance JSONL:** optional `"min"` — `{"id":"…","present":true,"min":52}`.
   Old readers ignore it; the present-bool fold is unchanged.
 

@@ -10,6 +10,11 @@
 constexpr int ROSTER_MAX_STUDENTS = 600;   // global registry cap (see the RAM note below)
 constexpr int ROSTER_MAX_CLASSES = 12;
 constexpr int ROSTER_MAX_CLASS_STUDENTS = 100;
+
+// Face-verify countdown bounds (seconds) for a class's photo check-in.
+constexpr int FACE_VERIFY_SECONDS_MIN = 3;
+constexpr int FACE_VERIFY_SECONDS_MAX = 60;
+constexpr int FACE_VERIFY_SECONDS_DEFAULT = 15;
 // NOTE: s_students[ROSTER_MAX_STUDENTS] is a static array — at 600 that is
 // 600 * sizeof(student_t) (~92 B) ≈ 54 KB of internal RAM (~+27 KB vs 300).
 // Fine on the P4's SRAM budget, but re-check free heap on device.
@@ -27,9 +32,12 @@ typedef struct {
     char schedule[40];
     char teacher_email[64];  // links to config.json's teachers
     uint32_t color;
-    // Per-class photo capture override: -1 = inherit the device-wide flag,
-    // 0 = off, 1 = on. From class.json's optional "capture_photos" bool.
-    int8_t capture_photos;
+    // Photo check-in for this class (a per-class option; there is no device-wide
+    // flag). When on, kiosk check-ins face-verify within face_verify_seconds and
+    // save a photo. From class.json's optional "capture_photos" bool (default
+    // false) + "face_verify_seconds" int (default 15, clamped).
+    bool capture_photos;
+    int16_t face_verify_seconds;
     // Timed (double-tap) attendance: students tap in and out, counting present
     // only if they stayed >= min_attendance_min. From class.json's optional
     // "timed_attendance" bool + "min_attendance_min" int (default 45).

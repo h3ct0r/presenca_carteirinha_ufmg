@@ -404,7 +404,7 @@ static void test_validate_tree_rejects_bad_staging_leaving_live_intact(void) {
     TEST_ASSERT_EQUAL_STRING("", err);
 }
 
-// --- per-class settings (Phase 2: capture override + metadata editing) ------
+// --- per-class settings (capture / face-verify / metadata editing) ----------
 
 static void test_class_capture_and_settings(void) {
     mocksd_reset();
@@ -412,21 +412,25 @@ static void test_class_capture_and_settings(void) {
     mocksd_add_file("/classes/CS101-M1/class.json",
                     "{ \"version\": 1, \"code\": \"CS101-M1\", \"name\": \"DS\", "
                     "\"schedule\": \"Tue\", \"color\": \"272766\", \"capture_photos\": true, "
+                    "\"face_verify_seconds\": 20, "
                     "\"roster\": [ { \"id\": \"2023-0142\", \"turma\": \"TE1\" } ] }");
     roster_service_start();
     TEST_ASSERT_EQUAL(ROSTER_OK, roster_get_status());
-    TEST_ASSERT_EQUAL_INT(1, roster_class_at(0)->capture_photos);
+    TEST_ASSERT_TRUE(roster_class_at(0)->capture_photos);
+    TEST_ASSERT_EQUAL_INT(20, roster_class_at(0)->face_verify_seconds);
     TEST_ASSERT_TRUE(class_capture_enabled(roster_class_at(0)));
 
-    // Rename + new schedule/color, turn capture OFF, enable timed (60 min).
+    // Rename + new schedule/color, turn capture OFF, face-verify clamps (99->60),
+    // enable timed (60 min).
     roster_result_t r = roster_class_update_settings("CS101-M1", "Data Structures II", "Wed 8h",
-                                                     0xABCDEF, 0, true, 60);
+                                                     0xABCDEF, false, 99, true, 60);
     TEST_ASSERT_TRUE(r.ok);
     TEST_ASSERT_EQUAL_STRING("Data Structures II", roster_class_at(0)->name);
     TEST_ASSERT_EQUAL_STRING("Wed 8h", roster_class_at(0)->schedule);
     TEST_ASSERT_EQUAL_HEX32(0xABCDEF, roster_class_at(0)->color);
-    TEST_ASSERT_EQUAL_INT(0, roster_class_at(0)->capture_photos);
+    TEST_ASSERT_FALSE(roster_class_at(0)->capture_photos);
     TEST_ASSERT_FALSE(class_capture_enabled(roster_class_at(0)));
+    TEST_ASSERT_EQUAL_INT(FACE_VERIFY_SECONDS_MAX, roster_class_at(0)->face_verify_seconds);
     TEST_ASSERT_TRUE(roster_class_at(0)->timed_attendance);
     TEST_ASSERT_EQUAL_INT(60, roster_class_at(0)->min_attendance_min);
 
@@ -438,18 +442,11 @@ static void test_class_capture_and_settings(void) {
     TEST_ASSERT_NOT_NULL(strstr(buf, "2023-0142"));
     TEST_ASSERT_NOT_NULL(strstr(buf, "TE1"));
     roster_service_start();
-    TEST_ASSERT_EQUAL_INT(0, roster_class_at(0)->capture_photos);
+    TEST_ASSERT_FALSE(roster_class_at(0)->capture_photos);
+    TEST_ASSERT_EQUAL_INT(FACE_VERIFY_SECONDS_MAX, roster_class_at(0)->face_verify_seconds);
     TEST_ASSERT_EQUAL_STRING("TE1", roster_class_at(0)->roster_turma[0]);
-    TEST_ASSERT_TRUE(roster_class_at(0)->timed_attendance);       // timed persisted
+    TEST_ASSERT_TRUE(roster_class_at(0)->timed_attendance);
     TEST_ASSERT_EQUAL_INT(60, roster_class_at(0)->min_attendance_min);
-
-    // Setting capture back to "inherit" (-1) removes the key from class.json.
-    r = roster_class_update_settings("CS101-M1", "Data Structures II", "Wed 8h", 0xABCDEF, -1, false,
-                                     45);
-    TEST_ASSERT_TRUE(r.ok);
-    read_card("/classes/CS101-M1/class.json", buf, sizeof(buf));
-    TEST_ASSERT_NULL(strstr(buf, "capture_photos"));
-    TEST_ASSERT_EQUAL_INT(-1, roster_class_at(0)->capture_photos);
 }
 
 int main(int, char**) {

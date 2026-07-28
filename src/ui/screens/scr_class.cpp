@@ -279,6 +279,50 @@ static void show_presence_feedback(const student_t* st, const char* turma, uint3
     lv_timer_set_repeat_count(s_fb_timer, 1);
 }
 
+// Registers a recognized student (timed or single) and shows the feedback
+// overlay. Extracted so it runs directly (no capture) or after a face-verify.
+static void register_recognized(int idx) {
+    const student_t* st = roster_student_at(idx);
+    if (!st) return;
+    const char* turma = class_turma_for_student(idx);
+    if (s_cls->timed_attendance) {
+        att_state_t s = attendance_tap(st->id, esp_timer_get_time(), s_cls->min_attendance_min);
+        uint32_t color = THEME_ACCENT;
+        const char* icon = LV_SYMBOL_OK;
+        char text[56];
+        switch (s.status) {
+            case ATT_PRESENT:
+                color = THEME_SUCCESS;
+                snprintf(text, sizeof(text), "Present - %d min", s.minutes);
+                beeper_beep();
+                break;
+            case ATT_LEFT_EARLY:
+                color = THEME_WARNING;
+                icon = LV_SYMBOL_WARNING;
+                snprintf(text, sizeof(text), "Left early - %d/%d min", s.minutes,
+                         s_cls->min_attendance_min);
+                beeper_error();
+                break;
+            case ATT_IN_PROGRESS:
+            default:
+                snprintf(text, sizeof(text), "Checked in - tap again to leave");
+                beeper_beep();
+                break;
+        }
+        show_presence_feedback(st, turma, color, icon, text);
+    } else {
+        bool ok = attendance_set(st->id, true);
+        if (ok) {
+            beeper_beep();
+        } else {
+            beeper_error();
+        }
+        show_presence_feedback(st, turma, ok ? THEME_SUCCESS : THEME_WARNING,
+                               ok ? LV_SYMBOL_OK : LV_SYMBOL_WARNING,
+                               ok ? "Presence registered" : "Marked (save failed)");
+    }
+}
+
 static void on_session_card(const char* uid_hex) {
     int idx = roster_student_by_uid(uid_hex);
     if (idx < 0) {
@@ -286,48 +330,8 @@ static void on_session_card(const char* uid_hex) {
         show_presence_feedback(nullptr, nullptr, THEME_DANGER, LV_SYMBOL_CLOSE,
                                "Card not recognized");
     } else {
-        const student_t* st = roster_student_at(idx);
-        const char* turma = class_turma_for_student(idx);
-        if (s_cls->timed_attendance) {
-            // Two-tap timing: first tap starts, second finalizes vs. threshold.
-            att_state_t s =
-                attendance_tap(st->id, esp_timer_get_time(), s_cls->min_attendance_min);
-            uint32_t color = THEME_ACCENT;
-            const char* icon = LV_SYMBOL_OK;
-            char text[56];
-            switch (s.status) {
-                case ATT_PRESENT:
-                    color = THEME_SUCCESS;
-                    snprintf(text, sizeof(text), "Present - %d min", s.minutes);
-                    beeper_beep();
-                    break;
-                case ATT_LEFT_EARLY:
-                    color = THEME_WARNING;
-                    icon = LV_SYMBOL_WARNING;
-                    snprintf(text, sizeof(text), "Left early - %d/%d min", s.minutes,
-                             s_cls->min_attendance_min);
-                    beeper_error();
-                    break;
-                case ATT_IN_PROGRESS:
-                default:
-                    snprintf(text, sizeof(text), "Checked in - tap again to leave");
-                    beeper_beep();
-                    break;
-            }
-            show_presence_feedback(st, turma, color, icon, text);
-        } else {
-            // Single tap = present. Show the photo regardless of the SD write;
-            // a failed write still marks them present in RAM, so say so honestly.
-            bool ok = attendance_set(st->id, true);
-            if (ok) {
-                beeper_beep();
-            } else {
-                beeper_error();
-            }
-            show_presence_feedback(st, turma, ok ? THEME_SUCCESS : THEME_WARNING,
-                                   ok ? LV_SYMBOL_OK : LV_SYMBOL_WARNING,
-                                   ok ? "Presence registered" : "Marked (save failed)");
-        }
+        // Face-verified capture is kiosk-only; a session-tab tap registers directly.
+        register_recognized(idx);
     }
     rebuild_session_open();  // refresh + re-arm the card capture
 }

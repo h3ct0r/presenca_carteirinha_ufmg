@@ -102,20 +102,19 @@ roster_result_t roster_enroll_existing(const char* class_code, int student_idx,
 roster_result_t roster_enroll_new(const char* class_code, const char* id, const char* name,
                                   const char* uid, const char* turma);
 
-// Whether photo capture is active for this class: the class override
-// (class.json "capture_photos") when set, otherwise the device-wide flag
-// (config_photo_capture_enabled). A NULL class inherits the device flag.
+// Whether photo check-in is enabled for this class (class.json "capture_photos";
+// a per-class option, there is no device-wide flag). False for a NULL class.
 bool class_capture_enabled(const class_rec_t* cls);
 
-// Updates a class's editable metadata (name, schedule, color), its photo-
-// capture override (`capture`: -1 inherit, 0 off, 1 on), and its timed-
-// attendance settings (`timed` + `min_attendance_min`), rewriting
-// /classes/<dir>/class.json atomically and updating the in-RAM record. The
-// roster (and each entry's turma) is preserved. Returns {ok,message}. Call on
-// the LVGL thread (SD I/O).
+// Updates a class's editable metadata (name, schedule, color), its photo check-in
+// (`capture` + `face_verify_seconds`), and its timed-attendance settings (`timed`
+// + `min_attendance_min`), rewriting /classes/<dir>/class.json atomically and
+// updating the in-RAM record. The roster (and each entry's turma) is preserved.
+// Returns {ok,message}. Call on the LVGL thread (SD I/O).
 roster_result_t roster_class_update_settings(const char* class_code, const char* name,
-                                             const char* schedule, uint32_t color, int8_t capture,
-                                             bool timed, int min_attendance_min);
+                                             const char* schedule, uint32_t color, bool capture,
+                                             int face_verify_seconds, bool timed,
+                                             int min_attendance_min);
 
 // DEBUG: unbinds every student's RFID card — clears rfid_uid in RAM and rewrites
 // students.json with all bindings null. Returns false on write failure. Class

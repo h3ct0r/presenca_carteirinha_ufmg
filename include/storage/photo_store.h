@@ -17,6 +17,13 @@ bool photo_store_init();
 // task (the caller must guarantee the frame stays valid during the call).
 bool photo_store_capture(const uint8_t* rgb565, int w, int h);
 
+// Synchronously hardware-encodes an RGB565 frame to a JPEG at `path` (the file
+// is created/overwritten). For per-student check-in photos, whose frame the
+// caller already holds (the camera preview buffer). Returns false if the encoder
+// is unavailable, a /photos capture is in flight, or any step fails. Reuses the
+// single hardware encoder — do not call it concurrently with photo_store_capture.
+bool photo_store_encode_to(const char* path, const uint8_t* rgb565, int w, int h);
+
 // Copies the current human-readable state ("SD ready", "saving...",
 // "saved IMG_0007.bmp", ...) into out. Thread-safe.
 void photo_store_get_status(char* out, size_t out_len);

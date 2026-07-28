@@ -75,7 +75,7 @@ test('falls back to windows-1252 when bytes are not valid UTF-8', () => {
 
 // --- applyDiario ----------------------------------------------------------
 test('applyDiario keys the class as <SEMESTER>-<ATIVIDADE> and tags roster entries', () => {
-  const model = { capture_photos: false, teachers: [], students: [], classes: [] };
+  const model = { teachers: [], students: [], classes: [] };
   const summary = applyDiario(model, parseDiario(SAMPLE));
   assert.equal(summary.code, '2026_2-DCC219');   // semester '/' → '_'
   assert.equal(summary.turma, 'TE1');
@@ -93,7 +93,7 @@ test('two turmas of the same course+semester merge into one class, tagged per st
 
 N.;MATRICULA;NOME;PTS OBTIDOS
 1;3000000001;NOVO ALUNO UM;0,00`;
-  const model = { capture_photos: false, teachers: [], students: [], classes: [] };
+  const model = { teachers: [], students: [], classes: [] };
   applyDiario(model, parseDiario(SAMPLE)); // DCC219 TE1 (10 students)
   applyDiario(model, parseDiario(TE2));    // DCC219 TE2 (1 new student), same key
   assert.equal(model.classes.length, 1);   // merged into 2026_2-DCC219
@@ -105,7 +105,7 @@ N.;MATRICULA;NOME;PTS OBTIDOS
 });
 
 test('import creates the class if absent and enrolls each student with id + turma', () => {
-  const model = { capture_photos: false, teachers: [], students: [], classes: [] };
+  const model = { teachers: [], students: [], classes: [] };
   assert.equal(model.classes.length, 0);
   applyDiario(model, parseDiario(SAMPLE));
   // class was created, keyed by code
@@ -123,7 +123,7 @@ test('import creates the class if absent and enrolls each student with id + turm
 
 test('import backfills blank class fields (name, color, teacher) without overwriting set ones', () => {
   const model = {
-    capture_photos: false,
+   
     teachers: [{ name: 'Prof', email: 'p@x.edu', rfid_uid: '', password: '1' }],
     students: [],
     // a pre-existing class with the same code but blank fields and a custom name
@@ -144,7 +144,7 @@ test('a different course keys a different class; a shared student differs per cl
 
 N.;MATRICULA;NOME;PTS OBTIDOS
 1;2025115525;ALIGIA CASSIO DOS SANTOS;0,00`;
-  const model = { capture_photos: false, teachers: [], students: [], classes: [] };
+  const model = { teachers: [], students: [], classes: [] };
   applyDiario(model, parseDiario(SAMPLE)); // 2026_2-DCC219 (turma TE1)
   applyDiario(model, parseDiario(OTHER));  // 2026_2-DCC220 (turma TG1)
   assert.equal(model.students.length, 10); // one global record for the shared id
@@ -156,7 +156,7 @@ N.;MATRICULA;NOME;PTS OBTIDOS
 });
 
 test('re-importing the same Diário updates, does not duplicate', () => {
-  const model = { capture_photos: false, teachers: [], students: [], classes: [] };
+  const model = { teachers: [], students: [], classes: [] };
   applyDiario(model, parseDiario(SAMPLE));
   const summary = applyDiario(model, parseDiario(SAMPLE));
   assert.equal(model.students.length, 10);
@@ -167,7 +167,7 @@ test('re-importing the same Diário updates, does not duplicate', () => {
 
 test('a single defined teacher is auto-assigned to the imported class', () => {
   const model = {
-    capture_photos: false,
+   
     teachers: [{ name: 'Prof', email: 'p@x.edu', rfid_uid: '', password: '1' }],
     students: [], classes: [],
   };
@@ -177,7 +177,7 @@ test('a single defined teacher is auto-assigned to the imported class', () => {
 
 test('imported model (with a teacher assigned) validates and builds turma into the tar files', () => {
   const model = {
-    capture_photos: false,
+   
     teachers: [{ name: 'Prof', email: 'p@x.edu', rfid_uid: '', password: '1' }],
     students: [], classes: [],
   };

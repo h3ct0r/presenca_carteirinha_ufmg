@@ -30,8 +30,13 @@ typedef struct {
 // way (snapshots just never arrive).
 bool face_detection_start(void);
 
-// True once the camera pipeline is streaming.
+// True once the camera pipeline is streaming (and not paused).
 bool face_detection_running(void);
+
+// Pauses capture: idles the detection task and turns the sensor stream off,
+// keeping the pipeline initialized so face_detection_start() resumes instantly
+// (no risky deinit / re-bring-up). Safe to call when not running.
+void face_detection_stop(void);
 
 // Copies the newest preview frame (RGB565, FACE_PREVIEW_W*H*2 bytes — `dst`
 // must be at least that large) and up to `max_boxes` face boxes into `boxes`.

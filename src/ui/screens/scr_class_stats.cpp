@@ -21,7 +21,8 @@ static const class_rec_t* s_cls = nullptr;
 // Settings widgets (valid only while the settings card is built).
 static lv_obj_t* s_name_ta = nullptr;
 static lv_obj_t* s_sched_ta = nullptr;
-static lv_obj_t* s_capture_dd = nullptr;
+static lv_obj_t* s_capture_sw = nullptr;
+static lv_obj_t* s_fv_ta = nullptr;
 static lv_obj_t* s_timed_sw = nullptr;
 static lv_obj_t* s_min_ta = nullptr;
 static uint32_t s_sel_color = 0;
@@ -121,18 +122,14 @@ static void save_cb(lv_event_t*) {
     keyboard_hide();
     const char* name = s_name_ta ? lv_textarea_get_text(s_name_ta) : "";
     const char* sched = s_sched_ta ? lv_textarea_get_text(s_sched_ta) : "";
-    // Dropdown: 0 = device default (-1), 1 = always on (1), 2 = always off (0).
-    int8_t capture = -1;
-    switch (lv_dropdown_get_selected(s_capture_dd)) {
-        case 1: capture = 1; break;
-        case 2: capture = 0; break;
-        default: capture = -1; break;
-    }
+    bool capture = lv_obj_has_state(s_capture_sw, LV_STATE_CHECKED);
+    int fv = atoi(lv_textarea_get_text(s_fv_ta));
+    if (fv <= 0) fv = FACE_VERIFY_SECONDS_DEFAULT;
     bool timed = lv_obj_has_state(s_timed_sw, LV_STATE_CHECKED);
     int min_min = atoi(lv_textarea_get_text(s_min_ta));
     if (min_min < 1) min_min = 45;
     roster_result_t r = roster_class_update_settings(s_cls->code, name, sched, s_sel_color, capture,
-                                                     timed, min_min);
+                                                     fv, timed, min_min);
     ui_toast_show(r.message, r.ok);
     if (r.ok) scr_mgr_show(SCREEN_CLASSES, nullptr);  // list reflects the new name/color
 }
@@ -172,12 +169,23 @@ static void build_settings(lv_obj_t* parent) {
     }
     highlight_swatches();
 
-    ui_make_label(card, "Photo capture", THEME_TEXT, &lv_font_montserrat_14);
-    s_capture_dd = lv_dropdown_create(card);
-    lv_dropdown_set_options(s_capture_dd, "Use device default\nAlways on\nAlways off");
-    lv_obj_set_width(s_capture_dd, LV_PCT(100));
-    uint32_t sel = (s_cls->capture_photos == 1) ? 1 : (s_cls->capture_photos == 0) ? 2 : 0;
-    lv_dropdown_set_selected(s_capture_dd, sel);
+    // Photo check-in (kiosk face verify): a switch + its countdown seconds.
+    lv_obj_t* crow = lv_obj_create(card);
+    lv_obj_remove_style_all(crow);
+    lv_obj_set_size(crow, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(crow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(crow, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_remove_flag(crow, LV_OBJ_FLAG_SCROLLABLE);
+    ui_make_label(crow, "Photo check-in (kiosk)", THEME_TEXT, &lv_font_montserrat_14);
+    s_capture_sw = lv_switch_create(crow);
+    if (s_cls->capture_photos) lv_obj_add_state(s_capture_sw, LV_STATE_CHECKED);
+
+    ui_make_label(card, "Face-verify time (seconds)", THEME_TEXT, &lv_font_montserrat_14);
+    s_fv_ta = keyboard_make_textarea(card, "15", 3, LV_KEYBOARD_MODE_NUMBER);
+    char fvbuf[8];
+    snprintf(fvbuf, sizeof(fvbuf), "%d", s_cls->face_verify_seconds);
+    lv_textarea_set_text(s_fv_ta, fvbuf);
 
     // Timed attendance: a switch + the minimum-minutes threshold.
     lv_obj_t* trow = lv_obj_create(card);

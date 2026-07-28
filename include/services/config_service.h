@@ -36,7 +36,6 @@ typedef enum : uint8_t {
 typedef struct {
     teacher_t teachers[CONFIG_MAX_TEACHERS];
     int teacher_count;
-    bool capture_photos;  // "capture_photos" in config.json (default false)
 } device_config_t;
 
 // Attempts a first load synchronously (mount + read + log), then, if that
@@ -109,12 +108,3 @@ config_result_t config_set_rfid(const char* email, const char* rfid_uid, const c
 // Returns true when valid; on failure fills `msg` with the reason (empty on
 // success). Writes no shared state; call on the import (LVGL) thread (SD I/O).
 bool config_validate_tree(const char* root, char* msg, size_t cap);
-
-// Device-wide setting: whether to capture a student photo with the onboard
-// camera when presence is registered. False unless config.json has
-// "capture_photos": true (and status is CONFIG_OK). Thread-safe.
-bool config_photo_capture_enabled(void);
-
-// Persists the capture_photos flag to /config.json (atomic rewrite + reload).
-// Returns {ok,message}; on failure nothing is written. Call on the UI thread.
-config_result_t config_set_photo_capture(bool enabled);

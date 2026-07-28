@@ -37,6 +37,12 @@ static jpeg_encoder_handle_t s_jpeg = NULL;
 static uint8_t* s_jpg_out = NULL;
 static size_t s_jpg_out_cap = 0;
 
+// Reusable buffers for photo_store_encode_to (sized to the last frame's pixels).
+static uint8_t* s_enc_in = NULL;
+static uint8_t* s_enc_out = NULL;
+static size_t s_enc_out_cap = 0;
+static size_t s_enc_px = 0;
+
 static void set_status(const char* fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -256,6 +262,54 @@ bool photo_store_init() {
              SD_MMC.cardSize() / (1024ULL * 1024ULL), s_next_idx,
              s_jpeg ? "jpg" : "bmp fallback");
     return true;
+}
+
+bool photo_store_encode_to(const char* path, const uint8_t* rgb565, int w, int h) {
+    if (!s_mounted || s_jpeg == NULL || rgb565 == NULL || path == NULL || w <= 0 || h <= 0) {
+        return false;
+    }
+    if (s_busy) return false;  // the async writer owns the encoder right now
+    size_t px = (size_t)w * h;
+
+    if (s_enc_px != px) {
+        if (s_enc_in) free(s_enc_in);
+        if (s_enc_out) free(s_enc_out);
+        jpeg_encode_memory_alloc_cfg_t ic = {.buffer_direction = JPEG_ENC_ALLOC_INPUT_BUFFER};
+        size_t gi = 0;
+        s_enc_in = (uint8_t*)jpeg_alloc_encoder_mem(px * 2, &ic, &gi);
+        jpeg_encode_memory_alloc_cfg_t oc = {.buffer_direction = JPEG_ENC_ALLOC_OUTPUT_BUFFER};
+        size_t go = 0;
+        s_enc_out = (uint8_t*)jpeg_alloc_encoder_mem(px, &oc, &go);
+        if (!s_enc_in || !s_enc_out) {
+            s_enc_px = 0;
+            return false;
+        }
+        s_enc_out_cap = go;
+        s_enc_px = px;
+    }
+
+    memcpy(s_enc_in, rgb565, px * 2);
+    jpeg_encode_cfg_t cfg = {};
+    cfg.width = (uint32_t)w;
+    cfg.height = (uint32_t)h;
+    cfg.src_type = JPEG_ENCODE_IN_FORMAT_RGB565;
+    cfg.sub_sample = JPEG_DOWN_SAMPLING_YUV420;
+    cfg.image_quality = 85;
+    uint32_t jsz = 0;
+    if (jpeg_encoder_process(s_jpeg, &cfg, s_enc_in, (uint32_t)(px * 2), s_enc_out,
+                             (uint32_t)s_enc_out_cap, &jsz) != ESP_OK) {
+        return false;
+    }
+
+    File f = SD_MMC.open(path, FILE_WRITE, true);
+    if (!f) {
+        ESP_LOGE(TAG, "checkin open %s failed", path);
+        return false;
+    }
+    bool ok = f.write(s_enc_out, jsz) == jsz;
+    f.close();
+    if (ok) ESP_LOGI(TAG, "saved checkin %s (%u bytes)", path, (unsigned)jsz);
+    return ok;
 }
 
 bool photo_store_capture(const uint8_t* rgb565, int w, int h) {

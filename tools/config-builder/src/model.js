@@ -8,7 +8,6 @@
 //
 // Authoring model:
 //   {
-//     capture_photos: bool,
 //     teachers: [ { name, email, rfid_uid?, password? } ],
 //     students: [ { id, name, rfid_uid? } ],      // rfid_uid "" / undefined => null
 //     classes:  [ { code, name, schedule?, teacher_email?, color?, roster: [id,...] } ]
@@ -18,7 +17,6 @@ const DEFAULT_COLOR = '272766';
 
 export function buildConfig(model) {
   return {
-    capture_photos: !!model.capture_photos,
     teachers: (model.teachers || []).map((t) => ({
       name: t.name ?? '',
       email: t.email ?? '',

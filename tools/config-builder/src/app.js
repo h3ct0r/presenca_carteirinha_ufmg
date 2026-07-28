@@ -14,7 +14,7 @@ const EXAMPLE_URL = new URL('../fixtures/example.model.json', import.meta.url);
 let model = emptyModel();
 
 function emptyModel() {
-  return { capture_photos: false, teachers: [], students: [], classes: [] };
+  return { teachers: [], students: [], classes: [] };
 }
 
 // --- boot -----------------------------------------------------------------
@@ -36,7 +36,6 @@ async function init() {
 function normalize(m) {
   m = m || {};
   return {
-    capture_photos: !!m.capture_photos,
     teachers: (m.teachers || []).map((t) => ({
       name: t.name || '', email: t.email || '',
       rfid_uid: t.rfid_uid || '', password: t.password == null ? '' : String(t.password),
@@ -115,7 +114,6 @@ function render() {
     actionBar(),
     toolbar(),
     importSection(),
-    optionsSection(),
     teachersSection(),
     studentsSection(),
     classesSection(),
@@ -287,17 +285,6 @@ function importSection() {
       el('div', { style: 'margin-top:8px' }, [el('button', { class: 'small', text: 'Import pasted text', onclick: runPaste })]),
     ]),
     result,
-  ]);
-}
-
-// --- device options -------------------------------------------------------
-function optionsSection() {
-  const cb = el('input', { type: 'checkbox', checked: !!model.capture_photos });
-  cb.addEventListener('change', () => { model.capture_photos = cb.checked; });
-  return el('section', {}, [
-    el('h2', {}, ['Device options']),
-    el('label', { class: 'switch', style: 'margin-top:14px' }, [cb, el('span', { class: 'track' }), 'Capture a photo on each check-in']),
-    el('p', { class: 'opt-desc', text: 'When on, the device saves a snapshot as students check in (needs the camera + SD space).' }),
   ]);
 }
 

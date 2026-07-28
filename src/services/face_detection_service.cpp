@@ -52,6 +52,10 @@ struct shared_state {
 static shared_state s_st;
 
 static bool s_running = false;
+// Pause (not teardown): the heavy CSI/ISP pipeline stays initialized after the
+// one-time bring-up; stop just idles the detection task and turns the sensor
+// stream off, and start resumes it. Avoids the risky deinit/re-bring-up path.
+static volatile bool s_paused = false;
 static volatile bool s_capture_req = false;
 
 static void set_status(const char* s) {
@@ -221,6 +225,10 @@ static void detection_task(void*) {
     int write_idx = 0;
     face_box_t boxes[FACE_MAX_BOXES];
     while (true) {
+        if (s_paused) {  // stopped: idle without touching the (streaming-off) pipeline
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
         size_t len = 0;
         uint8_t* frame = csi_pipeline_get_frame(1000, &len);
         if (!frame) {
@@ -265,7 +273,13 @@ static void detection_task(void*) {
 }
 
 bool face_detection_start(void) {
-    if (s_running) return true;
+    if (s_running) {  // already up: resume from a pause if needed
+        if (s_paused) {
+            s_sensor.stream(true);
+            s_paused = false;
+        }
+        return true;
+    }
 
     // Allocate the lock and preview buffers ONCE and reuse them across retries.
     // A camera-init failure returns early below with s_running still false, so a
@@ -303,7 +317,15 @@ bool face_detection_start(void) {
     return true;
 }
 
-bool face_detection_running(void) { return s_running; }
+bool face_detection_running(void) { return s_running && !s_paused; }
+
+void face_detection_stop(void) {
+    if (!s_running || s_paused) return;
+    s_paused = true;              // the detection task idles on its next loop
+    s_sensor.stream(false);       // sensor stops emitting frames
+    set_status("camera paused");
+    ESP_LOGI(TAG, "camera paused (pipeline kept warm)");
+}
 
 int face_detection_snapshot(uint8_t* dst, face_box_t* boxes, int max_boxes) {
     if (!s_st.lock || !dst) return -1;

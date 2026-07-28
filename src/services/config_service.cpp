@@ -92,7 +92,6 @@ static config_status_t parse_config_file(const char* path, device_config_t* out,
         snprintf(dst->rfid_uid, sizeof(dst->rfid_uid), "%s", (const char*)(t["rfid_uid"] | ""));
         snprintf(dst->password, sizeof(dst->password), "%s", (const char*)(t["password"] | ""));
     }
-    parsed.capture_photos = doc["capture_photos"] | false;
     free(buf);  // parsed holds its own copies now; doc/buf are done with
 
     if (parsed.teacher_count == 0) {
@@ -460,43 +459,6 @@ bool config_validate_tree(const char* root, char* msg, size_t cap) {
     config_status_t st = parse_config_file(path, &scratch, err, sizeof(err));
     if (msg && cap) snprintf(msg, cap, "%s", st == CONFIG_OK ? "" : err);
     return st == CONFIG_OK;
-}
-
-bool config_photo_capture_enabled(void) {
-    if (!s_lock) return false;
-    bool en = false;
-    xSemaphoreTake(s_lock, portMAX_DELAY);
-    if (s_status == CONFIG_OK) en = s_config.capture_photos;
-    xSemaphoreGive(s_lock);
-    return en;
-}
-
-config_result_t config_set_photo_capture(bool enabled) {
-    if (config_get_status() != CONFIG_OK) return result(false, "Fix config.json first");
-
-    File f = SD_MMC.open(CONFIG_PATH, FILE_READ);
-    if (!f) return result(false, "Could not open config.json");
-    char* buf = (char*)malloc(2048);
-    if (!buf) {
-        f.close();
-        return result(false, "Out of memory");
-    }
-    size_t n = f.readBytes(buf, 2047);
-    buf[n] = '\0';
-    f.close();
-
-    JsonDocument doc;
-    if (deserializeJson(doc, buf)) {
-        free(buf);
-        return result(false, "config.json unreadable");
-    }
-    doc["capture_photos"] = enabled;
-    bool wrote = write_config_file(doc);
-    free(buf);
-    if (!wrote) return result(false, "Could not save to SD card");
-
-    publish(load_config());
-    return result(true, enabled ? "Photo capture enabled" : "Photo capture disabled");
 }
 
 bool config_has_any_password(void) {

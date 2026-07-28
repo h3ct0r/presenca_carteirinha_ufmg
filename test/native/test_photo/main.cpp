@@ -99,6 +99,17 @@ static void test_capture_rejects_null_frame(void) {
     TEST_ASSERT_FALSE(photo_store_capture(nullptr, 8, 8));
 }
 
+// photo_store is initialized (mounted + JPEG engine) from the JPEG test above.
+static void test_encode_to_writes_given_path(void) {
+    const char* path = "/students/checkins/2023-0142/2026-07-28_CS101-M1_01.jpg";
+    TEST_ASSERT_TRUE(photo_store_encode_to(path, (const uint8_t*)s_frame, 8, 8));
+    uint8_t head[9];
+    TEST_ASSERT_EQUAL_size_t(9, mocksd_read_file(path, head, sizeof(head)));
+    TEST_ASSERT_EQUAL_UINT8(0xFF, head[0]);  // fake-JPEG SOI from the mock
+    TEST_ASSERT_EQUAL_UINT8(0xD8, head[1]);
+    TEST_ASSERT_FALSE(photo_store_encode_to(nullptr, (const uint8_t*)s_frame, 8, 8));
+}
+
 int main(int, char**) {
     mock_freertos_set_delay_scale(1000);
     UNITY_BEGIN();
@@ -106,6 +117,7 @@ int main(int, char**) {
     RUN_TEST(test_capture_rejected_before_mount);
     RUN_TEST(test_bmp_fallback_when_encoder_unavailable);
     RUN_TEST(test_jpeg_path_and_numbering_continues);
+    RUN_TEST(test_encode_to_writes_given_path);  // after init (mounted + engine)
     RUN_TEST(test_capture_rejects_null_frame);
     return UNITY_END();
 }

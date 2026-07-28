@@ -65,7 +65,8 @@ key the device already uses — literally beside `students.json`:
 
 This is the `/students/photos/<id>.jpg` path already noted as *planned* in the SD
 data model. It is **distinct** from `/photos/**`, which are the device's own
-check-in *snapshots* (written by `photo_store`, gated by `capture_photos`). Those
+check-in *snapshots* (written by `photo_store`, gated by the per-class photo
+option). Those
 two trees must not be conflated:
 
 | Path | Origin | On import |

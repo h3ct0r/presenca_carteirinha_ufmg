@@ -10,8 +10,10 @@
 #include "app/uid.h"
 #include "audio/beeper.h"
 #include "esp_timer.h"
+#include "services/face_detection_service.h"
 #include "services/roster_service.h"
 #include "storage/attendance_store.h"
+#include "ui/components/face_verify.h"
 #include "ui/components/keyboard.h"
 #include "ui/components/status_bar.h"
 #include "ui/components/student_photo.h"
@@ -220,8 +222,8 @@ static void show_timed_result(const student_t* st, att_state_t s) {
 
 // --- check-in ---------------------------------------------------------------
 
-static void check_in(const student_t* st) {
-    if (s_id_ta) lv_textarea_set_text(s_id_ta, "");  // clear the field on success
+// Registers a recognized student and shows the result (timed or single).
+static void kiosk_register(const student_t* st) {
     if (s_cls && s_cls->timed_attendance) {
         show_timed_result(st, attendance_tap(st->id, esp_timer_get_time(),
                                              s_cls->min_attendance_min));
@@ -232,14 +234,55 @@ static void check_in(const student_t* st) {
     show_success(st, already);
 }
 
+static const student_t* s_verify_st = nullptr;  // student awaiting a face-verify
+
+static void kiosk_verify_done(bool verified) {
+    if (verified && s_verify_st) {
+        kiosk_register(s_verify_st);
+    } else {
+        beeper_error();
+        lv_obj_t* p = make_result(THEME_DANGER);
+        kiosk_photo(p, s_verify_st);
+        kiosk_label(p, "No face detected", &lv_font_montserrat_32);
+        kiosk_label(p, "Please tap again", &lv_font_montserrat_20);
+        s_timer = lv_timer_create(result_timer_cb, RESULT_MS, nullptr);
+    }
+    s_verify_st = nullptr;
+    ui_set_card_capture(on_kiosk_card);  // re-arm for the next student
+}
+
+// Returns true if it started an async face-verify (the caller must NOT re-arm
+// the card capture — kiosk_verify_done does that when verification finishes).
+static bool check_in(const student_t* st) {
+    if (s_id_ta) lv_textarea_set_text(s_id_ta, "");  // clear the field on success
+    if (s_cls && class_capture_enabled(s_cls)) {
+        if (!face_detection_running()) {
+            beeper_error();
+            lv_obj_t* p = make_result(THEME_DANGER);
+            kiosk_label(p, LV_SYMBOL_WARNING, &lv_font_montserrat_32);
+            kiosk_label(p, "Camera unavailable", &lv_font_montserrat_32);
+            s_timer = lv_timer_create(result_timer_cb, RESULT_MS, nullptr);
+            return false;
+        }
+        s_verify_st = st;
+        ui_set_card_capture(nullptr);  // no stray taps while the overlay is up
+        face_verify_open(st->id, st->name, attendance_date(), s_cls->code,
+                         s_cls->face_verify_seconds, kiosk_verify_done);
+        return true;
+    }
+    kiosk_register(st);
+    return false;
+}
+
 static void on_kiosk_card(const char* uid_hex) {
     const student_t* st = find_by_uid(uid_hex);
+    bool async = false;
     if (st) {
-        check_in(st);
+        async = check_in(st);
     } else {
         show_invalid("card");
     }
-    ui_set_card_capture(on_kiosk_card);  // stay armed for the next student
+    if (!async) ui_set_card_capture(on_kiosk_card);  // stay armed (verify re-arms itself)
 }
 
 static void do_submit(void) {
@@ -247,7 +290,7 @@ static void do_submit(void) {
     if (!typed[0]) return;
     const student_t* st = find_by_id(typed);
     if (st) {
-        check_in(st);
+        check_in(st);  // card capture is managed inside (disarmed during a verify)
     } else {
         show_invalid(typed);
     }
@@ -462,6 +505,7 @@ static void on_show(void* arg) {
     keyboard_hide();  // the shared keyboard from other screens; kiosk uses its own
     dismiss_result();
     close_exit_modal();
+    if (s_cls && class_capture_enabled(s_cls)) face_detection_start();  // warm for verify
     ui_set_card_capture(on_kiosk_card);  // students tap to check in
 }
 
@@ -469,6 +513,8 @@ static void on_hide(void) {
     ui_set_card_capture(nullptr);
     dismiss_result();
     close_exit_modal();
+    face_verify_cancel();
+    face_detection_stop();
 }
 
 const screen_t scr_kiosk = {

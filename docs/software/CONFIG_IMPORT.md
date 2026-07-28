@@ -75,7 +75,6 @@ import otherwise.
 ### 3.1 `config.json`
 ```jsonc
 {
-  "capture_photos": false,               // bool; take a photo on check-in
   "teachers": [                          // 1..8 (CONFIG_MAX_TEACHERS); extras ignored by device
     {
       "name":     "Prof Hector Azpurua", // ≤ 47 chars
@@ -132,12 +131,22 @@ Rules (mirror `roster_service.cpp`):
   "schedule": "",                        // ≤ 39 chars
   "teacher_email": "hector@dcc.ufmg.br", // ≤ 63 chars; should match a config.json teacher
   "color": "272766",                     // 6-hex RGB, no leading '#'
+  "capture_photos": false,               // optional; kiosk photo check-in (default false)
+  "face_verify_seconds": 15,             // optional; face-verify countdown, 3..60 (default 15)
+  "timed_attendance": false,             // optional; double-tap in/out (default false)
+  "min_attendance_min": 45,              // optional; timed threshold minutes (default 45)
   "roster": [                            // 0..100 (ROSTER_MAX_CLASS_STUDENTS)
     { "id": "2023-0142", "turma": "TE1" }, // turma optional, ≤ 15 chars
     { "id": "2023-0187", "turma": "TE2" }
   ]
 }
 ```
+The four attendance fields (`capture_photos`, `face_verify_seconds`,
+`timed_attendance`, `min_attendance_min`) are **optional, per-class, and edited
+on the device** (in the class ⚙ settings). Photo check-in is a class-only
+option — there is **no** device-wide capture flag. The config-builder does not
+emit them, so an imported class.json omitting them resets the device to the
+defaults above (like any authored field the importer overwrites).
 Rules (mirror `roster_service.cpp`):
 - **≤ 12 classes** total (`ROSTER_MAX_CLASSES`).
 - `code` **unique** across classes, and the **folder name must equal `code`**
@@ -251,6 +260,12 @@ worse than the current file editor — do not ship one.
 - The tar itself is unversioned; the file schemas version themselves.
 
 ### Changelog
+- **2026-07-28** — **photo check-in is now class-only.** Removed
+  `capture_photos` from `config.json` (§3.1) — there is no device-wide capture
+  flag. Documented the optional per-class attendance fields in `class.json`
+  (§3.3): `capture_photos`, `face_verify_seconds`, `timed_attendance`,
+  `min_attendance_min` (device-edited; the builder omits them; defaults apply on
+  import). Config-builder dropped its "Device options / capture" section.
 - **2026-07-27** — **device import side implemented** (§5, §6 v1). Added the
   on-device ustar reader (`app/ustar`), the pre-apply snapshot
   (`storage/backup_store`, `/backup/previous/`), and the pipeline
