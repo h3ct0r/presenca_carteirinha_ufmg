@@ -404,6 +404,49 @@ static void test_validate_tree_rejects_bad_staging_leaving_live_intact(void) {
     TEST_ASSERT_EQUAL_STRING("", err);
 }
 
+// --- per-class settings (Phase 2: capture override + metadata editing) ------
+
+static void test_class_capture_and_settings(void) {
+    mocksd_reset();
+    mocksd_add_file("/students/students.json", STUDENTS_JSON);
+    mocksd_add_file("/classes/CS101-M1/class.json",
+                    "{ \"version\": 1, \"code\": \"CS101-M1\", \"name\": \"DS\", "
+                    "\"schedule\": \"Tue\", \"color\": \"272766\", \"capture_photos\": true, "
+                    "\"roster\": [ { \"id\": \"2023-0142\", \"turma\": \"TE1\" } ] }");
+    roster_service_start();
+    TEST_ASSERT_EQUAL(ROSTER_OK, roster_get_status());
+    TEST_ASSERT_EQUAL_INT(1, roster_class_at(0)->capture_photos);
+    TEST_ASSERT_TRUE(class_capture_enabled(roster_class_at(0)));
+
+    // Rename + new schedule/color, and turn capture OFF.
+    roster_result_t r =
+        roster_class_update_settings("CS101-M1", "Data Structures II", "Wed 8h", 0xABCDEF, 0);
+    TEST_ASSERT_TRUE(r.ok);
+    TEST_ASSERT_EQUAL_STRING("Data Structures II", roster_class_at(0)->name);
+    TEST_ASSERT_EQUAL_STRING("Wed 8h", roster_class_at(0)->schedule);
+    TEST_ASSERT_EQUAL_HEX32(0xABCDEF, roster_class_at(0)->color);
+    TEST_ASSERT_EQUAL_INT(0, roster_class_at(0)->capture_photos);
+    TEST_ASSERT_FALSE(class_capture_enabled(roster_class_at(0)));
+
+    // Persisted, and the roster + turma survived the rewrite.
+    char buf[512];
+    read_card("/classes/CS101-M1/class.json", buf, sizeof(buf));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "Data Structures II"));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "ABCDEF"));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "2023-0142"));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "TE1"));
+    roster_service_start();
+    TEST_ASSERT_EQUAL_INT(0, roster_class_at(0)->capture_photos);
+    TEST_ASSERT_EQUAL_STRING("TE1", roster_class_at(0)->roster_turma[0]);
+
+    // Setting capture back to "inherit" (-1) removes the key from class.json.
+    r = roster_class_update_settings("CS101-M1", "Data Structures II", "Wed 8h", 0xABCDEF, -1);
+    TEST_ASSERT_TRUE(r.ok);
+    read_card("/classes/CS101-M1/class.json", buf, sizeof(buf));
+    TEST_ASSERT_NULL(strstr(buf, "capture_photos"));
+    TEST_ASSERT_EQUAL_INT(-1, roster_class_at(0)->capture_photos);
+}
+
 int main(int, char**) {
     mock_freertos_set_delay_scale(1000);
     event_bus_init();
@@ -431,5 +474,6 @@ int main(int, char**) {
     RUN_TEST(test_enroll_rejects_professor_card);  // last of the enroll chain
     RUN_TEST(test_validate_tree_accepts_good_staging);          // resets to a fresh valid live tree
     RUN_TEST(test_validate_tree_rejects_bad_staging_leaving_live_intact);  // chains from above
+    RUN_TEST(test_class_capture_and_settings);  // self-contained
     return UNITY_END();
 }

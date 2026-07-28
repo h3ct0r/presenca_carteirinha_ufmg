@@ -11,3 +11,8 @@
 // so the pointer stays valid while shown). Pass NULL to re-show the last
 // class.
 extern const screen_t scr_class;
+
+// Makes the next scr_class on_show land on the open-session view instead of the
+// class hub. Used when returning from kiosk mode so the professor drops straight
+// back into the running roll call. LVGL thread; call just before scr_mgr_show.
+void scr_class_request_session_view(void);

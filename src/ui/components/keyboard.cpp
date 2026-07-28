@@ -37,6 +37,11 @@ static void kbd_key_beep_cb(lv_event_t*) { beeper_touch(); }
 void keyboard_show(lv_obj_t* ta, lv_keyboard_mode_t mode) {
     lv_keyboard_set_textarea(s_kbd, ta);
     lv_keyboard_set_mode(s_kbd, mode);
+    // The reduced numeric pad has few big keys, so 32 px reads well; the full
+    // QWERTY has ~10 keys per row and needs a smaller face to fit them.
+    const lv_font_t* face =
+        (mode == LV_KEYBOARD_MODE_NUMBER) ? &lv_font_montserrat_32 : &lv_font_montserrat_20;
+    lv_obj_set_style_text_font(s_kbd, face, LV_PART_ITEMS);
     lv_obj_remove_flag(s_kbd, LV_OBJ_FLAG_HIDDEN);
 }
 

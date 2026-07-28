@@ -11,6 +11,7 @@ typedef enum : uint8_t {
     // Staff area (light look, ported from the legacy project).
     SCREEN_CLASSES,      // class list
     SCREEN_CLASS,        // one class: roll call / history / enroll tabs
+    SCREEN_CLASS_STATS,  // one class: statistics + per-class settings
     SCREEN_CLASS_FORM,   // new class form
     SCREEN_ADMIN,        // admin panel: profile, SD usage, password, debug
     SCREEN_TEACHER_REG,  // teacher registration / card (re)binding form

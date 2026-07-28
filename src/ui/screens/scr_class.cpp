@@ -22,29 +22,28 @@
 // FontAwesome glyphs merged into the custom Montserrat font (see
 // src/ui/assets/): lock, unlock, and users-viewfinder (kiosk). Used as UTF-8.
 LV_FONT_DECLARE(font_montserrat_custom_20);
-#define GLYPH_LOCK "\xEF\x80\xA3"     // U+F023 fa-lock
-#define GLYPH_UNLOCK "\xEF\x82\x9C"   // U+F09C fa-unlock
 #define GLYPH_KIOSK "\xEE\x96\x95"    // U+E595 fa-users-viewfinder
 #define GLYPH_ID_CARD "\xEF\x8B\x82"  // U+F2C2 fa-users-id-card
 
-typedef enum { TAB_SESSION,
-               TAB_HISTORY,
-               TAB_ENROLL,
-               TAB_COUNT } tab_id_t;
+// The class screen is a small view stack: a hub (Session / History), the open
+// session (roll call + Kiosk / Enroll), history, and the enroll sub-flow.
+typedef enum { VIEW_HUB,
+               VIEW_SESSION,
+               VIEW_HISTORY,
+               VIEW_ENROLL } view_id_t;
 typedef enum { ENROLL_SEARCH,
                ENROLL_MANUAL,
                ENROLL_WAIT } enroll_state_t;
 
-static const char* TAB_NAMES[TAB_COUNT] = {"Session", "History", "Enroll"};
-
 static constexpr int MAX_DATES = 24;  // recent/history dates listed
 
 static shell_t s_sh;
-static lv_obj_t* s_tab_btns[TAB_COUNT];
-static lv_obj_t* s_content = nullptr;  // rebuilt on tab switch
+static lv_obj_t* s_content = nullptr;  // rebuilt on view switch
 
 static const class_rec_t* s_cls = nullptr;
-static tab_id_t s_tab = TAB_SESSION;
+static view_id_t s_view = VIEW_HUB;
+static bool s_pending_session_view = false;  // set by scr_class_request_session_view()
+static lv_obj_t* s_session_badge = nullptr;  // header "session open" chip
 
 // Session/date-picker state.
 static char s_sel_date[12] = "";     // date chosen in the calendar
@@ -64,15 +63,7 @@ static int s_sel_idx = -1;         // selected existing student (registry index)
 static bool s_sel_is_new = false;  // selecting a manually-entered new student
 static char s_new_id[20];
 static char s_new_name[48];
-static char s_new_turma[16];       // optional class-group tag (class.json only)
-
-// Enrollment lock: the Enroll tab is gated behind a professor card/password.
-static bool s_unlocked = false;
-static lv_obj_t* s_lock_btn = nullptr;
-static lv_obj_t* s_kiosk_btn = nullptr;
-static lv_obj_t* s_unlock_modal = nullptr;
-static lv_obj_t* s_unlock_ta = nullptr;
-static bool s_unlock_goto_enroll = false;  // jump to Enroll after a successful unlock
+static char s_new_turma[16];  // optional class-group tag (class.json only)
 
 // Transient "presence registered" feedback overlay (photo + name + status),
 // shown on each session card tap and auto-dismissed.
@@ -91,11 +82,27 @@ static void on_enroll_card(const char* uid_hex);
 static void build_session(void);
 static void build_session_open(void);
 static void on_session_card(const char* uid_hex);
-static void update_lock_state(void);
-static void open_unlock_modal(void);
-static void on_unlock_card(const char* uid_hex);
+static void build_hub(void);
+static void go_view(view_id_t v);
+static void kiosk_cb(lv_event_t*);
+static void enroll_btn_cb(lv_event_t*);
 
-static void back_cb(lv_event_t*) { scr_mgr_show(SCREEN_CLASSES, nullptr); }
+// Back steps up the view stack: enroll -> session, session/history -> hub, and
+// from the hub out to the classes list.
+static void back_cb(lv_event_t*) {
+    switch (s_view) {
+        case VIEW_ENROLL:
+            go_view(VIEW_SESSION);
+            break;
+        case VIEW_SESSION:
+        case VIEW_HISTORY:
+            go_view(VIEW_HUB);
+            break;
+        default:
+            scr_mgr_show(SCREEN_CLASSES, nullptr);
+            break;
+    }
+}
 
 // --- Session tab: date picker + roll call -----------------------------------
 
@@ -128,7 +135,10 @@ static const char* class_turma_for_student(int student_idx) {
 static bool format_turma_stats(char* out, size_t cap) {
     out[0] = '\0';
     if (!s_cls) return false;
-    struct { const char* name; int count; } groups[ROSTER_MAX_CLASS_STUDENTS];
+    struct {
+        const char* name;
+        int count;
+    } groups[ROSTER_MAX_CLASS_STUDENTS];
     int ng = 0;
     bool any = false;
     for (int j = 0; j < s_cls->roster_count; j++) {
@@ -314,21 +324,6 @@ static int roster_name_cmp(const void* a, const void* b) {
 }
 
 static void build_session_open(void) {
-    // Instructional callout — deliberately NOT button-shaped: soft orange fill
-    // with an amber left rule and alert icon so it reads as a notice, not a tap
-    // target. Icon + text sit in a left-aligned row.
-    lv_obj_t* banner = ui_make_card(s_content);
-    lv_obj_set_style_bg_color(banner, lv_color_hex(THEME_WARNING_SOFT), 0);
-    lv_obj_set_style_border_color(banner, lv_color_hex(THEME_WARNING), 0);
-    lv_obj_set_style_border_width(banner, 5, 0);
-    lv_obj_set_style_border_side(banner, LV_BORDER_SIDE_LEFT, 0);
-    lv_obj_set_flex_flow(banner, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(banner, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(banner, 12, 0);
-    ui_make_label(banner, LV_SYMBOL_WARNING, THEME_WARNING, &lv_font_montserrat_20);
-    ui_make_label(banner, "Class open: Tap a card, or tap a name to log it.", THEME_TEXT, &lv_font_montserrat_14);
-
     int total = s_cls->roster_count;
     int present = attendance_present_count();
 
@@ -371,6 +366,38 @@ static void build_session_open(void) {
     lv_obj_t* close = ui_make_button(summary, "Close session", &theme_style_btn_outline,
                                      close_session_cb, nullptr);
     lv_obj_set_width(close, LV_PCT(100));
+
+    // Instructional callout — deliberately NOT button-shaped: soft orange fill
+    // with an amber left rule and alert icon so it reads as a notice, not a tap
+    // target. Icon + text sit in a left-aligned row.
+    lv_obj_t* banner = ui_make_card(s_content);
+    lv_obj_set_style_bg_color(banner, lv_color_hex(THEME_WARNING_SOFT), 0);
+    lv_obj_set_style_border_color(banner, lv_color_hex(THEME_WARNING), 0);
+    lv_obj_set_style_border_width(banner, 5, 0);
+    lv_obj_set_style_border_side(banner, LV_BORDER_SIDE_LEFT, 0);
+    lv_obj_set_flex_flow(banner, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(banner, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(banner, 12, 0);
+    ui_make_label(banner, LV_SYMBOL_WARNING, THEME_WARNING, &lv_font_montserrat_20);
+    ui_make_label(banner, "Class open: Tap a card, or tap a name to log it.", THEME_TEXT, &lv_font_montserrat_14);
+
+    // Kiosk (unattended check-in) and Enroll, available during the open session.
+    // No password: the professor is already logged in, and kiosk's own exit gate
+    // covers the unattended case.
+    lv_obj_t* actions = lv_obj_create(s_content);
+    lv_obj_remove_style_all(actions);
+    lv_obj_set_size(actions, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(actions, 10, 0);
+    lv_obj_remove_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* kiosk = ui_make_button(actions, GLYPH_KIOSK "  Kiosk", &theme_style_btn_outline,
+                                     kiosk_cb, nullptr);
+    lv_obj_set_style_text_font(lv_obj_get_child(kiosk, 0), &font_montserrat_custom_20, 0);
+    lv_obj_set_flex_grow(kiosk, 1);
+    lv_obj_t* enroll = ui_make_button(actions, "Enroll", &theme_style_btn_primary, enroll_btn_cb,
+                                      nullptr);
+    lv_obj_set_flex_grow(enroll, 1);
 
     if (total == 0) {
         lv_obj_t* card = ui_make_card(s_content);
@@ -441,8 +468,7 @@ static void open_date_cb(lv_event_t* e) {
     int i = (int)(intptr_t)lv_event_get_user_data(e);
     if (i < 0 || i >= s_dates_count) return;
     attendance_open(s_cls->dir, s_dates[i]);
-    s_tab = TAB_SESSION;
-    rebuild_content();
+    go_view(VIEW_SESSION);  // a tapped history/recent date opens into the session
 }
 
 // One tappable "date — N/total present" row. With show_pct, the attendance
@@ -785,10 +811,7 @@ static void build_enroll_wait(void) {
     ui_set_card_capture(on_enroll_card);
 }
 
-static void goto_session_cb(lv_event_t*) {
-    s_tab = TAB_SESSION;
-    rebuild_content();
-}
+static void goto_session_cb(lv_event_t*) { go_view(VIEW_SESSION); }
 
 static void build_enroll(void) {
     // Enrollment checks the student into the current session, so it needs one
@@ -836,135 +859,45 @@ static void enroll_goto(enroll_state_t st) {
     build_enroll();
 }
 
-// --- Enrollment lock / unlock -----------------------------------------------
+// --- Hub / navigation --------------------------------------------------------
 
-static void update_lock_state(void) {
-    // Header lock button: unlock glyph on green when unlocked, lock glyph on a
-    // subtle background when locked.
-    lv_obj_t* icon = lv_obj_get_child(s_lock_btn, 0);
-    lv_label_set_text(icon, s_unlocked ? GLYPH_UNLOCK : GLYPH_LOCK);
-    lv_obj_set_style_bg_color(s_lock_btn,
-                              lv_color_hex(s_unlocked ? THEME_SUCCESS : THEME_ON_PRIMARY), 0);
-    lv_obj_set_style_bg_opa(s_lock_btn, s_unlocked ? LV_OPA_COVER : LV_OPA_20, 0);
-    // Dim the Enroll tab while locked.
-    lv_obj_set_style_opa(s_tab_btns[TAB_ENROLL], s_unlocked ? LV_OPA_COVER : LV_OPA_50, 0);
-}
+static void session_btn_cb(lv_event_t*) { go_view(VIEW_SESSION); }
+static void history_btn_cb(lv_event_t*) { go_view(VIEW_HISTORY); }
+static void enroll_btn_cb(lv_event_t*) { go_view(VIEW_ENROLL); }
 
-static void close_unlock_modal(void) {
-    if (s_unlock_modal) {
-        keyboard_hide();
-        ui_set_card_capture(nullptr);
-        lv_obj_delete(s_unlock_modal);
-        s_unlock_modal = nullptr;
-        s_unlock_ta = nullptr;
+// The class landing: two big actions (Session / History). When a session is
+// already open for this class, a "Resume" card sits on top so the professor
+// need not re-pick the date (there is no clock on the device).
+static void build_hub(void) {
+    if (session_open_here()) {
+        lv_obj_t* rc = ui_make_card(s_content);
+        lv_obj_set_flex_flow(rc, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(rc, 8, 0);
+        lv_obj_set_style_border_color(rc, lv_color_hex(THEME_SUCCESS), 0);
+        lv_obj_set_style_border_width(rc, 2, 0);
+        ui_make_label(rc, LV_SYMBOL_PLAY "  Session in progress", THEME_SUCCESS,
+                      &lv_font_montserrat_20);
+        char sub[56];
+        snprintf(sub, sizeof(sub), "%s   %d/%d present", attendance_date(),
+                 attendance_present_count(), s_cls->roster_count);
+        ui_make_label(rc, sub, THEME_MUTED, &lv_font_montserrat_14);
+        lv_obj_t* resume = ui_make_button(rc, "Resume session", &theme_style_btn_primary,
+                                          session_btn_cb, nullptr);
+        lv_obj_set_width(resume, LV_PCT(100));
     }
+
+    lv_obj_t* session = ui_make_button(s_content, LV_SYMBOL_LIST "  Session",
+                                       &theme_style_btn_primary, session_btn_cb, nullptr);
+    lv_obj_set_width(session, LV_PCT(100));
+    lv_obj_set_height(session, 72);
+
+    lv_obj_t* history = ui_make_button(s_content, LV_SYMBOL_LOOP "  History",
+                                       &theme_style_btn_outline, history_btn_cb, nullptr);
+    lv_obj_set_width(history, LV_PCT(100));
+    lv_obj_set_height(history, 72);
 }
 
-static void do_unlock(void) {
-    s_unlocked = true;
-    beeper_beep();
-    close_unlock_modal();
-    update_lock_state();
-    if (s_unlock_goto_enroll) s_tab = TAB_ENROLL;
-    rebuild_content();
-}
-
-// A professor card tap in the unlock modal.
-static void on_unlock_card(const char* uid_hex) {
-    teacher_t who;
-    if (auth_lookup_uid(uid_hex, &who)) {
-        do_unlock();
-    } else {
-        beeper_error();
-        ui_toast_show("Not a professor card", false);
-        ui_set_card_capture(on_unlock_card);  // let them try another card
-    }
-}
-
-static void unlock_pw_ok_cb(lv_event_t*) {
-    const char* pw = s_unlock_ta ? lv_textarea_get_text(s_unlock_ta) : "";
-    teacher_t who;
-    if (auth_lookup_password(pw, &who)) {
-        do_unlock();
-    } else {
-        beeper_error();
-        ui_toast_show("Wrong password", false);
-    }
-}
-
-static void unlock_cancel_cb(lv_event_t*) {
-    close_unlock_modal();
-    rebuild_content();  // restore the current tab's card capture
-}
-
-static void open_unlock_modal(void) {
-    if (s_unlock_modal) return;
-
-    s_unlock_modal = lv_obj_create(s_sh.root);
-    lv_obj_remove_style_all(s_unlock_modal);
-    // Escape the shell's flex flow so this is a true full-screen overlay.
-    lv_obj_add_flag(s_unlock_modal, LV_OBJ_FLAG_IGNORE_LAYOUT);
-    lv_obj_set_size(s_unlock_modal, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(s_unlock_modal, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(s_unlock_modal, LV_OPA_50, 0);
-    lv_obj_add_flag(s_unlock_modal, LV_OBJ_FLAG_CLICKABLE);  // swallow taps behind
-    lv_obj_remove_flag(s_unlock_modal, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t* card = ui_make_card(s_unlock_modal);
-    lv_obj_set_width(card, LV_PCT(88));
-    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 60);
-    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(card, 12, 0);
-
-    ui_make_label(card, "Unlock enrollment", THEME_PRIMARY, &lv_font_montserrat_20);
-    lv_obj_t* hint = ui_make_label(card, "Tap a professor card, or enter a password.",
-                                   THEME_MUTED, &lv_font_montserrat_14);
-    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(hint, LV_PCT(100));
-
-    // Passwords are digits-only; use the numeric pad, pop it up right away, and
-    // make its OK/finish button unlock (matching the idle login).
-    s_unlock_ta = keyboard_make_textarea(card, "Password", 32, LV_KEYBOARD_MODE_NUMBER);
-    lv_textarea_set_password_mode(s_unlock_ta, true);
-    keyboard_show(s_unlock_ta, LV_KEYBOARD_MODE_NUMBER);
-    keyboard_set_ready_cb(unlock_pw_ok_cb);
-
-    lv_obj_t* row = lv_obj_create(card);
-    lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(row, 10, 0);
-    lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t* cancel = ui_make_button(row, "Cancel", &theme_style_btn_outline,
-                                      unlock_cancel_cb, nullptr);
-    lv_obj_set_flex_grow(cancel, 1);
-    lv_obj_t* ok = ui_make_button(row, "Unlock", &theme_style_btn_primary, unlock_pw_ok_cb,
-                                  nullptr);
-    lv_obj_set_flex_grow(ok, 1);
-
-    ui_set_card_capture(on_unlock_card);
-}
-
-static void lock_cb(lv_event_t*) {
-    if (s_unlocked) {
-        s_unlocked = false;  // re-lock
-        update_lock_state();
-        if (s_tab == TAB_ENROLL) {
-            s_tab = TAB_SESSION;
-            rebuild_content();
-        }
-    } else {
-        s_unlock_goto_enroll = false;  // unlocked from the header, stay put
-        open_unlock_modal();
-    }
-}
-
-// Dims the kiosk button until a session is open.
-static void update_kiosk_btn(void) {
-    lv_obj_set_style_opa(s_kiosk_btn, session_open_here() ? LV_OPA_COVER : LV_OPA_40, 0);
-}
-
-// Kiosk mode (unattended student check-in) — only once a session is open.
+// Kiosk mode (unattended student check-in) — reachable from the open session.
 static void kiosk_cb(lv_event_t*) {
     if (!session_open_here()) {
         ui_toast_show("Open a session to use kiosk mode", false);
@@ -973,51 +906,47 @@ static void kiosk_cb(lv_event_t*) {
     scr_mgr_show(SCREEN_KIOSK, (void*)const_cast<class_rec_t*>(s_cls));
 }
 
-// --- Tabs / screen glue ------------------------------------------------------
+// --- View glue ---------------------------------------------------------------
+
+// Shows the green header "session open" chip while a session is open for this
+// class. Called on every rebuild, so it tracks open/close within the screen.
+static void update_session_badge(void) {
+    if (!s_session_badge) return;
+    if (session_open_here()) {
+        lv_obj_remove_flag(s_session_badge, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_session_badge, LV_OBJ_FLAG_HIDDEN);
+    }
+}
 
 static void rebuild_content(void) {
-    // Leaving any enroll sub-state: no card should be captured for enroll.
+    // Leaving any sub-flow: no card captured for enroll, no lingering overlays.
     ui_set_card_capture(nullptr);
     keyboard_hide();
-    close_presence_feedback();  // don't let a scan overlay linger across tabs
-
-    // Swap only the active/idle look, preserving the button's height, flex
-    // grow and press feedback (which lv_obj_remove_style_all would wipe).
-    for (int i = 0; i < TAB_COUNT; i++) {
-        lv_obj_remove_style(s_tab_btns[i], &theme_style_tab_active, 0);
-        lv_obj_remove_style(s_tab_btns[i], &theme_style_tab_idle, 0);
-        lv_obj_add_style(s_tab_btns[i],
-                         i == s_tab ? &theme_style_tab_active : &theme_style_tab_idle, 0);
-    }
-    update_kiosk_btn();  // availability follows the session state
+    close_presence_feedback();
+    update_session_badge();
 
     lv_obj_clean(s_content);
     if (!s_cls) return;
-    switch (s_tab) {
-        case TAB_SESSION:
+    switch (s_view) {
+        case VIEW_HUB:
+            build_hub();
+            break;
+        case VIEW_SESSION:
             build_session();
             break;
-        case TAB_HISTORY:
+        case VIEW_HISTORY:
             build_history();
             break;
-        case TAB_ENROLL:
+        case VIEW_ENROLL:
             s_enroll_state = ENROLL_SEARCH;  // always start at the search
             build_enroll();
-            break;
-        default:
             break;
     }
 }
 
-static void tab_cb(lv_event_t* e) {
-    tab_id_t t = (tab_id_t)(uintptr_t)lv_event_get_user_data(e);
-    if (t == TAB_ENROLL && !s_unlocked) {
-        // Enrollment is locked; tapping it prompts to unlock first.
-        s_unlock_goto_enroll = true;
-        open_unlock_modal();
-        return;
-    }
-    s_tab = t;
+static void go_view(view_id_t v) {
+    s_view = v;
     rebuild_content();
 }
 
@@ -1026,23 +955,26 @@ static lv_obj_t* create(void) {
     s_sh = shell_create("", "", false);
     shell_set_back(&s_sh, back_cb);
 
-    // Header actions (right side): kiosk mode, then the enrollment lock.
-    s_kiosk_btn = shell_add_action(&s_sh, GLYPH_KIOSK, &font_montserrat_custom_20, kiosk_cb,
-                                   "Kiosk");
-    s_lock_btn = shell_add_action(&s_sh, GLYPH_LOCK, &font_montserrat_custom_20, lock_cb,
-                                  "Enroll");
+    // Right-aligned header chip that lights up while a session is open (the
+    // title column has flex-grow, so this lands on the right edge).
+    s_session_badge = lv_obj_create(s_sh.header);
+    lv_obj_remove_style_all(s_session_badge);
+    lv_obj_set_size(s_session_badge, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_color(s_session_badge, lv_color_hex(THEME_SUCCESS), 0);
+    lv_obj_set_style_bg_opa(s_session_badge, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(s_session_badge, 8, 0);
+    lv_obj_set_style_pad_hor(s_session_badge, 8, 0);
+    lv_obj_set_style_pad_ver(s_session_badge, 4, 0);
+    lv_obj_remove_flag(s_session_badge, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_session_badge, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_t* badge_lbl = lv_label_create(s_session_badge);
+    lv_label_set_text(badge_lbl, LV_SYMBOL_PLAY "  SESSION");
+    lv_obj_set_style_text_color(badge_lbl, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(badge_lbl, &lv_font_montserrat_14, 0);
 
-    lv_obj_t* tabs = lv_obj_create(s_sh.body);
-    lv_obj_remove_style_all(tabs);
-    lv_obj_set_size(tabs, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(tabs, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(tabs, 8, 0);
-    for (int i = 0; i < TAB_COUNT; i++) {
-        s_tab_btns[i] = ui_make_button(tabs, TAB_NAMES[i], &theme_style_tab_idle, tab_cb,
-                                       (void*)(uintptr_t)i);
-        lv_obj_set_flex_grow(s_tab_btns[i], 1);
-    }
-
+    // No header actions or tab bar anymore: the body is a small view stack
+    // (hub -> session/history -> enroll), navigated with buttons and the
+    // context-aware back button.
     s_content = lv_obj_create(s_sh.body);
     lv_obj_remove_style_all(s_content);
     lv_obj_set_size(s_content, LV_PCT(100), LV_SIZE_CONTENT);
@@ -1052,15 +984,19 @@ static lv_obj_t* create(void) {
     return s_sh.root;
 }
 
+void scr_class_request_session_view(void) { s_pending_session_view = true; }
+
 static void on_show(void* arg) {
-    if (arg) {
-        s_cls = (const class_rec_t*)arg;
-        s_tab = TAB_SESSION;
-        s_unlocked = false;  // re-lock enrollment on each class entry
+    if (arg) s_cls = (const class_rec_t*)arg;
+    // Returning from kiosk drops back into the running session; a fresh entry
+    // from the class list lands on the hub.
+    if (s_pending_session_view) {
+        s_view = VIEW_SESSION;
+        s_pending_session_view = false;
+    } else if (arg) {
+        s_view = VIEW_HUB;
     }
     s_photo_count = count_students_with_photos();  // once per entry, not per scan
-    update_lock_state();
-    update_kiosk_btn();
     lv_label_set_text(s_sh.title, s_cls ? s_cls->name : "?");
     char subtitle[88];
     if (s_cls) {

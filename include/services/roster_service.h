@@ -102,6 +102,19 @@ roster_result_t roster_enroll_existing(const char* class_code, int student_idx,
 roster_result_t roster_enroll_new(const char* class_code, const char* id, const char* name,
                                   const char* uid, const char* turma);
 
+// Whether photo capture is active for this class: the class override
+// (class.json "capture_photos") when set, otherwise the device-wide flag
+// (config_photo_capture_enabled). A NULL class inherits the device flag.
+bool class_capture_enabled(const class_rec_t* cls);
+
+// Updates a class's editable metadata (name, schedule, color) and its photo-
+// capture override (`capture`: -1 inherit, 0 off, 1 on), rewriting
+// /classes/<dir>/class.json atomically and updating the in-RAM record. The
+// roster (and each entry's turma) is preserved. Returns {ok,message}. Call on
+// the LVGL thread (SD I/O).
+roster_result_t roster_class_update_settings(const char* class_code, const char* name,
+                                             const char* schedule, uint32_t color, int8_t capture);
+
 // DEBUG: unbinds every student's RFID card — clears rfid_uid in RAM and rewrites
 // students.json with all bindings null. Returns false on write failure. Class
 // rosters are untouched (students stay enrolled, just without a card).

@@ -7,6 +7,7 @@
 #include "ui/components/shell.h"
 #include "ui/screen_manager.h"
 #include "ui/screens/scr_class.h"
+#include "ui/screens/scr_class_stats.h"
 #include "ui/theme/theme.h"
 
 static lv_obj_t* s_subtitle = nullptr;  // shows the logged-in professor
@@ -16,6 +17,10 @@ static void open_class_cb(lv_event_t* e) {
     // Roster classes live in the service's static storage, so handing the
     // pointer through on_show is safe.
     scr_mgr_show(SCREEN_CLASS, lv_event_get_user_data(e));
+}
+
+static void open_stats_cb(lv_event_t* e) {
+    scr_mgr_show(SCREEN_CLASS_STATS, lv_event_get_user_data(e));
 }
 
 static void add_class_card(lv_obj_t* body, const class_rec_t* cls) {
@@ -60,6 +65,7 @@ static void add_class_card(lv_obj_t* body, const class_rec_t* cls) {
     lv_obj_t* col = lv_obj_create(row);
     lv_obj_remove_style_all(col);
     lv_obj_set_size(col, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(col, 1);  // take the width, pushing the gear to the edge
     lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(col, 2, 0);
     lv_obj_remove_flag(col, LV_OBJ_FLAG_CLICKABLE);
@@ -69,6 +75,19 @@ static void add_class_card(lv_obj_t* body, const class_rec_t* cls) {
     snprintf(detail, sizeof(detail), "%s  |  %s  |  %d students", cls->code, cls->schedule,
              cls->roster_count);
     ui_make_label(col, detail, THEME_MUTED, &lv_font_montserrat_14);
+
+    // Gear button → statistics & per-class settings. It's clickable, so a tap on
+    // it targets the gear (not the card's open handler underneath).
+    lv_obj_t* gear = lv_button_create(row);
+    lv_obj_remove_style_all(gear);
+    lv_obj_set_size(gear, 56, 56);
+    lv_obj_set_style_radius(gear, 12, 0);
+    lv_obj_set_style_bg_color(gear, lv_color_hex(THEME_BORDER), 0);
+    lv_obj_set_style_bg_opa(gear, LV_OPA_40, 0);
+    lv_obj_add_event_cb(gear, open_stats_cb, LV_EVENT_CLICKED,
+                        (void*)const_cast<class_rec_t*>(cls));
+    ui_add_press_feedback(gear);
+    lv_obj_center(ui_make_label(gear, LV_SYMBOL_SETTINGS, THEME_TEXT, &lv_font_montserrat_32));
 }
 
 static void add_notice_card(const char* title, const char* msg) {

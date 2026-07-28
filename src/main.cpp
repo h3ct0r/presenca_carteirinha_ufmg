@@ -13,6 +13,12 @@
 #include "touch/gt911_touch.h"
 #include "ui/ui.h"
 
+// The whole UI — including the camera preview, which renders a large 480x270
+// image and drains events on the Arduino loop (LVGL) task — runs on loopTask.
+// The core's default 8 KB stack overflows in that draw path (Guru Meditation:
+// "loopTask" stack protection fault on the camera screen). Give it headroom.
+SET_LOOP_TASK_STACK_SIZE(16 * 1024);
+
 // Touch controller pins. This board wires no reset/backlight GPIO for the
 // display panel itself (handled internally by the ST7701 driver), so only the
 // touch controller pins are configured here.

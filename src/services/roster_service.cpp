@@ -180,6 +180,10 @@ static roster_status_t load_one_class(const char* root, const char* dname) {
     if (col[0] == '#') col++;
     c->color = (uint32_t)strtoul(col, nullptr, 16);
 
+    // Optional per-class photo-capture override: present bool -> 0/1, absent -> -1
+    // (inherit the device-wide flag).
+    c->capture_photos = doc["capture_photos"].is<bool>() ? (doc["capture_photos"] ? 1 : 0) : -1;
+
     JsonArray roster = doc["roster"].as<JsonArray>();
     if (roster.isNull()) {
         ESP_LOGW(TAG, "classes/%s: empty roster", dname);
@@ -605,6 +609,61 @@ bool roster_clear_all_uids(void) {
     }
     xSemaphoreGive(s_lock);
     return ok;
+}
+
+bool class_capture_enabled(const class_rec_t* cls) {
+    if (cls) {
+        if (cls->capture_photos == 0) return false;
+        if (cls->capture_photos == 1) return true;
+    }
+    return config_photo_capture_enabled();  // -1 (or NULL class) inherits the device flag
+}
+
+roster_result_t roster_class_update_settings(const char* class_code, const char* name,
+                                             const char* schedule, uint32_t color,
+                                             int8_t capture) {
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    roster_result_t r = {false, ""};
+
+    int ci = roster_class_index(class_code);
+    if (s_status != ROSTER_OK) {
+        r = make_result(false, "Student data not loaded");
+    } else if (ci < 0) {
+        r = make_result(false, "Unknown class");
+    } else if (!name || !name[0]) {
+        r = make_result(false, "Class name is required");
+    } else {
+        class_rec_t* c = &s_classes[ci];
+        char path[128];
+        snprintf(path, sizeof(path), "%s/%s/class.json", CLASSES_DIR, c->dir);
+
+        JsonDocument doc;
+        if (!read_json_file(path, doc)) {
+            r = make_result(false, "Could not read class.json");
+        } else {
+            char color_hex[8];
+            snprintf(color_hex, sizeof(color_hex), "%06X", (unsigned)(color & 0xFFFFFF));
+            doc["name"] = name;
+            doc["schedule"] = schedule ? schedule : "";
+            doc["color"] = color_hex;
+            if (capture < 0) {
+                doc.remove("capture_photos");  // inherit -> no key
+            } else {
+                doc["capture_photos"] = (capture != 0);
+            }
+            if (!write_json_file(path, doc)) {
+                r = make_result(false, "Could not save class.json");
+            } else {
+                snprintf(c->name, sizeof(c->name), "%s", name);
+                snprintf(c->schedule, sizeof(c->schedule), "%s", schedule ? schedule : "");
+                c->color = color & 0xFFFFFF;
+                c->capture_photos = capture;
+                r = make_result(true, "Settings saved");
+            }
+        }
+    }
+    xSemaphoreGive(s_lock);
+    return r;
 }
 
 int roster_student_count(void) { return s_student_count; }

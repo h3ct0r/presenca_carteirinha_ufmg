@@ -13,8 +13,10 @@
 #include "storage/attendance_store.h"
 #include "ui/components/keyboard.h"
 #include "ui/components/status_bar.h"
+#include "ui/components/student_photo.h"
 #include "ui/components/toast.h"
 #include "ui/screen_manager.h"
+#include "ui/screens/scr_class.h"
 #include "ui/theme/theme.h"
 #include "ui/ui.h"
 
@@ -132,10 +134,34 @@ static void kiosk_label(lv_obj_t* parent, const char* text, const lv_font_t* fon
     lv_obj_set_width(l, LV_PCT(90));
 }
 
+// The student's avatar if it exists on the SD card, otherwise a placeholder
+// circle — same photo/placeholder treatment as the in-class check-in overlay.
+static void kiosk_photo(lv_obj_t* parent, const student_t* st) {
+    char src[80];
+    if (st && student_photo_src(st->id, src, sizeof(src))) {
+        lv_obj_t* img = lv_image_create(parent);
+        lv_image_set_src(img, src);
+        return;
+    }
+    const int SZ = 140;
+    lv_obj_t* ph = lv_obj_create(parent);
+    lv_obj_remove_flag(ph, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(ph, SZ, SZ);
+    lv_obj_set_style_radius(ph, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(ph, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(ph, LV_OPA_20, 0);
+    lv_obj_set_style_border_width(ph, 0, 0);
+    lv_obj_t* g = lv_label_create(ph);
+    lv_label_set_text(g, LV_SYMBOL_IMAGE);
+    lv_obj_set_style_text_color(g, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(g, &lv_font_montserrat_32, 0);
+    lv_obj_center(g);
+}
+
 static void show_success(const student_t* st, bool already) {
     beeper_beep();
     lv_obj_t* p = make_result(THEME_SUCCESS);
-    kiosk_label(p, LV_SYMBOL_OK, &lv_font_montserrat_32);
+    kiosk_photo(p, st);
     kiosk_label(p, already ? "Already checked in" : "Checked in", &lv_font_montserrat_32);
     kiosk_label(p, st->name, &lv_font_montserrat_32);
     char line[64];
@@ -207,6 +233,7 @@ static void close_exit_modal(void) {
 static void do_exit(void) {
     close_exit_modal();
     beeper_beep();
+    scr_class_request_session_view();  // return into the running session, not the hub
     scr_mgr_show(SCREEN_CLASS, (void*)const_cast<class_rec_t*>(s_cls));
 }
 
@@ -266,8 +293,12 @@ static void open_exit_modal(void) {
     lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(hint, LV_PCT(100));
 
-    s_exit_ta = keyboard_make_textarea(card, "Password", 32, LV_KEYBOARD_MODE_TEXT_LOWER);
+    // Passwords are digits-only: use the shared numeric keypad (same as the
+    // idle login), pop it up right away, and make its OK/finish button submit.
+    s_exit_ta = keyboard_make_textarea(card, "Password", 32, LV_KEYBOARD_MODE_NUMBER);
     lv_textarea_set_password_mode(s_exit_ta, true);
+    keyboard_show(s_exit_ta, LV_KEYBOARD_MODE_NUMBER);
+    keyboard_set_ready_cb(exit_pw_ok_cb);
 
     lv_obj_t* row = lv_obj_create(card);
     lv_obj_remove_style_all(row);

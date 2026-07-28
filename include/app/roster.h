@@ -27,6 +27,9 @@ typedef struct {
     char schedule[40];
     char teacher_email[64];  // links to config.json's teachers
     uint32_t color;
+    // Per-class photo capture override: -1 = inherit the device-wide flag,
+    // 0 = off, 1 = on. From class.json's optional "capture_photos" bool.
+    int8_t capture_photos;
     // Per-student class group ("turma") lives on each class.json roster entry
     // ({"id","turma"}). Parallel to roster[]: roster_turma[i] is the group of the
     // student at roster[i] IN THIS CLASS (empty when untagged). Attendance is
