@@ -9,29 +9,103 @@ import { makeTar } from './tarball.js';
 import { decodeCsvBytes, parseDiario, applyDiario } from './diario.js';
 import { parseTar } from './untar.js';
 import { matchPhotos } from './photomatch.js';
+import {
+  STORAGE_KEY, encodeModel, decodeModel, modelHasContent, describeSavedAt,
+} from './persist.js';
 
 const EXAMPLE_URL = new URL('../fixtures/example.model.json', import.meta.url);
 
 // --- authoring model (in-memory; the single source the UI edits) ----------
 let model = emptyModel();
 
+// Local-persistence state. Declared HERE, above the init() call below: `let` is
+// not hoisted, and init() synchronously reaches render() -> saveLocalSoon(),
+// so declaring these further down puts them in the temporal dead zone and the
+// whole boot fails with a ReferenceError swallowed by the async function.
+let lastSavedAt = 0;
+let saveTimer = null;
+let saveError = '';
+
 function emptyModel() {
   return { teachers: [], students: [], classes: [] };
 }
 
-// --- boot -----------------------------------------------------------------
-init();
-
+// Boot with a CLEAN sheet — never the bundled example. If the browser kept a
+// working copy from a previous visit, restore that instead so a reload (or an
+// accidental tab close) doesn't lose the work. "Load example" is still one click
+// away in the toolbar.
 async function init() {
-  try {
-    const res = await fetch(EXAMPLE_URL);
-    model = normalize(await res.json());
-  } catch {
-    // Opened from file:// where fetch of a sibling file may be blocked — start
-    // empty; the user can Load a model JSON or add rows by hand.
+  const restored = loadLocal();
+  if (restored) {
+    model = normalize(restored.model);
+    lastSavedAt = restored.savedAt;
+  } else {
     model = emptyModel();
   }
   render();
+}
+
+// --- local working copy (survives a reload) --------------------------------
+// localStorage can be unavailable or full (private windows, quota, some
+// file:// setups). Persistence is a convenience, never a requirement: every
+// failure degrades to "not saved" and is surfaced in the toolbar hint rather
+// than breaking the page.
+function loadLocal() {
+  try {
+    return decodeModel(window.localStorage.getItem(STORAGE_KEY));
+  } catch {
+    return null;  // storage blocked entirely
+  }
+}
+
+function writeLocal() {
+  saveTimer = null;
+  try {
+    if (!modelHasContent(model)) {
+      // Nothing worth keeping (e.g. right after Reset): drop the record so the
+      // next visit starts clean instead of restoring an empty shell.
+      window.localStorage.removeItem(STORAGE_KEY);
+      lastSavedAt = 0;
+    } else {
+      const now = Date.now();
+      window.localStorage.setItem(STORAGE_KEY, encodeModel(model, now));
+      lastSavedAt = now;
+    }
+    saveError = '';
+  } catch (e) {
+    saveError = e && e.name === 'QuotaExceededError' ? 'browser storage is full'
+                                                     : 'browser storage unavailable';
+  }
+  refreshSavedHint();
+}
+
+// Debounced: editing a field fires on every keystroke, and serializing a
+// 600-student model that often would be wasteful.
+function saveLocalSoon() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(writeLocal, 400);
+}
+
+function clearLocal() {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  try { window.localStorage.removeItem(STORAGE_KEY); } catch { /* nothing to do */ }
+  lastSavedAt = 0;
+  saveError = '';
+}
+
+function savedHintText() {
+  if (saveError) return `Not saved — ${saveError}`;
+  if (!modelHasContent(model)) return 'Nothing to save yet';
+  if (!lastSavedAt) return 'Saving…';
+  return `Saved in this browser · ${describeSavedAt(lastSavedAt)}`;
+}
+
+function refreshSavedHint() {
+  const el = document.querySelector('.saved-hint');
+  if (el) {
+    el.textContent = savedHintText();
+    el.classList.toggle('bad', !!saveError);
+  }
 }
 
 // Coerce a loaded model into the shape the editors expect.
@@ -111,6 +185,7 @@ function emptyState(text) {
 
 // --- render ---------------------------------------------------------------
 function render() {
+  saveLocalSoon();  // structural change (rows added/removed, import, load)
   const root = document.getElementById('app');
   root.replaceChildren(
     actionBar(),
@@ -141,6 +216,7 @@ function syncStatus(refreshTeachers = true) {
   const review = document.getElementById('review');
   if (review) review.replaceWith(reviewSection());
   if (refreshTeachers) refreshTeacherSelects();
+  saveLocalSoon();  // keep the browser copy in step with every edit
 }
 
 // Rebuild each class's professor checkbox list from the current teachers, in
@@ -158,13 +234,27 @@ function refreshTeacherSelects() {
 // Fills a class card's professor checkbox list. Rebuilt whenever the teacher
 // list changes, so newly added/renamed professors appear without a full render.
 function renderTeacherBox(box, c) {
-  const teachers = model.teachers.filter((t) => t.email);
-  if (!teachers.length) {
+  if (!model.teachers.length) {
     box.replaceChildren(el('div', { class: 'teacher-empty', text: 'Add a teacher first.' }));
     return;
   }
   const chosen = classTeacherEmails(c);
-  box.replaceChildren(...teachers.map((t) => {
+  // List EVERY teacher, including ones with no email yet. A class links to a
+  // teacher by email, so an email-less teacher cannot be attached — but hiding
+  // them made the box read "Add a teacher first." while teachers plainly
+  // existed, leaving the "no professor selected" error impossible to clear.
+  // Show them disabled with the reason instead, so the fix is obvious.
+  box.replaceChildren(...model.teachers.map((t, ti) => {
+    const label = t.name || t.email || `Teacher ${ti + 1}`;
+    if (!t.email) {
+      return el('label', { class: 'teacher-row disabled' }, [
+        el('input', { type: 'checkbox', disabled: true }),
+        el('span', {}, [
+          label,
+          el('span', { class: 'teacher-need', text: ' — add an email above to assign' }),
+        ]),
+      ]);
+    }
     const cb = el('input', { type: 'checkbox', checked: chosen.includes(t.email) });
     cb.addEventListener('change', () => {
       const next = classTeacherEmails(c).filter((e) => e !== t.email);
@@ -173,7 +263,7 @@ function renderTeacherBox(box, c) {
       delete c.teacher_email;  // normalized away from the legacy scalar
       syncStatus(false);       // don't rebuild this list under the click
     });
-    return el('label', { class: 'teacher-row' }, [cb, t.name || t.email]);
+    return el('label', { class: 'teacher-row' }, [cb, label]);
   }));
 }
 
@@ -209,6 +299,7 @@ function toolbar() {
     el('button', { class: 'small', text: 'Load example', onclick: loadExample }),
     loadModelButton(),
     el('button', { class: 'small', text: 'Save model JSON', onclick: saveModel }),
+    el('span', { class: 'saved-hint', text: savedHintText() }),
     el('span', { class: 'spacer' }),
     el('button', {
       class: 'small danger', text: 'Reset all fields',
@@ -216,6 +307,7 @@ function toolbar() {
         if (!hasContent() || confirm('Clear all teachers, students, and classes? This cannot be undone (use "Save model JSON" first if unsure).')) {
           model = emptyModel();
           lastImport = null;
+          clearLocal();  // otherwise a reload would bring it all back
           render();
         }
       },
@@ -720,3 +812,10 @@ function triggerDownload(blob, filename) {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
+
+// --- boot -------------------------------------------------------------------
+// LAST statement on purpose: init() renders immediately (no await before the
+// first render), and render() reads module state declared throughout this file.
+// Calling it any earlier evaluates those `let` bindings in their temporal dead
+// zone and the page dies with a ReferenceError swallowed by the async function.
+init();

@@ -14,7 +14,6 @@ typedef enum : uint8_t {
     SCREEN_CLASS_STATS,  // one class: statistics + per-class settings
     SCREEN_CLASS_FORM,   // new class form
     SCREEN_ADMIN,        // admin panel: profile, SD usage, password, debug
-    SCREEN_TEACHER_REG,  // teacher registration / card (re)binding form
     SCREEN_KIOSK,         // unattended student self check-in
     SCREEN_EXPORT,        // per-class CSV attendance export
     SCREEN_WIFI_EDITOR,   // debug WiFi soft-AP + (future) file editor

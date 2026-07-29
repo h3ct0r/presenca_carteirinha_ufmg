@@ -234,6 +234,9 @@
     ul.errors li .tag { flex: none; font: 600 10px/1.6 var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--warn); background: var(--warn-soft); padding: 2px 7px; border-radius: 5px; }
     .review-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-4); }
 
+    .saved-hint { font-size: 12px; color: var(--muted); align-self: center; white-space: nowrap; }
+    .saved-hint.bad { color: var(--warn); }
+
     .hidden-dl { display: none; }
 
     /* ---- class professors (multi-select checkboxes) ---- */
@@ -244,6 +247,9 @@
     .teacher-row:hover { background: var(--surface-2); }
     .teacher-row input[type=checkbox] { width: 15px; height: 15px; flex: none; accent-color: var(--accent); cursor: pointer; }
     .teacher-empty { padding: 10px; color: var(--muted); font-size: 13px; }
+    .teacher-row.disabled { color: var(--muted); cursor: not-allowed; }
+    .teacher-row.disabled input[type=checkbox] { cursor: not-allowed; }
+    .teacher-need { color: var(--warn); font-size: 12px; }
 
     /* ---- student photos ---- */
     .photo-summary { margin-top: var(--sp-3); font-size: 12.5px; font-family: var(--mono); color: var(--muted); }

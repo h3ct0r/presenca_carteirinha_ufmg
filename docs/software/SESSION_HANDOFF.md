@@ -8,10 +8,13 @@ Pick-up notes to continue in a fresh session. Read this + `PROJECT_HANDOFF.md`.
   (Phases 1–3: hub/session/history nav, per-class ⚙ stats & settings, timed
   double-tap attendance), student avatars on check-in, turma, and the camera
   graceful-bring-up + loopTask stack fixes.
-- **Uncommitted (32 files):** the **face-verified kiosk check-in** feature and
-  the **class-only photo option** refactor (this is the whole current diff).
-- **State:** `pio run -e esp32p4` builds; `pio test -e native` = **118/118**;
-  config-builder `node --test` = **72/72**.
+- **Uncommitted:** face-verified kiosk check-in + class-only photo option,
+  student-avatar ingestion, multi-professor classes, the About screen +
+  `version.h`, the kiosk/enroll/verify UX work, and two bug fixes (a stale class
+  folder blanking the class list; the SD wipe reporting no reason).
+- **State (2026-07-29):** `pio run -e esp32p4` builds; `pio test -e native` =
+  **127/127**; config-builder `node --test` = **104/104**. All of it has been
+  **manually verified on the device and works as expected.**
 - **Git rule:** the user commits/PRs manually — **do not auto-commit or open PRs**
   (see memory `no-auto-commit-or-pr`).
 

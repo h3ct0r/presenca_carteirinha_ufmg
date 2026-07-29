@@ -7,6 +7,7 @@
 #include "esp32-hal-log.h"
 
 #include "app/session.h"
+#include "audio/beeper.h"
 #include "services/config_service.h"
 #include "services/import_service.h"
 #include "services/roster_service.h"
@@ -258,6 +259,13 @@ static void close_rfid_modal(void) {
 static void on_rfid_card(const char* uid_hex) {
     const teacher_t* t = session_get();
     config_result_t r = config_set_rfid(t ? t->email : "", t ? t->rfid_uid : "", uid_hex);
+    // Audible either way: you are holding a card to the reader, not watching the
+    // screen, so the tone is what tells you the rebind landed.
+    if (r.ok) {
+        beeper_beep();
+    } else {
+        beeper_error();
+    }
     ui_toast_show(r.message, r.ok);
     if (r.ok) {
         // Keep the session identity in sync so a later change still matches us

@@ -26,3 +26,14 @@ void keyboard_set_ready_cb(lv_event_cb_t cb);
 // Creates a themed one-line textarea wired to the shared keyboard.
 lv_obj_t* keyboard_make_textarea(lv_obj_t* parent, const char* placeholder,
                                  uint32_t max_len, lv_keyboard_mode_t mode);
+
+// True while the shared keyboard is on screen.
+bool keyboard_is_visible(void);
+
+// Fired when the keyboard appears or disappears. The keyboard floats over the
+// UI on lv_layer_top(), so screens normally reserve its height as bottom
+// padding — this lets them reserve it only while it is actually up, instead of
+// leaving dead space when it is not. Pass nullptr to clear; a screen MUST clear
+// it when it tears down, or the callback fires against a destroyed layout.
+typedef void (*keyboard_visibility_cb_t)(bool visible);
+void keyboard_set_visibility_cb(keyboard_visibility_cb_t cb);

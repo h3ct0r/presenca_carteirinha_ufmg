@@ -53,6 +53,11 @@ static int s_dates_count = 0;
 static lv_calendar_date_t s_highlight;  // must outlive the calendar
 
 // Enroll sub-flow state.
+// Cap on rows DRAWN in the enroll search (matches are still counted in full and
+// reported). Each row costs 3 LVGL objects from the fixed 128 KB pool, so this
+// bounds the worst case regardless of class size; the header tells the user to
+// narrow the search when it bites.
+static constexpr int ENROLL_MAX_ROWS = 25;
 static enroll_state_t s_enroll_state = ENROLL_SEARCH;
 static bool s_unregistered_only = true;  // toggle: only students without a card
 static lv_obj_t* s_search_ta = nullptr;
@@ -77,6 +82,8 @@ static lv_timer_t* s_fb_timer = nullptr;
 static int s_photo_count = 0;
 
 static void rebuild_content(void);
+static void update_header(void);
+static void apply_keyboard_pad(void);
 static void enroll_goto(enroll_state_t st);
 static void update_results(void);
 static void on_enroll_card(const char* uid_hex);
@@ -667,17 +674,22 @@ static void update_results(void) {
     lv_obj_clean(s_results);
     const char* q = s_search_ta ? lv_textarea_get_text(s_search_ta) : "";
 
-    // Every match is listed, not a truncated preview — with no query that means
-    // the whole class roster. Bounded by ROSTER_MAX_CLASS_STUDENTS (100), the
-    // same number of cards the session roll call already builds, so this is no
-    // new pressure on the 128 KB LVGL heap. The list grows the scrollable body.
-    int shown = 0;
+    // Count EVERY match but build at most ENROLL_MAX_ROWS cards: each row is 3
+    // LVGL objects out of the fixed 128 KB pool, and exhausting that pool halts
+    // the UI thread silently (LV_ASSERT_HANDLER is `while(1);`). Counting is free
+    // — it's just string compares — so the header can still report the true
+    // total and tell the user to narrow the search.
+    int matched = 0;  // all matches
+    int shown = 0;    // cards actually built
     for (int j = 0; j < s_cls->roster_count; j++) {
         int idx = s_cls->roster[j];  // index into the global registry
         const student_t* st = roster_student_at(idx);
         if (!st) continue;
         if (s_unregistered_only && st->rfid_uid[0]) continue;
         if (!istr_has(st->name, q) && !istr_has(st->id, q)) continue;
+
+        matched++;
+        if (shown >= ENROLL_MAX_ROWS) continue;  // counted, not drawn
 
         lv_obj_t* row = ui_make_card(s_results);
         lv_obj_set_style_pad_all(row, 10, 0);
@@ -696,17 +708,25 @@ static void update_results(void) {
     }
 
     if (shown > 0) {
-        // How many are listed — worth saying now that the list can be the whole
-        // roster. Built after the rows (that's where `shown` is known) and moved
-        // to the top.
-        char head[64];
-        if (q[0]) {
-            snprintf(head, sizeof(head), "%d match%s", shown, shown == 1 ? "" : "es");
+        // Always state the true total, and say plainly when the list is cut
+        // short — otherwise a student missing from the list looks like they are
+        // not enrolled. Built after the rows (that's where the counts are known)
+        // and moved to the top.
+        char head[96];
+        bool truncated = matched > shown;
+        if (truncated) {
+            snprintf(head, sizeof(head), "Showing %d of %d — keep typing to narrow the search",
+                     shown, matched);
+        } else if (q[0]) {
+            snprintf(head, sizeof(head), "%d match%s", matched, matched == 1 ? "" : "es");
         } else {
-            snprintf(head, sizeof(head), "%d student%s in this class", shown,
-                     shown == 1 ? "" : "s");
+            snprintf(head, sizeof(head), "%d student%s in this class", matched,
+                     matched == 1 ? "" : "s");
         }
-        lv_obj_t* count = ui_make_label(s_results, head, THEME_MUTED, &lv_font_montserrat_14);
+        lv_obj_t* count = ui_make_label(s_results, head, truncated ? THEME_WARNING : THEME_MUTED,
+                                        &lv_font_montserrat_14);
+        lv_label_set_long_mode(count, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(count, LV_PCT(100));
         lv_obj_move_to_index(count, 0);
         return;
     }
@@ -714,8 +734,8 @@ static void update_results(void) {
     lv_obj_t* card = ui_make_card(s_results);
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(card, 8, 0);
-    // Nothing listed. With no query that is no longer "type to search" — the
-    // list shows everything by default — so name the actual reason.
+    // Nothing listed at all. With no query that is not "type to search" — the
+    // list is populated by default — so name the actual reason.
     const char* why;
     if (q[0]) {
         why = "No matching student";
@@ -743,6 +763,13 @@ static void toggle_cb(lv_event_t* e) {
 static void search_changed_cb(lv_event_t*) { update_results(); }
 
 static void build_enroll_search(void) {
+    // Pin the filter + search box and scroll ONLY the results. s_content fills
+    // the body's content area, which rebuild_content() has already shortened by
+    // a keyboard's height (320 px bottom pad) — so this is exactly the space
+    // above the on-screen keyboard. The card keeps its natural height and the
+    // results list takes whatever is left.
+    lv_obj_set_height(s_content, LV_PCT(100));
+
     lv_obj_t* card = ui_make_card(s_content);
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(card, 10, 0);
@@ -766,11 +793,18 @@ static void build_enroll_search(void) {
                                          LV_KEYBOARD_MODE_TEXT_LOWER);
     lv_obj_add_event_cb(s_search_ta, search_changed_cb, LV_EVENT_VALUE_CHANGED, nullptr);
 
+    // The only scroll container on this view: takes the remaining height and
+    // scrolls its rows internally, so the search box above never moves.
     s_results = lv_obj_create(s_content);
     lv_obj_remove_style_all(s_results);
-    lv_obj_set_size(s_results, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_width(s_results, LV_PCT(100));
+    lv_obj_set_flex_grow(s_results, 1);
     lv_obj_set_flex_flow(s_results, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(s_results, 8, 0);
+    lv_obj_set_style_pad_right(s_results, 4, 0);  // keep rows clear of the scrollbar
+    lv_obj_add_flag(s_results, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(s_results, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(s_results, LV_SCROLLBAR_MODE_AUTO);
     update_results();
 }
 
@@ -937,6 +971,9 @@ static void enroll_goto(enroll_state_t st) {
     // next keyboard_hide()/keypress (use-after-free).
     keyboard_hide();
     lv_obj_clean(s_content);
+    lv_obj_set_height(s_content, LV_SIZE_CONTENT);  // SEARCH overrides; see build_enroll_search
+    update_header();       // the subtitle names the enroll step
+    apply_keyboard_pad();
     build_enroll();
 }
 
@@ -1000,6 +1037,39 @@ static void update_session_badge(void) {
     }
 }
 
+// The keyboard floats over the body, so the enroll view reserves its height as
+// bottom padding — but only while it is actually up, otherwise that space is
+// dead and the student list is needlessly short.
+static void apply_keyboard_pad(void) {
+    if (!s_sh.body) return;
+    bool reserve = (s_view == VIEW_ENROLL) && keyboard_is_visible();
+    lv_obj_set_style_pad_bottom(s_sh.body, reserve ? 320 : 12, 0);
+}
+
+static void kb_visibility_cb(bool) { apply_keyboard_pad(); }
+
+// Header reflects where you are in the view stack; the class stays in the
+// subtitle so context is never lost.
+static void update_header(void) {
+    if (!s_cls) {
+        lv_label_set_text(s_sh.title, "?");
+        lv_label_set_text(s_sh.subtitle, "Student attendance");
+        return;
+    }
+    char subtitle[88];
+    if (s_view == VIEW_ENROLL) {
+        const char* step = s_enroll_state == ENROLL_MANUAL  ? "new student"
+                           : s_enroll_state == ENROLL_WAIT  ? "waiting for the card"
+                                                            : "find the student";
+        lv_label_set_text(s_sh.title, "Enroll a card");
+        snprintf(subtitle, sizeof(subtitle), "%s  |  %s", s_cls->name, step);
+    } else {
+        lv_label_set_text(s_sh.title, s_cls->name);
+        snprintf(subtitle, sizeof(subtitle), "%s  |  %s", s_cls->code, s_cls->schedule);
+    }
+    lv_label_set_text(s_sh.subtitle, subtitle);
+}
+
 static void rebuild_content(void) {
     // Leaving any sub-flow: no card captured for enroll, no lingering overlays.
     ui_set_card_capture(nullptr);
@@ -1008,12 +1078,16 @@ static void rebuild_content(void) {
     update_session_badge();
 
     lv_obj_clean(s_content);
+    // Views size themselves to their content and let sh.body scroll. The enroll
+    // SEARCH view overrides this to fill the body instead, so its search bar can
+    // stay pinned (see build_enroll_search).
+    lv_obj_set_height(s_content, LV_SIZE_CONTENT);
     if (!s_cls) return;
-    // Only the enroll view uses the on-screen keyboard; give sh.body a
-    // keyboard-height bottom pad there so a focused field scrolls clear of the
-    // 300 px keyboard (SCROLL_ON_FOCUS keeps it inside the content area, which
-    // this pad ends above the keyboard). Other views use the normal 12 px pad.
-    lv_obj_set_style_pad_bottom(s_sh.body, s_view == VIEW_ENROLL ? 320 : 12, 0);
+    // Only the enroll view uses the on-screen keyboard, and only while it is
+    // actually shown — apply_keyboard_pad() reserves its height then, and gives
+    // the space back to the list as soon as it is dismissed.
+    update_header();
+    apply_keyboard_pad();
     switch (s_view) {
         case VIEW_HUB:
             build_hub();
@@ -1086,18 +1160,12 @@ static void on_show(void* arg) {
         s_view = VIEW_HUB;
     }
     s_photo_count = count_students_with_photos();  // once per entry, not per scan
-    lv_label_set_text(s_sh.title, s_cls ? s_cls->name : "?");
-    char subtitle[88];
-    if (s_cls) {
-        snprintf(subtitle, sizeof(subtitle), "%s  |  %s", s_cls->code, s_cls->schedule);
-    } else {
-        snprintf(subtitle, sizeof(subtitle), "Student attendance");
-    }
-    lv_label_set_text(s_sh.subtitle, subtitle);
-    rebuild_content();
+    keyboard_set_visibility_cb(kb_visibility_cb);   // reclaim the keyboard's space when it hides
+    rebuild_content();                              // sets the header + padding
 }
 
 static void on_hide(void) {
+    keyboard_set_visibility_cb(nullptr);  // never fire against a torn-down layout
     keyboard_hide();
     ui_set_card_capture(nullptr);
     close_presence_feedback();

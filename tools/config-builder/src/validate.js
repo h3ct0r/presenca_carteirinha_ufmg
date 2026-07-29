@@ -218,7 +218,14 @@ function validateClasses(classes, students, teachers, add) {
     // [builder-stricter] the device only warns, but a class with no professor
     // (or a dangling one) shows under nobody.
     if (!emails.length) {
-      add('class', i, 'teacher_emails', `${who} has no professor selected`);
+      // A class is linked to a professor by EMAIL, so when no teacher has one
+      // there is nothing to tick and this error looks unfixable. Say which
+      // problem to solve first instead of just restating the symptom.
+      const anySelectable = teachers.some((t) => str(t.email));
+      add('class', i, 'teacher_emails', anySelectable
+        ? `${who} has no professor selected`
+        : `${who} has no professor selected — give a teacher an email first, ` +
+          'a class is linked to its professors by email');
     } else if (emails.length > LIMITS.MAX_CLASS_TEACHERS) {
       add('class', i, 'teacher_emails',
         `${who}: more than ${LIMITS.MAX_CLASS_TEACHERS} professors`);

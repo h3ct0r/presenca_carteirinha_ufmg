@@ -460,8 +460,13 @@
  * Logging
  *-----------*/
 
-/** Enable log module */
-#define LV_USE_LOG 0
+/** Enable log module.
+ *  MUST stay on: LV_USE_ASSERT_MALLOC + LV_ASSERT_HANDLER (`while(1);`) turn an
+ *  LVGL heap exhaustion into a silent infinite loop on the LVGL thread — the UI
+ *  freezes, no panic, no reboot, and other FreeRTOS tasks keep logging as if all
+ *  is well. That is exactly how a kiosk lock-up was misdiagnosed. With the log on
+ *  (WARN), LVGL prints the failing allocation before it halts. */
+#define LV_USE_LOG 1
 #if LV_USE_LOG
     /** Set value to one of the following levels of logging detail:
      *  - LV_LOG_LEVEL_TRACE    Log detailed information.
@@ -473,8 +478,10 @@
     #define LV_LOG_LEVEL LV_LOG_LEVEL_WARN
 
     /** - 1: Print log with 'printf';
-     *  - 0: User needs to register a callback with `lv_log_register_print_cb()`. */
-    #define LV_LOG_PRINTF 0
+     *  - 0: User needs to register a callback with `lv_log_register_print_cb()`.
+     *  printf reaches the USB-CDC serial console, which is all we need for the
+     *  assert message to actually show up next to the ESP_LOG lines. */
+    #define LV_LOG_PRINTF 1
 
     /** Set callback to print logs.
      *  E.g `my_print`. The prototype should be `void my_print(lv_log_level_t level, const char * buf)`.

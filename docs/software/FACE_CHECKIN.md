@@ -161,7 +161,8 @@ Each stage ends green on `pio run -e esp32p4` and `pio test -e native`.
   sheet is a child of the overlay with `LV_OBJ_FLAG_IGNORE_LAYOUT` — the overlay
   is a flex column, so without it the sheet would be laid out as another child;
   its animation is explicitly deleted in `take_down()` so it can never tick on a
-  freed object. Build-verified + native 127/127; **not run on hardware.**
+  freed object. Build-verified + native 127/127, and **verified on hardware
+  (2026-07-29).**
 - **2026-07-28** — **Verify overlay UI polish.** Reworked the `face_verify`
   overlay layout for a more professional kiosk look on the 480×800 portrait
   screen: full-bleed rounded/clipped **viewfinder** (thin border, top corners

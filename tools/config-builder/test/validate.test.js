@@ -221,3 +221,22 @@ test('over-length roster (>100) is flagged', () => {
   }];
   assert.ok(has(validate(m), `more than ${LIMITS.MAX_CLASS_ROSTER} students in roster`));
 });
+
+test('a class is unblockable when no teacher has an email — the error says so', () => {
+  const m = clone(FIXTURE);
+  // Teachers exist but none has an email: the class cannot be linked to any of
+  // them (the link is by email), so the message must point at the real fix.
+  m.teachers.forEach((t) => { t.email = ''; });
+  m.classes.forEach((c) => { c.teacher_emails = []; });
+  const errs = validate(m);
+  assert.ok(has(errs, 'give a teacher an email first'),
+    'the class error must name the blocking problem, not just restate the symptom');
+});
+
+test('with a selectable teacher the class error stays short', () => {
+  const m = clone(FIXTURE);
+  m.classes[0].teacher_emails = [];
+  const errs = validate(m);
+  assert.ok(has(errs, 'has no professor selected'));
+  assert.ok(!has(errs, 'give a teacher an email first'));
+});

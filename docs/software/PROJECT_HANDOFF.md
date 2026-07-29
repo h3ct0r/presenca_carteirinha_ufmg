@@ -218,10 +218,13 @@ Full assessment done at the user's request. Severity + status:
   (mirrored paths, single slot cleared each time). The wipe **aborts if the
   backup fails**. Restore is manual via the WiFi file editor (no in-app restore).
   4 native tests.
-- **D1 dead screens** — open: `scr_student`, `scr_class_form`, `scr_teacher_reg`
-  are registered but **never navigated to** (0 inbound). The two form screens
-  are non-functional demo stubs. **No git in this repo → deletions are
-  permanent**; confirm before removing.
+- **D1 dead screens** — `scr_teacher_reg` was **removed 2026-07-29** (it was an
+  unreachable stub whose "Waiting for card..." box never captured a card and
+  whose Confirm discarded everything — dangerous to leave around looking
+  functional). Still open: `scr_student` and `scr_class_form` are registered but
+  **never navigated to** (0 inbound); `scr_class_form` is likewise a
+  non-functional demo stub. Deletions are recoverable via git, but confirm
+  before removing.
 - **D2 `photo_store`** — RESOLVED: it's now wired as the JPEG snapshot writer.
 - **D3** — leftover commented test block in `scr_idle.cpp:~383`.
 - **U1** footer "WiFi File Editor" label wraps (longest of 4 tabs).
@@ -328,8 +331,8 @@ drivers/   lcd/, touch/, rfid/, audio/
 - `scr_wifi_editor` — debug WiFi AP + file server. Footer "WiFi File Editor".
 - `scr_camera` — camera preview + face boxes + model diagnostics. From Admin.
 - `scr_kiosk` — unattended self check-in (exit is professor-gated).
-- **Dead (D1):** `scr_class_form`, `scr_teacher_reg` (demo stubs, 0 inbound
-  nav), `scr_student` (superseded confirmation screen).
+- **Dead (D1):** `scr_class_form` (demo stub, 0 inbound nav), `scr_student`
+  (superseded confirmation screen). `scr_teacher_reg` was removed 2026-07-29.
 
 Footer nav (`shell.cpp add_footer`, on Classes/Export/WiFi/Admin): Classes /
 Export / WiFi File Editor / Admin. Active tab highlighted; nav can be disabled

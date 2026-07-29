@@ -13,11 +13,17 @@ Status: **M1 + M2 done** (tar/uid/model core, full validation, and a working
 authoring page); M3/M4 polish ongoing. See `SPEC.md` §9 for milestones.
 
 ## Quick use
-1. Open `index.html` in a browser (no install, no internet). It loads the
-   example roster (`fixtures/example.model.json`) so you can see the shape.
-   *(When opened straight from `file://`, the browser may block the example
-   fetch — use **Load model JSON** or add rows by hand; a `python3 -m
-   http.server` in this dir avoids that.)*
+1. Open `index.html` in a browser (no install, no internet). It starts **empty**
+   — click **Load example** if you want to see the shape of a filled-in roster.
+   *(The example is fetched, which the browser may block on `file://`; serving
+   the folder with `python3 -m http.server` avoids that. Everything else works
+   from `file://`.)*
+   Your work is **auto-saved in this browser** (localStorage) after every edit,
+   so reloading or reopening the page continues where you left off — the toolbar
+   shows when it was last saved. **Reset all fields** clears that copy too.
+   Student *photos* are not saved (they are binary and large): re-import the
+   Moodle tar each session. For a portable/backed-up copy, still use
+   **Save model JSON**.
 2. *(optional)* **Import Diário de Classe (CSV)** — pick the UFMG semicolon CSV
    export and it fills the students and a class automatically (see below).
 3. Fill in teachers, students, and classes; fix any validation errors listed in
@@ -64,8 +70,9 @@ turmas and a student can carry a different turma per class. See
 - **Run / host:** it's a static single-page app (no build, no backend). Serve it
   with `python3 -m http.server` for development or nginx for production — see
   [`DEPLOY.md`](DEPLOY.md).
-- **Test:** `node --test` (zero deps) — 104 cases across `uid`, `tarball`,
-  `untar`, `validate`, `diario`, `photomatch`. Run after every change (project rule).
+- **Test:** `node --test` (zero deps) — 115 cases across `uid`, `tarball`,
+  `untar`, `validate`, `diario`, `photomatch`, `persist`. Run after every change (project rule).
 - **Layout:** pure, DOM-free modules in `src/` (`uid.js`, `tarball.js`,
-  `untar.js`, `model.js`, `validate.js`, `diario.js`, `photomatch.js`) are
+  `untar.js`, `model.js`, `validate.js`, `diario.js`, `photomatch.js`,
+  `persist.js`) are
   unit-tested headlessly; `src/app.js` is the only file that touches the DOM.

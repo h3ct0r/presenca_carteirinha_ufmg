@@ -5,9 +5,9 @@ an open session, removes the redundant re-auth locks, and adds a per-class
 settings/statistics screen with per-class photo capture and a timed
 double-tap attendance mode.
 
-Status: **all three phases implemented** (build- and native-test-verified, not
-run on hardware). The timed-attendance decision logic lives in `attendance_store`
-and is fully native-tested; the screens/tap UX are device-only.
+Status: **all three phases implemented and verified on hardware.** The
+timed-attendance decision logic lives in `attendance_store` and is fully
+native-tested; the screens/tap UX are device-only and were exercised by hand.
 
 ## Locked decisions
 - **Nav:** state-aware class **hub** (Session · History, plus a "Resume session"
@@ -129,4 +129,5 @@ back/title, with a context-aware back (deeper view → hub → classes list).
   also means a professor who is *also* enrolled as a student exits rather than
   checking themselves in. Note a card tap is ignored while the face-verify
   overlay is up (capture is disarmed there), so the professor taps again after it
-  times out. Build- and native-test-verified, not run on hardware.
+  times out. Build- and native-test-verified, and **verified on hardware
+  (2026-07-29).**

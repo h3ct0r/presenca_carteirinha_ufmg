@@ -17,7 +17,6 @@
 #include "ui/screens/scr_wifi_editor.h"
 #include "ui/screens/scr_kiosk.h"
 #include "ui/screens/scr_student.h"
-#include "ui/screens/scr_teacher_reg.h"
 #include "ui/theme/theme.h"
 #include "ui/ui_state.h"
 
@@ -41,7 +40,6 @@ void ui_init(void) {
     scr_mgr_register(SCREEN_CLASS_STATS, &scr_class_stats);
     scr_mgr_register(SCREEN_CLASS_FORM, &scr_class_form);
     scr_mgr_register(SCREEN_ADMIN, &scr_admin);
-    scr_mgr_register(SCREEN_TEACHER_REG, &scr_teacher_reg);
     scr_mgr_register(SCREEN_KIOSK, &scr_kiosk);
     scr_mgr_register(SCREEN_EXPORT, &scr_export);
     scr_mgr_register(SCREEN_WIFI_EDITOR, &scr_wifi_editor);

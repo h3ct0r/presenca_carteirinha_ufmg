@@ -353,6 +353,16 @@ void face_verify_open(const char* student_id, const char* student_name, const ch
     lv_obj_add_flag(s_flash, LV_OBJ_FLAG_HIDDEN);
 
     s_timer = lv_timer_create(verify_tick, 100, nullptr);
+
+    // The overlay is the heaviest thing this app builds in one go (preview image
+    // + boxes + arc + avatar decode). If the LVGL heap runs dry mid-build, LVGL
+    // asserts and halts the thread silently, so log the headroom left: a small
+    // free_size here is the warning sign before a freeze.
+    lv_mem_monitor_t m;
+    lv_mem_monitor(&m);
+    ESP_LOGI(TAG, "verify overlay up for %s — LVGL heap free %u/%u B (%u%% used, max blk %u)",
+             s_id, (unsigned)m.free_size, (unsigned)m.total_size, (unsigned)m.used_pct,
+             (unsigned)m.free_biggest_size);
 }
 
 void face_verify_cancel(void) { take_down(); }

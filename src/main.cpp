@@ -79,6 +79,22 @@ void setup() {
     }
 
     battery_service_start();
+
+    // Baseline memory, once the UI is up. The LVGL pool is a FIXED array
+    // (LV_MEM_SIZE, internal RAM) separate from the ESP-IDF heaps: exhausting it
+    // halts the LVGL thread silently (LV_ASSERT_HANDLER is `while(1);`), so this
+    // is the number to watch when adding heavy screens. Compare it against the
+    // per-screen figure the face-verify overlay logs.
+    lv_mem_monitor_t lv;
+    lv_mem_monitor(&lv);
+    Serial.printf("[mem] LVGL pool %u/%u B free (%u%% used, largest block %u)\n",
+                  (unsigned)lv.free_size, (unsigned)lv.total_size, (unsigned)lv.used_pct,
+                  (unsigned)lv.free_biggest_size);
+    Serial.printf("[mem] ESP internal %u B free (min %u), PSRAM %u B free (min %u)\n",
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                  (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                  (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM));
 }
 
 void loop() {

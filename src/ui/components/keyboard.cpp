@@ -5,6 +5,16 @@
 
 static lv_obj_t* s_kbd = nullptr;
 static lv_event_cb_t s_ready_cb = nullptr;  // optional OK/finish action for the current field
+static keyboard_visibility_cb_t s_vis_cb = nullptr;
+static bool s_visible = false;
+
+// Notifies the current screen only on an actual change, so a repeated
+// keyboard_show() for the same field doesn't churn its layout.
+static void set_visible(bool v) {
+    if (s_visible == v) return;
+    s_visible = v;
+    if (s_vis_cb) s_vis_cb(v);
+}
 
 // Reduced numeric keypad (digits + backspace + OK): drops the default number
 // map's "+/-", ".", arrows and text-switch button. Passwords and IDs are
@@ -43,6 +53,7 @@ void keyboard_show(lv_obj_t* ta, lv_keyboard_mode_t mode) {
         (mode == LV_KEYBOARD_MODE_NUMBER) ? &lv_font_montserrat_32 : &lv_font_montserrat_20;
     lv_obj_set_style_text_font(s_kbd, face, LV_PART_ITEMS);
     lv_obj_remove_flag(s_kbd, LV_OBJ_FLAG_HIDDEN);
+    set_visible(true);
 }
 
 static void textarea_focus_cb(lv_event_t* e) {
@@ -66,7 +77,12 @@ void keyboard_hide(void) {
     s_ready_cb = nullptr;
     lv_keyboard_set_textarea(s_kbd, nullptr);
     lv_obj_add_flag(s_kbd, LV_OBJ_FLAG_HIDDEN);
+    set_visible(false);
 }
+
+bool keyboard_is_visible(void) { return s_visible; }
+
+void keyboard_set_visibility_cb(keyboard_visibility_cb_t cb) { s_vis_cb = cb; }
 
 void keyboard_set_ready_cb(lv_event_cb_t cb) { s_ready_cb = cb; }
 
