@@ -73,7 +73,7 @@
      *  roll call (~100 students x several objects) can approach the old 64 kB,
      *  and LV_USE_ASSERT_MALLOC turns an exhaustion into a hard reboot, so keep
      *  generous headroom. Lives in internal RAM (draw buffers are in PSRAM). */
-    #define LV_MEM_SIZE (128 * 1024U)         /**< [bytes] */
+    #define LV_MEM_SIZE (256 * 1024U)         /**< [bytes] */
 
     /** Size of the memory expand for `lv_malloc()` in bytes */
     #define LV_MEM_POOL_EXPAND_SIZE 0
