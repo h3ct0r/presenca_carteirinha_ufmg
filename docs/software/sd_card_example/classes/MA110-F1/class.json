@@ -3,7 +3,7 @@
   "code": "MA110-F1",
   "name": "Linear Algebra",
   "schedule": "Fri 08:00-10:00",
-  "teacher_email": "hector@dcc.ufmg.br",
+  "teacher_emails": ["hector@dcc.ufmg.br"],
   "color": "1F9D55",
   "roster": [
     { "id": "2022-0311", "turma": "F1" },

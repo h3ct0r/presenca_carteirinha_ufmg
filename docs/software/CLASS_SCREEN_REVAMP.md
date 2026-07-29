@@ -79,9 +79,10 @@ back/title, with a context-aware back (deeper view → hub → classes list).
    states + stats/export surfacing minutes.
 
 ## Honesty / risk
-- Phases 1–2 are mostly LVGL: build-verified, not run on hardware.
+- Phases 1–3 have been **manually verified on the device** and work as expected.
+  The changelog entries below record what was verified when each landed.
 - Phase 3's decision logic sits in `attendance_store` (native-tested); only the
-  tap UX is device-only.
+  tap UX is device-only, and that was checked by hand.
 - The strict "must tap out ⇒ absent" rule leans on students tapping out — the
   timed roll call / kiosk should show a clear "tap again when you leave" hint.
 
@@ -117,3 +118,15 @@ back/title, with a context-aware back (deeper view → hub → classes list).
   the shared **numeric** keypad. Exiting kiosk returns into the running session,
   and student photos now appear on the kiosk confirmation too. Pure LVGL —
   build-verified, not run on hardware.
+- **2026-07-29** — **kiosk exit: a professor card tap now leaves immediately.**
+  `on_kiosk_card` checks `auth_lookup_uid()` **before** the student lookup, so a
+  professor tapping their RFID anywhere in kiosk calls `do_exit()` directly —
+  no Exit button, no gate modal, no keypad. Previously that tap fell through to
+  the student lookup and showed "Invalid card". The Exit button + modal remain as
+  the fallback for a professor with no bound card (or one not to hand), and the
+  security property is unchanged: the professor card was already sufficient to
+  clear the gate, this only removes the extra step. The professor-first ordering
+  also means a professor who is *also* enrolled as a student exits rather than
+  checking themselves in. Note a card tap is ignored while the face-verify
+  overlay is up (capture is disarmed there), so the professor taps again after it
+  times out. Build- and native-test-verified, not run on hardware.

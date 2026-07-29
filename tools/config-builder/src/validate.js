@@ -1,3 +1,5 @@
+import { classTeacherEmails } from './model.js';
+
 // Pure, DOM-free validation of the authoring model against the contract
 // (docs/software/CONFIG_IMPORT.md §3). Returns a flat list of structured errors so the
 // UI can point at the offending row and the export button can gate on
@@ -27,6 +29,7 @@ export const LIMITS = {
   MAX_STUDENTS: 600,
   MAX_CLASSES: 12,
   MAX_CLASS_ROSTER: 100,
+  MAX_CLASS_TEACHERS: 8,  // ROSTER_MAX_CLASS_TEACHERS; a class may be co-taught
   TEACHER_NAME: 47,
   TEACHER_EMAIL: 63,
   TEACHER_UID: 39,
@@ -190,7 +193,7 @@ function validateClasses(classes, students, teachers, add) {
     const code = str(c.code);
     const name = str(c.name);
     const schedule = str(c.schedule);
-    const email = str(c.teacher_email);
+    const emails = classTeacherEmails(c);
     const color = str(c.color);
     const who = code || `class ${i + 1}`;
 
@@ -212,13 +215,24 @@ function validateClasses(classes, students, teachers, add) {
     if (schedule.length > LIMITS.CLASS_SCHEDULE)
       add('class', i, 'schedule', `${who}: schedule exceeds ${LIMITS.CLASS_SCHEDULE} characters`);
 
-    // [builder-stricter] the device only warns, but an unassigned or dangling
-    // teacher_email means the class shows under nobody.
-    if (!email) add('class', i, 'teacher_email', `${who} has no teacher_email`);
-    else if (email.length > LIMITS.CLASS_TEACHER_EMAIL)
-      add('class', i, 'teacher_email', `${who}: teacher_email exceeds ${LIMITS.CLASS_TEACHER_EMAIL} characters`);
-    else if (!teacherEmails.has(email))
-      add('class', i, 'teacher_email', `${who}: teacher_email ${email} matches no teacher`);
+    // [builder-stricter] the device only warns, but a class with no professor
+    // (or a dangling one) shows under nobody.
+    if (!emails.length) {
+      add('class', i, 'teacher_emails', `${who} has no professor selected`);
+    } else if (emails.length > LIMITS.MAX_CLASS_TEACHERS) {
+      add('class', i, 'teacher_emails',
+        `${who}: more than ${LIMITS.MAX_CLASS_TEACHERS} professors`);
+    } else {
+      // classTeacherEmails() already de-duplicates, so there is no "listed
+      // twice" case to check here — only length and dangling references.
+      for (const em of emails) {
+        if (em.length > LIMITS.CLASS_TEACHER_EMAIL)
+          add('class', i, 'teacher_emails',
+            `${who}: teacher email exceeds ${LIMITS.CLASS_TEACHER_EMAIL} characters`);
+        else if (!teacherEmails.has(em))
+          add('class', i, 'teacher_emails', `${who}: teacher_email ${em} matches no teacher`);
+      }
+    }
 
     if (color && !HEX6.test(color))
       add('class', i, 'color', `${who}: color must be 6 hex digits (no leading '#')`);

@@ -1020,8 +1020,9 @@
 /** RLE decompress library */
 #define LV_USE_RLE 0
 
-/** QR code library */
-#define LV_USE_QRCODE 0
+/** QR code library — used by the About screen for the project repo link
+ *  (the device has no browser, so a scannable code beats a typed URL). */
+#define LV_USE_QRCODE 1
 
 /** Barcode code library */
 #define LV_USE_BARCODE 0
@@ -1102,7 +1103,7 @@
 #define LV_USE_SNAPSHOT 0
 
 /** 1: Enable system monitor component */
-#define LV_USE_SYSMON   1
+#define LV_USE_SYSMON   0
 #if LV_USE_SYSMON
     /** Get the idle percentage. E.g. uint32_t my_get_idle(void); */
     #define LV_SYSMON_GET_IDLE lv_os_get_idle_percent

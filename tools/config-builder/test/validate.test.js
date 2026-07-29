@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { validate, LIMITS } from '../src/validate.js';
+import { buildClass } from '../src/model.js';
 
 const FIXTURE = JSON.parse(
   readFileSync(fileURLToPath(new URL('../fixtures/example.model.json', import.meta.url)), 'utf8'),
@@ -128,8 +129,49 @@ test('leading-hash color is rejected (contract wants bare 6-hex)', () => {
 });
 
 test('teacher_email matching no teacher is rejected', () => {
-  const m = clone(FIXTURE); m.classes[0].teacher_email = 'ghost@nowhere.edu';
+  const m = clone(FIXTURE); m.classes[0].teacher_emails = ['ghost@nowhere.edu'];
   assert.ok(has(validate(m), 'matches no teacher'));
+});
+
+// --- multi-professor classes (CONFIG_IMPORT.md §3.3 teacher_emails) ---------
+
+test('a class co-taught by several professors is valid', () => {
+  const m = clone(FIXTURE);
+  m.teachers.push({ name: 'Second', email: 'second@x.edu', rfid_uid: '', password: '9911' });
+  m.classes[0].teacher_emails = [m.teachers[0].email, 'second@x.edu'];
+  assert.deepEqual(validate(m), []);
+});
+
+test('a class with no professor selected is rejected', () => {
+  const m = clone(FIXTURE); m.classes[0].teacher_emails = [];
+  assert.ok(has(validate(m), 'has no professor selected'));
+});
+
+test('the same professor listed twice is de-duplicated, not an error', () => {
+  const m = clone(FIXTURE);
+  const e = m.teachers[0].email;
+  m.classes[0].teacher_emails = [e, e];
+  assert.deepEqual(validate(m), []);
+  // The tar carries one entry, so the device never sees the duplicate.
+  assert.deepEqual(buildClass(m.classes[0]).teacher_emails, [e]);
+});
+
+test('more professors than the firmware cap is rejected', () => {
+  const m = clone(FIXTURE);
+  m.classes[0].teacher_emails = [];
+  for (let i = 0; i < LIMITS.MAX_CLASS_TEACHERS + 1; i++) {
+    const email = `p${i}@x.edu`;
+    m.teachers.push({ name: `P${i}`, email, rfid_uid: '', password: String(70000 + i) });
+    m.classes[0].teacher_emails.push(email);
+  }
+  assert.ok(has(validate(m), `more than ${LIMITS.MAX_CLASS_TEACHERS} professors`));
+});
+
+test('a legacy scalar teacher_email is still accepted', () => {
+  const m = clone(FIXTURE);
+  delete m.classes[0].teacher_emails;
+  m.classes[0].teacher_email = m.teachers[0].email;
+  assert.deepEqual(validate(m), []);
 });
 
 test('class code with a path separator is rejected (zip-slip defense)', () => {
@@ -165,7 +207,7 @@ test('the same student may be in different classes with different turmas', () =>
 test('more than 12 classes is flagged', () => {
   const m = clone(FIXTURE);
   m.classes = Array.from({ length: LIMITS.MAX_CLASSES + 1 }, (_, i) => ({
-    code: `C${i}`, name: `Class ${i}`, teacher_email: m.teachers[0].email, color: '272766', roster: [],
+    code: `C${i}`, name: `Class ${i}`, teacher_emails: [m.teachers[0].email], color: '272766', roster: [],
   }));
   assert.ok(has(validate(m), `more than ${LIMITS.MAX_CLASSES} classes`));
 });
@@ -174,7 +216,7 @@ test('over-length roster (>100) is flagged', () => {
   const m = clone(FIXTURE);
   m.students = Array.from({ length: LIMITS.MAX_CLASS_ROSTER + 1 }, (_, i) => ({ id: `s-${i}`, name: `S${i}` }));
   m.classes = [{
-    code: 'BIG', name: 'Big', teacher_email: m.teachers[0].email, color: '272766',
+    code: 'BIG', name: 'Big', teacher_emails: [m.teachers[0].email], color: '272766',
     roster: m.students.map((s) => s.id),
   }];
   assert.ok(has(validate(m), `more than ${LIMITS.MAX_CLASS_ROSTER} students in roster`));

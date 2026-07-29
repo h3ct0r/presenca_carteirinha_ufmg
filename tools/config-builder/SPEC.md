@@ -80,7 +80,7 @@ file that touches the DOM.
    (optional, digits-only). Live per-field + uniqueness validation.
 2. **Students** — table: id, name, rfid_uid (default null). Import from
    pasted CSV/TSV is a nice-to-have (id,name per line).
-3. **Classes** — per class: code, name, schedule, teacher_email (dropdown of
+3. **Classes** — per class: code, name, schedule, professors (checkbox list of
    defined teachers), color (picker → 6-hex), roster (multiselect of defined
    student ids). Folder name is derived = code.
 4. **Review & Export** — runs full cross-file validation; shows a clear error

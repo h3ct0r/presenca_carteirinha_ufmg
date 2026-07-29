@@ -5,6 +5,7 @@
 #include "app/auth.h"
 #include "app/session.h"
 #include "app/teacher.h"
+#include "app/version.h"
 #include "audio/beeper.h"
 #include "services/config_service.h"
 #include "services/import_service.h"
@@ -452,6 +453,18 @@ static lv_obj_t* create(void) {
     lv_obj_set_style_text_color(s_pw_alert, lv_color_hex(COL_WARN), 0);
     lv_obj_set_style_text_font(s_pw_alert, &lv_font_montserrat_14, 0);
     lv_obj_align(s_pw_alert, LV_ALIGN_BOTTOM_MID, 0, -20);
+
+    // Firmware version, bottom-right corner. Deliberately a plain label (not a
+    // button): this screen is student-facing, so it answers "which build is this
+    // device running?" without adding a tap target that leaves the check-in
+    // flow. The full build id (with git SHA) lives on the About screen.
+    lv_obj_t* ver = lv_label_create(s_root);
+    lv_obj_add_flag(ver, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    lv_label_set_text(ver, APP_VERSION_FULL);
+    lv_obj_set_style_text_color(ver, lv_color_hex(COL_MUTED), 0);
+    lv_obj_set_style_text_opa(ver, LV_OPA_60, 0);
+    lv_obj_set_style_text_font(ver, &lv_font_montserrat_14, 0);
+    lv_obj_align(ver, LV_ALIGN_BOTTOM_RIGHT, -10, -8);
 
     // Observers fire immediately with the current status, so the first
     // rendered frame already shows the right panel.

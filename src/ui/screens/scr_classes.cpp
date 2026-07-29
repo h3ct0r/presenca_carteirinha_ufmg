@@ -113,6 +113,18 @@ static void build_list(void) {
     const teacher_t* t = session_get();
     const char* email = t ? t->email : "";
 
+    // A class folder that couldn't be parsed is skipped rather than blanking the
+    // whole list (e.g. a leftover folder from a previous config). Say so, or the
+    // class would just be quietly missing.
+    int skipped = roster_skipped_class_count();
+    if (skipped > 0) {
+        char why[160], msg[240];
+        roster_get_skip_reason(why, sizeof(why));
+        snprintf(msg, sizeof(msg), "%d class folder(s) on the SD card could not be read: %s",
+                 skipped, why[0] ? why : "see the serial log");
+        add_notice_card("Some classes were skipped", msg);
+    }
+
     int shown = 0;
     for (int i = 0; i < roster_class_count(); i++) {
         const class_rec_t* cls = roster_class_at(i);

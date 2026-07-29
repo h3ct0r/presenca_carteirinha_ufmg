@@ -43,7 +43,8 @@ the contract. No device connection, no backend, no internet.
 ## Honesty rule
 Report changes as **"validated against docs/software/CONFIG_IMPORT.md and unit-tested,"**
 never as "verified against the device" unless you actually round-tripped a tar
-through real firmware.
+through real firmware. (The maintainer does test each feature on the device
+before moving on — but that is their step, not yours to claim.)
 
 ## Keeping in sync (read this before schema work)
 The single source of truth is `../../docs/software/CONFIG_IMPORT.md`, which itself mirrors

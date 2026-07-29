@@ -41,7 +41,10 @@ static void refresh_state(void) {
     bool running = wifi_ap_is_running();
     if (running) {
         lv_label_set_text(s_btn_label, LV_SYMBOL_CLOSE "  Stop Access Point");
-        lv_obj_set_style_bg_color(s_btn, lv_color_hex(THEME_SUCCESS), 0);  // green = live
+        // Red = the destructive action this button performs (stop the AP), not
+        // the current state. The green "live" signal is the status line + the
+        // top-bar WiFi icon below.
+        lv_obj_set_style_bg_color(s_btn, lv_color_hex(THEME_DANGER), 0);
         char ip[24];
         wifi_ap_ip(ip, sizeof(ip));
         char msg[96];

@@ -4,7 +4,7 @@
 // modules imported below.
 
 import { validate, LIMITS } from './validate.js';
-import { buildFiles } from './model.js';
+import { buildFiles, classTeacherEmails } from './model.js';
 import { makeTar } from './tarball.js';
 import { decodeCsvBytes, parseDiario, applyDiario } from './diario.js';
 import { parseTar } from './untar.js';
@@ -48,7 +48,7 @@ function normalize(m) {
     })),
     classes: (m.classes || []).map((c) => ({
       code: c.code || '', name: c.name || '', schedule: c.schedule || '',
-      teacher_email: c.teacher_email || '', color: c.color || '272766',
+      teacher_emails: classTeacherEmails(c), color: c.color || '272766',
       // Roster entries are { id, turma }. Accept bare-id strings and {id} too.
       roster: (c.roster || [])
         .map((r) => (typeof r === 'string' ? { id: r, turma: '' } : { id: r.id || '', turma: r.turma || '' }))
@@ -126,7 +126,9 @@ function render() {
 
 // Recompute validity and update the live bits in place (status pill, top
 // download button, review card) without disturbing the field being edited.
-function syncStatus() {
+// `refreshTeachers` is false when the caller IS a professor checkbox: rebuilding
+// the list under a click would swap out the element mid-event and drop focus.
+function syncStatus(refreshTeachers = true) {
   const errors = validate(model);
   const ok = errors.length === 0 && hasContent();
   const pill = document.querySelector('.statuspill');
@@ -138,24 +140,41 @@ function syncStatus() {
   if (dlTop) dlTop.disabled = !ok;
   const review = document.getElementById('review');
   if (review) review.replaceWith(reviewSection());
-  refreshTeacherSelects();
+  if (refreshTeachers) refreshTeacherSelects();
 }
 
-// Rebuild each class's teacher dropdown from the current teachers, in place, so
-// a teacher added or edited while a class card is open shows up immediately (and
-// renamed teachers update their label) — without re-rendering the field the user
-// is typing in. Selects render in class order, matching model.classes.
+// Rebuild each class's professor checkbox list from the current teachers, in
+// place, so a teacher added or edited while a class card is open shows up
+// immediately (and renamed teachers update their label) — without re-rendering
+// the field the user is typing in. Each box carries its class index, so this
+// does not depend on DOM order.
 function refreshTeacherSelects() {
-  const opts = model.teachers.filter((t) => t.email);
-  document.querySelectorAll('select.teacher-select').forEach((sel, i) => {
-    const cls = model.classes[i];
-    const current = cls ? cls.teacher_email : sel.value;
-    sel.replaceChildren(
-      el('option', { value: '', text: '— pick a teacher —' }),
-      ...opts.map((t) => el('option', { value: t.email, text: t.name || t.email })),
-    );
-    sel.value = current; // stays selected if still present; blank if orphaned
+  document.querySelectorAll('.teacher-box').forEach((box) => {
+    const cls = model.classes[Number(box.dataset.classIndex)];
+    if (cls) renderTeacherBox(box, cls);
   });
+}
+
+// Fills a class card's professor checkbox list. Rebuilt whenever the teacher
+// list changes, so newly added/renamed professors appear without a full render.
+function renderTeacherBox(box, c) {
+  const teachers = model.teachers.filter((t) => t.email);
+  if (!teachers.length) {
+    box.replaceChildren(el('div', { class: 'teacher-empty', text: 'Add a teacher first.' }));
+    return;
+  }
+  const chosen = classTeacherEmails(c);
+  box.replaceChildren(...teachers.map((t) => {
+    const cb = el('input', { type: 'checkbox', checked: chosen.includes(t.email) });
+    cb.addEventListener('change', () => {
+      const next = classTeacherEmails(c).filter((e) => e !== t.email);
+      if (cb.checked) next.push(t.email);
+      c.teacher_emails = next;
+      delete c.teacher_email;  // normalized away from the legacy scalar
+      syncStatus(false);       // don't rebuild this list under the click
+    });
+    return el('label', { class: 'teacher-row' }, [cb, t.name || t.email]);
+  }));
 }
 
 function statusText(ok, n) {
@@ -587,7 +606,7 @@ function classesSection() {
     el('p', { class: 'hint', text: 'A class links to one teacher; students carry their group (turma) per roster entry.' }),
     body,
     el('button', { class: 'add', text: '+ Add class', onclick: () => {
-      model.classes.push({ code: '', name: '', schedule: '', teacher_email: '', color: '272766', roster: [] });
+      model.classes.push({ code: '', name: '', schedule: '', teacher_emails: [], color: '272766', roster: [] });
       render();
     } }),
   ]);
@@ -596,13 +615,12 @@ function classesSection() {
 function classCard(c, i) {
   const safeColor = /^[0-9a-fA-F]{6}$/.test(c.color) ? c.color : '272766';
 
-  const teacherSel = el('select', { class: 'teacher-select' }, [
-    el('option', { value: '', text: '— pick a teacher —' }),
-    ...model.teachers.filter((t) => t.email).map((t) =>
-      el('option', { value: t.email, text: t.name || t.email })),
-  ]);
-  teacherSel.value = c.teacher_email;
-  teacherSel.addEventListener('change', () => { c.teacher_email = teacherSel.value; syncStatus(); });
+  // A class may be co-taught, so professors are a checkbox list (not a single
+  // pick). Selections live in c.teacher_emails; the legacy scalar is folded in
+  // by classTeacherEmails() and dropped on the first edit.
+  const teacherBox = el('div', { class: 'teacher-box' });
+  teacherBox.dataset.classIndex = String(i);
+  renderTeacherBox(teacherBox, c);
 
   // The header swatch IS the color picker — tap it to recolor the class.
   const color = el('input', { type: 'color', class: 'swatch-input', value: '#' + safeColor, title: 'Class color', 'aria-label': 'Class color' });
@@ -640,7 +658,7 @@ function classCard(c, i) {
       el('label', { class: 'field' }, ['Code (folder name)', codeInput]),
       fieldInput('Name', c.name, (v) => { c.name = v; }),
       fieldInput('Schedule', c.schedule, (v) => { c.schedule = v; }, { placeholder: 'e.g. Tue/Thu 10:00' }),
-      el('label', { class: 'field' }, ['Teacher', teacherSel]),
+      el('label', { class: 'field' }, ['Professors', teacherBox]),
     ]),
     el('label', { class: 'field roster-field' }, [`Roster (${c.roster.length}/100)`, roster]),
   ]);

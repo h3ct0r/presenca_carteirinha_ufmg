@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseDiario, decodeCsvBytes, applyDiario } from '../src/diario.js';
 import { validate } from '../src/validate.js';
-import { buildFiles } from '../src/model.js';
+import { buildFiles, CLASS_COLORS, pickClassColor } from '../src/model.js';
 
 // The exact sample the user provided (UTF-8 here in source).
 const SAMPLE = `PERIODO;ATIVIDADE;TURMA
@@ -127,14 +127,14 @@ test('import backfills blank class fields (name, color, teacher) without overwri
     teachers: [{ name: 'Prof', email: 'p@x.edu', rfid_uid: '', password: '1' }],
     students: [],
     // a pre-existing class with the same code but blank fields and a custom name
-    classes: [{ code: '2026_2-DCC219', name: 'Kept Name', schedule: '', teacher_email: '', color: '', roster: [] }],
+    classes: [{ code: '2026_2-DCC219', name: 'Kept Name', schedule: '', teacher_emails: [], color: '', roster: [] }],
   };
   applyDiario(model, parseDiario(SAMPLE));
   const cls = model.classes[0];
   assert.equal(model.classes.length, 1);       // matched the existing class, no dup
   assert.equal(cls.name, 'Kept Name');         // author's value preserved
-  assert.equal(cls.color, '272766');           // blank → default filled
-  assert.equal(cls.teacher_email, 'p@x.edu');  // blank → lone teacher filled
+  assert.ok(CLASS_COLORS.includes(cls.color));  // blank → a palette colour filled
+  assert.deepEqual(cls.teacher_emails, ['p@x.edu']);  // blank → lone teacher filled
   assert.equal(cls.roster.length, 10);         // students enrolled
 });
 
@@ -172,7 +172,7 @@ test('a single defined teacher is auto-assigned to the imported class', () => {
     students: [], classes: [],
   };
   applyDiario(model, parseDiario(SAMPLE));
-  assert.equal(model.classes[0].teacher_email, 'p@x.edu');
+  assert.deepEqual(model.classes[0].teacher_emails, ['p@x.edu']);
 });
 
 test('imported model (with a teacher assigned) validates and builds turma into the tar files', () => {

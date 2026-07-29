@@ -236,6 +236,15 @@
 
     .hidden-dl { display: none; }
 
+    /* ---- class professors (multi-select checkboxes) ---- */
+    .teacher-box { display: flex; flex-direction: column; gap: 2px; max-height: 132px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 4px; background: var(--field); scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+    .teacher-box::-webkit-scrollbar { width: 11px; }
+    .teacher-box::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; border: 3px solid var(--field); }
+    .teacher-row { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 6px; font-size: 13px; color: var(--ink); cursor: pointer; }
+    .teacher-row:hover { background: var(--surface-2); }
+    .teacher-row input[type=checkbox] { width: 15px; height: 15px; flex: none; accent-color: var(--accent); cursor: pointer; }
+    .teacher-empty { padding: 10px; color: var(--muted); font-size: 13px; }
+
     /* ---- student photos ---- */
     .photo-summary { margin-top: var(--sp-3); font-size: 12.5px; font-family: var(--mono); color: var(--muted); }
     .photo-review { margin-top: var(--sp-3); display: flex; flex-direction: column; gap: 6px; max-height: 340px; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }

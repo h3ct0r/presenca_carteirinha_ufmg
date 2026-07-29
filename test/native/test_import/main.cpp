@@ -146,6 +146,45 @@ static void test_import_applies_and_backs_up(void) {
     TEST_ASSERT_TRUE(mocksd_exists("/config.tar.imported"));
 }
 
+// Reported bug: after importing a config whose classes have DIFFERENT codes, the
+// class list showed "No class data" and the old class folder was still on the
+// card. An import is an overlay (it never deletes another professor's class), so
+// the stale /classes/<OLD>/class.json survives — and its roster references
+// students that the new students.json no longer has. The loader used to treat
+// that as fatal and dropped the ENTIRE roster, hiding the freshly imported
+// classes too. A stale class must be skipped, not take everything down with it.
+static void test_stale_class_from_previous_config_does_not_hide_new_classes(void) {
+    setup_live();  // students A,B + class CS101-M1 whose roster is [A,B]
+    TEST_ASSERT_EQUAL(ROSTER_OK, roster_get_status());
+    TEST_ASSERT_EQUAL_INT(1, roster_class_count());
+
+    // A completely different config: new student ids and a new class code.
+    static const char* OTHER_STUDENTS =
+        "{ \"version\": 1, \"students\": [ { \"id\": \"X\", \"name\": \"Xavier\" }, "
+        "{ \"id\": \"Y\", \"name\": \"Yara\" } ] }";
+    static const char* OTHER_CLASS =
+        "{ \"version\": 1, \"code\": \"DCC219\", \"name\": \"Robotics\", "
+        "\"roster\": [ { \"id\": \"X\" }, { \"id\": \"Y\" } ] }";
+
+    TarBuf t;
+    t.add("config.json", NEW_CONFIG);
+    t.add("students/students.json", OTHER_STUDENTS);
+    t.add("classes/DCC219/class.json", OTHER_CLASS);
+    t.end();
+    t.stage_at("/config.tar");
+
+    import_result_t r = import_service_run("/config.tar");
+    TEST_ASSERT_TRUE_MESSAGE(r.ok, r.message);
+
+    // The old class folder is still there (overlay semantics, attendance safe)...
+    TEST_ASSERT_TRUE(mocksd_exists("/classes/CS101-M1/class.json"));
+    // ...but the roster still loads, and the NEW class is visible.
+    TEST_ASSERT_EQUAL_MESSAGE(ROSTER_OK, roster_get_status(),
+                              "a stale class must not blank the whole class list");
+    TEST_ASSERT_EQUAL_INT(1, roster_class_count());
+    TEST_ASSERT_EQUAL_STRING("DCC219", roster_class_at(0)->code);
+}
+
 static void test_import_applies_avatars_and_preserves_device_photos(void) {
     setup_live();
     // Device-produced trees that MUST survive an import (never named by apply).
@@ -239,5 +278,6 @@ int main(int, char**) {
     RUN_TEST(test_import_rejects_zip_slip_leaving_live_intact);
     RUN_TEST(test_import_rejects_invalid_config_leaving_live_intact);
     RUN_TEST(test_import_applies_avatars_and_preserves_device_photos);
+    RUN_TEST(test_stale_class_from_previous_config_does_not_hide_new_classes);
     return UNITY_END();
 }

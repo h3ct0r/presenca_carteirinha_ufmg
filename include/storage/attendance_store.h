@@ -75,5 +75,7 @@ int attendance_list_dates(const char* class_dir, char dates[][12], int max);
 int attendance_present_for(const char* class_dir, const char* date);
 
 // DEBUG: deletes every session log for a class (all YYYY-MM-DD.jsonl files) and
-// closes any open session. Returns the number of files removed.
-int attendance_clear(const char* class_dir);
+// closes any open session. Returns the number of files removed. When `out_failed`
+// is non-NULL it receives the number of files that could NOT be deleted, so a
+// partial wipe isn't reported as a clean success (each failure is also logged).
+int attendance_clear(const char* class_dir, int* out_failed);

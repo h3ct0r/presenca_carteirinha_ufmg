@@ -134,7 +134,10 @@ Rules (mirror `roster_service.cpp`):
   "code": "2026_2-DCC219",               // ≤ 23 chars; MUST equal the folder <CODE>
   "name": "DCC219",                      // ≤ 47 chars
   "schedule": "",                        // ≤ 39 chars
-  "teacher_email": "hector@dcc.ufmg.br", // ≤ 63 chars; should match a config.json teacher
+  "teacher_emails": [                    // 1..8 professors; a class may be co-taught
+    "hector@dcc.ufmg.br",                // each ≤ 63 chars; each should match a config.json teacher
+    "aline@dcc.ufmg.br"
+  ],
   "color": "272766",                     // 6-hex RGB, no leading '#'
   "capture_photos": false,               // optional; kiosk photo check-in (default false)
   "face_verify_seconds": 15,             // optional; face-verify countdown, 3..60 (default 15)
@@ -154,6 +157,14 @@ emit them, so an imported class.json omitting them resets the device to the
 defaults above (like any authored field the importer overwrites).
 Rules (mirror `roster_service.cpp`):
 - **≤ 12 classes** total (`ROSTER_MAX_CLASSES`).
+- `teacher_emails` is an **array of 1..8** professor emails
+  (`ROSTER_MAX_CLASS_TEACHERS`, which mirrors `CONFIG_MAX_TEACHERS`). A class is
+  listed for a professor when **any** entry matches their `config.json` email
+  (compared case-insensitively). Extra entries beyond 8 are ignored with a
+  warning; blank entries are skipped. **Legacy:** a scalar
+  `"teacher_email": "…"` is still accepted when `teacher_emails` is absent and
+  becomes a single entry, so cards written before multi-professor support keep
+  working. The config-builder always emits the array form.
 - `code` **unique** across classes, and the **folder name must equal `code`**
   (the device uses the folder as the class `dir`). When authored from a *Diário*
   import the builder derives it as `<SEMESTER>-<ATIVIDADE>` (the header's
@@ -273,6 +284,26 @@ worse than the current file editor — do not ship one.
 - The tar itself is unversioned; the file schemas version themselves.
 
 ### Changelog
+- **2026-07-29** — **a broken class folder no longer blanks the whole class
+  list.** Because an import is an **overlay** (§2), importing a config whose
+  classes have different codes leaves the previous `/classes/<OLD>/` folders on
+  the card. Their rosters reference students the new `students.json` no longer
+  has, and the loader used to treat that as fatal — so the class screen showed
+  *"No class data"* and even the freshly imported classes were hidden. The **live**
+  load now **skips** an unloadable class (counted + explained via
+  `roster_skipped_class_count()` / `roster_get_skip_reason()`, surfaced as a
+  notice on the class list) and keeps the rest. **Import-time validation is
+  unchanged and still strict** — a tar containing a bad class is rejected before
+  it is applied. Stale folders are still not deleted, so attendance is never lost;
+  remove them by hand (or via the WiFi file manager) if you want them gone.
+- **2026-07-29** — **a class can be co-taught by several professors.** `class.json`
+  §3.3 `teacher_email` (scalar) → **`teacher_emails`** (array of 1..8, capped by
+  `ROSTER_MAX_CLASS_TEACHERS` = `CONFIG_MAX_TEACHERS`). A class is listed for a
+  professor when **any** entry matches. **Backward compatible:** the device still
+  reads a legacy scalar `teacher_email` when the array is absent, so existing
+  cards keep working; the config-builder now always emits the array and offers a
+  professor checkbox list per class. Firmware: `class_rec_t.teacher_emails[][64]`
+  + `teacher_count`, `roster_class_matches_teacher()` matches any.
 - **2026-07-28** — **student avatars are now bundled in the tar.** Added a fourth
   authored kind, `students/photos/<id>.jpg` (§1, §2, §4), overwritten on import
   beside `students.json` (dir created if new); device `/photos/**` and

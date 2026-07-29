@@ -69,7 +69,10 @@ static void build_stats(lv_obj_t* parent) {
     ui_make_label(card, line, THEME_MUTED, &lv_font_montserrat_14);
 
     // Turma breakdown (ASCII; the Montserrat glyph set is limited).
-    struct { const char* name; int count; } groups[ROSTER_MAX_CLASS_STUDENTS];
+    struct {
+        const char* name;
+        int count;
+    } groups[ROSTER_MAX_CLASS_STUDENTS];
     int ng = 0;
     bool any = false;
     for (int j = 0; j < total; j++) {
@@ -177,7 +180,7 @@ static void build_settings(lv_obj_t* parent) {
     lv_obj_set_flex_align(crow, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
     lv_obj_remove_flag(crow, LV_OBJ_FLAG_SCROLLABLE);
-    ui_make_label(crow, "Photo check-in (kiosk)", THEME_TEXT, &lv_font_montserrat_14);
+    ui_make_label(crow, "Photo check-in (kiosk) Warn: beta-tested only", THEME_TEXT, &lv_font_montserrat_14);
     s_capture_sw = lv_switch_create(crow);
     if (s_cls->capture_photos) lv_obj_add_state(s_capture_sw, LV_STATE_CHECKED);
 

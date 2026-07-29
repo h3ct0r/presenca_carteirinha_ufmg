@@ -37,36 +37,36 @@ admin / class settings / builder / docs). Or one squashed commit — user's call
 
 ## What's LEFT — prioritized
 
-### 1. Hardware validation (the big one — nothing below the API layer has run)
-Everything camera/LVGL is **build-verified only**. On device, verify:
-- **Face detection actually detects faces.** `PROJECT_HANDOFF.md` "START HERE"
-  notes the camera inits + model loads but **0 faces detected** on hardware. If
-  that's still true, **face-verify will always time out** — this is the #1
-  blocker for the whole feature. Debug `face_detection_service` /
-  `human_face_detect` (model format, pixel format tried, thresholds) first.
-- **Camera lifecycle under kiosk.** The camera stays warm through a kiosk session
-  (`face_detection_start` on entry, `face_detection_stop` pause on exit). Watch
-  for power/heat/PSRAM issues or LVGL contention (camera task core 0, LVGL core
-  1). Fallback if unstable: start-per-tap (FACE_CHECKIN.md option B).
-- **The verify overlay** (`face_verify`): preview renders, green box tracks the
-  face, countdown ticks, a detected face saves a JPEG under
-  `/students/checkins/<id>/` and registers the tap; timeout rejects.
-- **Class-only UI:** admin "Camera" card (preview only), class ⚙ **Photo
-  check-in** switch + **Face-verify time** field save/persist.
-- Also re-check the earlier build-verified UI on device: class hub/session nav,
-  timed attendance, kiosk numeric exit keypad, class-settings scroll/keyboard.
+### 1. Hardware validation — now part of the loop, not a backlog item
+**The maintainer manually tests every feature on the real device before starting
+the next one**, and as of **2026-07-29 all shipped features work as expected on
+hardware.** This is no longer an open batch of unvalidated work; treat it as the
+standing workflow: build → `pio test -e native` → flash → exercise by hand on
+device → move on.
 
-### 2. Student avatar ingestion (BUILT 2026-07-28 — validate on hardware)
+What an **agent** should still do (it can only run `pio run` / `pio test`):
+report its own work as **build- and native-test-verified**, never claim a device
+check it didn't perform, and keep calling out the device-only surfaces so the
+maintainer knows what to exercise when flashing:
+- **Camera/face path** — preview renders, box tracks, countdown ticks, a detected
+  face saves a JPEG under `/students/checkins/<id>/`, timeout rejects; camera
+  lifecycle across a kiosk session (warm on entry, paused on exit) under
+  power/heat/PSRAM and LVGL contention (camera task core 0, LVGL core 1).
+- **LVGL rendering** — new screens/overlays, scroll + keyboard behaviour, and
+  anything touching the 128 KB LVGL heap.
+- **SD/WiFi timing** — import/export, the soft-AP file manager, long writes.
+
+### 2. Student avatar ingestion (BUILT 2026-07-28 — verified on hardware)
 The config-builder now ingests the Moodle photo tar (parse → match by name →
 re-key to matrícula → re-encode baseline 100×100 → bundle as
 `students/photos/<id>.jpg`), and the device importer whitelists + applies that
 tree (cap raised 1 MB → 16 MB). New builder modules `untar.js` / `photomatch.js`
 (node-tested); firmware `ustar.cpp` / `import_service.cpp` (native-tested,
 119/119). See `docs/software/STUDENT_PHOTOS.md` (status + changelog). **Verified
-in a browser + against system `tar` + native tests; NOT run on device** — flash
-a real `config.tar` with photos and confirm avatars decode on the check-in /
-kiosk / face-verify overlays (JPEG-on-SD via TJPGD is the untested path). Still
-deferred: streaming unpack, device-side unknown-id skip+warn, orphan cleanup.
+in a browser, against system `tar`, by the native tests, and on the device** —
+a real `config.tar` with photos imports and the avatars decode on the check-in /
+kiosk / face-verify overlays. Still deferred: streaming unpack, device-side
+unknown-id skip+warn, orphan cleanup.
 
 ### 3. Check-in photo review aid (Stage 5, deferred)
 No way yet to browse `/students/checkins/<id>/` to audit "same person every tap"
@@ -84,7 +84,20 @@ for now, load passwords as usual, revisit password exposure later. Note it found
 two *pre-existing* holes (unauthenticated `/api/upload` to the SD; plaintext
 teacher passwords readable via `/api/read`) — both deferred by decision.
 
-### 5. Smaller / optional
+### 5. Accented characters don't render (REAL BUG — fonts are ASCII-only)
+Every font in the build covers `0x20-0x7F` only (both the stock
+`lv_font_montserrat_*` and the custom `font_montserrat_custom_*`). The Latin-1
+Supplement (`0xC0-0xFF`) is missing, so **accented Portuguese student names
+imported from the Diário CSV render as blanks/boxes on device** — the importer
+decodes them correctly, the font just can't draw them. This is read straight off
+the fonts' glyph tables (`range_start = 32, range_length = 95`), not inferred:
+it likely hasn't been noticed on device yet because the sample rosters use
+ASCII-only names ("Maria Santos", "John Miller"). Try a student with an accent to
+reproduce. Fix + a ready-to-run `lv_font_conv` command are in
+`docs/software/CUSTOM_FONT_GENERATION.md` (see the "Known gap" callout).
+Deferred by decision 2026-07-29; the About screen ships ASCII copy until fixed.
+
+### 6. Smaller / optional
 - **Config-builder per-class attendance fields:** the builder does NOT emit
   `capture_photos` / `face_verify_seconds` / `timed_attendance` /
   `min_attendance_min`, so importing a `config.tar` **resets** them to defaults
@@ -96,19 +109,45 @@ teacher passwords readable via `/api/read`) — both deferred by decision.
 - **FACE_CHECKIN.md "Staged plan" section** still describes the original
   global-config approach (historical); the Decisions + Changelog are current.
 
+### 7. About screen (BUILT 2026-07-29)
+`src/ui/screens/scr_about.cpp` (`SCREEN_ABOUT`): description, authors (Prof.
+Hector Azpurua, Aline Molinar — DCC/UFMG), VeRLab + GEAR logos, firmware version,
+a scannable QR to the repo (`LV_USE_QRCODE` now `1`), and third-party notices.
+Reached from the **Admin → About** card; the idle screen shows only a small
+non-interactive `APP_VERSION` string bottom-right (deliberately not a tap target
+on the student-facing screen). Logos are RGB565 C arrays in flash
+(`src/ui/assets/logo_gear.c`, `logo_verlab.c`, ~26 KB) so they render without an
+SD card. Version is `include/app/version.h` (`v0.2-beta`) + a git short SHA
+injected by `tools/build/version_flags.py`; it is also the first serial boot line.
+**Deliberately NOT in the CSV export** — `MATRICULA,FREQ` is a fixed contract.
+Flash 62.5% → 63.0%.
+
+### 8. Multi-professor classes (BUILT 2026-07-29)
+A class can be **co-taught**. `class.json` `teacher_email` (scalar) →
+**`teacher_emails`** (array, 1..8 = `ROSTER_MAX_CLASS_TEACHERS`, asserted equal to
+`CONFIG_MAX_TEACHERS` by the builder's schema-sync test). `class_rec_t` now holds
+`teacher_emails[][64]` + `teacher_count`, and `roster_class_matches_teacher()`
+matches **any** of them, so the class lists for every professor who teaches it.
+**Backward compatible:** a legacy scalar `teacher_email` is still read when the
+array is absent, so existing SD cards keep working (native-tested). The
+config-builder replaced the teacher dropdown with a **professor checkbox list**
+per class, emits the array (de-duplicated), and errors when a class has no
+professor selected. Firmware +5.4 KB RAM for the wider struct (12 × 8 × 64 B).
+Build-verified + native 124/124 + builder 96/96, and **verified on device.**
+
 ## Verify commands
 ```sh
 pio run -e esp32p4                 # device build
-pio test -e native                 # host unit tests (119)
-cd tools/config-builder && node --test   # web-ui tests (89)
+pio test -e native                 # host unit tests (124)
+cd tools/config-builder && node --test   # web-ui tests (96)
 pio device monitor -e esp32p4      # serial (camera/panic logs)
 ```
 
 ## Key pointers
 - Feature docs: `FACE_CHECKIN.md`, `CLASS_SCREEN_REVAMP.md`, `CONFIG_IMPORT.md`,
   `STUDENT_PHOTOS.md`, `ONBOARD_CONFIG_BUILDER.md` (design only), and this
-  repo's `CLAUDE.md` (honesty rule: report as
-  build/native-verified, **not run on hardware**, unless actually flashed).
+  repo's `CLAUDE.md` ("Hardware testing": the maintainer manually validates every
+  feature on device; an agent still reports only build/native verification).
 - Camera stack: `services/face_detection_service`, `camera/csi_pipeline`,
   `camera/ov02c10_camera`, `storage/photo_store`.
 - Check-in flow: `ui/screens/scr_kiosk.cpp` (`check_in` → `face_verify_open`),

@@ -18,15 +18,16 @@
   contract change is in [`CONFIG_IMPORT.md`](CONFIG_IMPORT.md) (§1/§2/§4/§5).
   *Builder is `node --test`-verified (untar round-trips, matching, and a
   system-`tar` round-trip); firmware is build- + native-test-verified
-  (`test_ustar`, `test_import`), **not run on hardware.***
+  (`test_ustar`, `test_import`) **and verified on device** — a real `config.tar`
+  with photos was imported and the avatars decode as expected.*
 - **Device display (decision #4)** — implemented earlier (2026-07-27): the
   check-in feedback overlay shows the avatar from `/students/photos/<id>.jpg` if
   it exists, else a placeholder. Rendering uses the LVGL TJPGD decoder
   (`LV_USE_TJPGD`) over the read-only SD `S` driver
   ([`src/ui/lvgl_fs_sd.cpp`](../../src/ui/lvgl_fs_sd.cpp)); the path helper is
   [`src/ui/components/student_photo.cpp`](../../src/ui/components/student_photo.cpp),
-  reused by the kiosk success screen and the face-verify overlay. **Build-
-  verified, not run on hardware.**
+  reused by the kiosk success screen and the face-verify overlay. **Verified on
+  device** (JPEG-on-SD decode via TJPGD renders correctly).
 
 **Deferred (see §3, §11):** a true *streaming* unpack (the importer still buffers
 the whole tar in PSRAM — fine at the 16 MB cap); device-side skip+warn for

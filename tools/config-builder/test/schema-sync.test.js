@@ -34,6 +34,14 @@ function charBuf(block, field) {
   assert.ok(m, `char ${field}[] not found`);
   return Number(m[1]);
 }
+
+// A 2-D buffer like `char teacher_emails[ROSTER_MAX_CLASS_TEACHERS][64]` — the
+// per-entry length is the LAST dimension (the first may be a named constant).
+function charBuf2d(block, field) {
+  const m = block.match(new RegExp('char\\s+' + field + '\\s*\\[[^\\]]*\\]\\s*\\[\\s*(\\d+)\\s*\\]'));
+  assert.ok(m, `char ${field}[][] not found`);
+  return Number(m[1]);
+}
 function constInt(src, name) {
   const m = src.match(new RegExp(name + '\\s*=\\s*(\\d+)'));
   assert.ok(m, `${name} not found`);
@@ -56,7 +64,7 @@ const LENGTHS = {
   CLASS_CODE: charBuf(klass, 'code'),
   CLASS_NAME: charBuf(klass, 'name'),
   CLASS_SCHEDULE: charBuf(klass, 'schedule'),
-  CLASS_TEACHER_EMAIL: charBuf(klass, 'teacher_email'),
+  CLASS_TEACHER_EMAIL: charBuf2d(klass, 'teacher_emails'),
 };
 
 // LIMIT key  ->  firmware cap constant (equal).
@@ -65,7 +73,16 @@ const COUNTS = {
   MAX_STUDENTS: constInt(rosterH, 'ROSTER_MAX_STUDENTS'),
   MAX_CLASSES: constInt(rosterH, 'ROSTER_MAX_CLASSES'),
   MAX_CLASS_ROSTER: constInt(rosterH, 'ROSTER_MAX_CLASS_STUDENTS'),
+  MAX_CLASS_TEACHERS: constInt(rosterH, 'ROSTER_MAX_CLASS_TEACHERS'),
 };
+
+// A class can't reference more professors than the device can hold, so the two
+// caps must stay equal (roster.h says so; assert it rather than trusting a comment).
+test('ROSTER_MAX_CLASS_TEACHERS equals CONFIG_MAX_TEACHERS', () => {
+  assert.equal(constInt(rosterH, 'ROSTER_MAX_CLASS_TEACHERS'),
+    constInt(configH, 'CONFIG_MAX_TEACHERS'),
+    'a class may reference every teacher, so the caps must match');
+});
 
 for (const [key, buf] of Object.entries(LENGTHS)) {
   test(`LIMITS.${key} matches firmware buffer (${buf} - 1)`, () => {

@@ -33,7 +33,7 @@ static const char* STUDENTS_JSON =
 
 static const char* CLASS_JSON =
     "{ \"version\": 1, \"code\": \"CS101-M1\", \"name\": \"Data Structures\",\n"
-    "  \"schedule\": \"Tue/Thu 10:00-12:00\", \"teacher_email\": \"h@x.edu\",\n"
+    "  \"schedule\": \"Tue/Thu 10:00-12:00\", \"teacher_emails\": [\"h@x.edu\"],\n"
     "  \"color\": \"272766\",\n"
     "  \"roster\": [ { \"id\": \"202500001\" }, { \"id\": \"202500002\" },\n"
     "               { \"id\": \"202500003\" } ] }";

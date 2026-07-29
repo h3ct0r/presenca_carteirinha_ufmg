@@ -14,8 +14,10 @@
 //   /students/photos/<id>.jpg avatars, named by university ID
 //   /classes/<code>/class.json  metadata + roster (university IDs):
 //       { "version": 1, "code": "CS101-M1", "name": "...",
-//         "schedule": "...", "teacher_email": "...", "color": "272766",
+//         "schedule": "...", "teacher_emails": ["a@x.edu", "b@x.edu"],
+//         "color": "272766",
 //         "roster": [ { "id": "2023-0142" }, ... ] }
+//       (a legacy scalar "teacher_email" is still read when the array is absent)
 //   /classes/<code>/attendance/YYYY-MM-DD.jsonl  per-session logs (later)
 //
 // Validation is strict and the failure reason is kept as a human-readable
@@ -117,19 +119,43 @@ roster_result_t roster_class_update_settings(const char* class_code, const char*
                                              int min_attendance_min);
 
 // DEBUG: unbinds every student's RFID card — clears rfid_uid in RAM and rewrites
-// students.json with all bindings null. Returns false on write failure. Class
-// rosters are untouched (students stay enrolled, just without a card).
-bool roster_clear_all_uids(void);
+// students.json with all bindings null. Class rosters are untouched (students
+// stay enrolled, just without a card). On failure the result carries a specific
+// reason (roster not loaded / read failed / write failed) for the toast, and the
+// underlying cause is logged.
+roster_result_t roster_clear_all_uids(void);
+
+// How many class folders were skipped by the last live load because they could
+// not be parsed (missing/invalid class.json, roster referencing students that no
+// longer exist — typically a leftover folder from a previous config, since an
+// import is an overlay and never deletes classes). Such a class is skipped
+// instead of failing the whole load, so the rest of the classes stay usable;
+// these two let the UI say so rather than silently showing fewer classes.
+// Always 0 after a successful load with no problems.
+int roster_skipped_class_count(void);
+
+// The reason the FIRST skipped class was skipped (empty when none were).
+void roster_get_skip_reason(char* out, size_t cap);
+
+// Case-insensitive ASCII compare for the email keys that link classes to
+// config.json teachers (emails are stored exactly as authored).
+static inline bool roster_email_equal(const char* a, const char* b) {
+    for (int i = 0;; i++) {
+        char x = a[i], y = b[i];
+        if (x >= 'A' && x <= 'Z') x += 32;
+        if (y >= 'A' && y <= 'Z') y += 32;
+        if (x != y) return false;
+        if (x == '\0') return true;
+    }
+}
 
 // True if the class should be listed for this teacher. An empty/NULL email
-// (password "Staff" login) sees every class.
+// (password "Staff" login) sees every class. A class may be co-taught, so this
+// matches if ANY of its professors is this one.
 static inline bool roster_class_matches_teacher(const class_rec_t* c, const char* email) {
     if (!email || email[0] == '\0') return true;
-    for (int i = 0; c->teacher_email[i] || email[i]; i++) {
-        char a = c->teacher_email[i], b = email[i];
-        if (a >= 'A' && a <= 'Z') a += 32;
-        if (b >= 'A' && b <= 'Z') b += 32;
-        if (a != b) return false;
+    for (int i = 0; i < c->teacher_count; i++) {
+        if (roster_email_equal(c->teacher_emails[i], email)) return true;
     }
-    return true;
+    return false;
 }

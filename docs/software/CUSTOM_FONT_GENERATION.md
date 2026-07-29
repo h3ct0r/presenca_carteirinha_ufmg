@@ -23,6 +23,35 @@ To avoid silent conversion errors, you must use clean, desktop-grade font files.
 2. In the **Range** input box, type exactly: `0x20-0x7F`
    *(This ensures all standard letters, numbers, and punctuation are generated).*
 
+> ### ⚠️ Known gap: no accented characters (open issue)
+>
+> `0x20-0x7F` is **ASCII only**. It does not include the Latin-1 Supplement
+> (`0xC0-0xFF`), where the accented Portuguese characters live — `á é í ó ú ã õ
+> ç Á É Ç …`. The stock LVGL `lv_font_montserrat_*` fonts have the same limit
+> (`range_start = 32, range_length = 95`).
+>
+> **Consequence:** any accented text renders as blanks/boxes on the device. This
+> affects **student names imported from the Diário CSV** (the importer decodes
+> accents correctly, but the font cannot draw them) and is why the About screen
+> ships ASCII-only copy ("Hector Azpurua", "Avancados em Robotica").
+>
+> **Fix:** regenerate all three sizes with the range `0x20-0x7F, 0xC0-0xFF`,
+> keeping the same FontAwesome merge (see §4 — the glyphs currently in use are
+> `U+E595`, `U+F023`, `U+F09C`, `U+F2C2`). Then switch the UI from
+> `lv_font_montserrat_*` to `font_montserrat_custom_*` and set
+> `LV_FONT_MONTSERRAT_14/20/32` to `0` in `include/lv_conf.h` — dropping the
+> now-unused built-ins reclaims more flash than the extra glyphs cost.
+>
+> A CLI alternative to the web converter:
+> ```sh
+> npx lv_font_conv --font Montserrat-Regular.ttf \
+>   --range 0x20-0x7F --range 0xC0-0xFF \
+>   --font "Font Awesome 7 Free-Solid-900.ttf" \
+>   --range 0xE595,0xF023,0xF09C,0xF2C2 \
+>   --size 14 --bpp 2 --format lvgl --no-compress \
+>   -o src/ui/assets/font_montserrat_custom_14.c
+> ```
+
 ## 4. Setup Font 2 (Custom Symbols)
 
 1. Click the **Add another font** button.

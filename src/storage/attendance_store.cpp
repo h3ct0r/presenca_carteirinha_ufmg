@@ -325,7 +325,7 @@ int attendance_present_for(const char* class_dir, const char* date) {
     return count;
 }
 
-int attendance_clear(const char* class_dir) {
+int attendance_clear(const char* class_dir, int* out_failed) {
     attendance_close();  // never leave a session open on files we're deleting
     // List the dates first (static buffer, not stack), then delete — removing
     // files while iterating the directory would be unsafe.
@@ -335,7 +335,13 @@ int attendance_clear(const char* class_dir) {
     for (int i = 0; i < n; i++) {
         char path[80];
         att_path(class_dir, dates[i], path, sizeof(path));
-        if (SD_MMC.remove(path)) removed++;
+        if (SD_MMC.remove(path)) {
+            removed++;
+        } else {
+            // Silently dropping this is how a partial wipe used to look clean.
+            ESP_LOGE(TAG, "clear %s: could not delete %s", class_dir, path);
+        }
     }
+    if (out_failed) *out_failed = n - removed;
     return removed;
 }

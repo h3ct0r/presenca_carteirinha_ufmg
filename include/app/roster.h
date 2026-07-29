@@ -10,6 +10,10 @@
 constexpr int ROSTER_MAX_STUDENTS = 600;   // global registry cap (see the RAM note below)
 constexpr int ROSTER_MAX_CLASSES = 12;
 constexpr int ROSTER_MAX_CLASS_STUDENTS = 100;
+// A class can be co-taught. Mirrors CONFIG_MAX_TEACHERS (config_service.h) —
+// a class can't reference more professors than the device can hold. The
+// config-builder's schema-sync test asserts the two stay equal.
+constexpr int ROSTER_MAX_CLASS_TEACHERS = 8;
 
 // Face-verify countdown bounds (seconds) for a class's photo check-in.
 constexpr int FACE_VERIFY_SECONDS_MIN = 3;
@@ -30,7 +34,12 @@ typedef struct {
     char dir[24];            // /classes/<dir>/ folder name (usually == code)
     char name[48];
     char schedule[40];
-    char teacher_email[64];  // links to config.json's teachers
+    // Professors who teach this class — links to config.json's teachers. A class
+    // may be co-taught, so it shows for ANY of these (roster_class_matches_teacher).
+    // From class.json's "teacher_emails" array; a legacy scalar "teacher_email"
+    // is still accepted and lands here as a single entry.
+    char teacher_emails[ROSTER_MAX_CLASS_TEACHERS][64];
+    int8_t teacher_count;
     uint32_t color;
     // Photo check-in for this class (a per-class option; there is no device-wide
     // flag). When on, kiosk check-ins face-verify within face_verify_seconds and

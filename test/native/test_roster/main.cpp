@@ -33,7 +33,7 @@ static const char* STUDENTS_JSON =
 // only "id" and ignores turma (it's preserved on rewrite via a DOM edit).
 static const char* CLASS_CS101 =
     "{ \"version\": 1, \"code\": \"CS101-M1\", \"name\": \"Data Structures\",\n"
-    "  \"schedule\": \"Tue/Thu 10:00-12:00\", \"teacher_email\": \"h@x.edu\",\n"
+    "  \"schedule\": \"Tue/Thu 10:00-12:00\", \"teacher_emails\": [\"h@x.edu\"],\n"
     "  \"color\": \"272766\",\n"
     "  \"roster\": [ { \"id\": \"2023-0142\", \"turma\": \"TE1\" }, { \"id\": \"2023-0187\", \"turma\": \"TE2\" } ] }";
 
@@ -103,16 +103,41 @@ static void test_duplicate_uid_across_formats(void) {
     expect_error_contains("share RFID uid");
 }
 
-static void test_class_with_unknown_student(void) {
+// A class the loader can't resolve is SKIPPED, not fatal: one broken folder
+// (typically left over from a previous config, since import is an overlay) must
+// not blank the whole class list. The skip is counted + explained for the UI.
+static void test_class_with_unknown_student_is_skipped_not_fatal(void) {
     mocksd_reset();
     mocksd_add_file("/students/students.json", STUDENTS_JSON);
     mocksd_add_file("/classes/CS101-M1/class.json",
                     "{ \"code\": \"CS101-M1\", \"name\": \"DS\",\n"
                     "  \"roster\": [ { \"id\": \"9999-9999\" } ] }");
     roster_service_start();
-    TEST_ASSERT_EQUAL(ROSTER_BAD_CLASS, roster_get_status());
-    expect_error_contains("CS101-M1");
-    expect_error_contains("unknown student 9999-9999");
+    TEST_ASSERT_EQUAL(ROSTER_OK, roster_get_status());
+    TEST_ASSERT_EQUAL_INT(0, roster_class_count());
+    TEST_ASSERT_EQUAL_INT(1, roster_skipped_class_count());
+
+    char why[160];
+    roster_get_skip_reason(why, sizeof(why));
+    TEST_ASSERT_NOT_NULL(strstr(why, "CS101-M1"));
+    TEST_ASSERT_NOT_NULL(strstr(why, "unknown student 9999-9999"));
+}
+
+// The good classes still load alongside a broken one — the whole point.
+static void test_good_classes_survive_a_broken_sibling(void) {
+    mocksd_reset();
+    mocksd_add_file("/students/students.json", STUDENTS_JSON);
+    mocksd_add_file("/classes/BROKEN/class.json",
+                    "{ \"code\": \"BROKEN\", \"name\": \"Stale\",\n"
+                    "  \"roster\": [ { \"id\": \"9999-9999\" } ] }");
+    mocksd_add_file("/classes/GOOD/class.json",
+                    "{ \"code\": \"GOOD\", \"name\": \"Fine\",\n"
+                    "  \"roster\": [ { \"id\": \"2023-0142\" } ] }");
+    roster_service_start();
+    TEST_ASSERT_EQUAL(ROSTER_OK, roster_get_status());
+    TEST_ASSERT_EQUAL_INT(1, roster_class_count());
+    TEST_ASSERT_EQUAL_STRING("GOOD", roster_class_at(0)->code);
+    TEST_ASSERT_EQUAL_INT(1, roster_skipped_class_count());
 }
 
 // A student may hold only one turma per class, so the loader must reject a
@@ -125,9 +150,12 @@ static void test_class_student_twice_with_different_turmas(void) {
                     "  \"roster\": [ { \"id\": \"2023-0142\", \"turma\": \"TE1\" },\n"
                     "                { \"id\": \"2023-0142\", \"turma\": \"TE2\" } ] }");
     roster_service_start();
-    TEST_ASSERT_EQUAL(ROSTER_BAD_CLASS, roster_get_status());
-    expect_error_contains("CS101-M1");
-    expect_error_contains("listed twice");
+    TEST_ASSERT_EQUAL(ROSTER_OK, roster_get_status());  // skipped, not fatal
+    TEST_ASSERT_EQUAL_INT(1, roster_skipped_class_count());
+    char why[160];
+    roster_get_skip_reason(why, sizeof(why));
+    TEST_ASSERT_NOT_NULL(strstr(why, "CS101-M1"));
+    TEST_ASSERT_NOT_NULL(strstr(why, "listed twice"));
 }
 
 static void test_class_dir_without_class_json(void) {
@@ -135,9 +163,13 @@ static void test_class_dir_without_class_json(void) {
     mocksd_add_file("/students/students.json", STUDENTS_JSON);
     mocksd_add_dir("/classes/CS205-T2");
     roster_service_start();
-    TEST_ASSERT_EQUAL(ROSTER_BAD_CLASS, roster_get_status());
-    expect_error_contains("CS205-T2");
-    expect_error_contains("class.json is missing");
+    // An orphan folder (e.g. attendance left behind) is skipped, not fatal.
+    TEST_ASSERT_EQUAL(ROSTER_OK, roster_get_status());
+    TEST_ASSERT_EQUAL_INT(1, roster_skipped_class_count());
+    char why[160];
+    roster_get_skip_reason(why, sizeof(why));
+    TEST_ASSERT_NOT_NULL(strstr(why, "CS205-T2"));
+    TEST_ASSERT_NOT_NULL(strstr(why, "class.json is missing"));
 }
 
 static void test_no_classes_dir_is_ok(void) {
@@ -156,7 +188,7 @@ static void test_valid_full_layout(void) {
     // Bare-string roster entries are accepted too.
     mocksd_add_file("/classes/MA110-F1/class.json",
                     "{ \"code\": \"MA110-F1\", \"name\": \"Linear Algebra\",\n"
-                    "  \"teacher_email\": \"other@x.edu\",\n"
+                    "  \"teacher_emails\": [\"other@x.edu\"],\n"
                     "  \"roster\": [ \"2024-0021\", \"2023-0142\" ] }");
     roster_service_start();
     TEST_ASSERT_EQUAL(ROSTER_OK, roster_get_status());
@@ -175,7 +207,8 @@ static void test_accessors_expose_loaded_data(void) {
     TEST_ASSERT_NOT_NULL(cs101);
     TEST_ASSERT_EQUAL_STRING("CS101-M1", cs101->code);
     TEST_ASSERT_EQUAL_STRING("Data Structures", cs101->name);
-    TEST_ASSERT_EQUAL_STRING("h@x.edu", cs101->teacher_email);
+    TEST_ASSERT_EQUAL_INT(1, cs101->teacher_count);
+    TEST_ASSERT_EQUAL_STRING("h@x.edu", cs101->teacher_emails[0]);
     TEST_ASSERT_EQUAL_HEX32(0x272766, cs101->color);
     // A roster of {"id","turma"} objects loads fine, turma tags into RAM.
     TEST_ASSERT_EQUAL_INT(2, cs101->roster_count);
@@ -354,7 +387,10 @@ static void test_clear_all_uids(void) {
     TEST_ASSERT_TRUE(maria >= 0);
     TEST_ASSERT_EQUAL_STRING("04:A3:1B:2C", roster_student_at(maria)->rfid_uid);
 
-    TEST_ASSERT_TRUE(roster_clear_all_uids());
+    roster_result_t cleared = roster_clear_all_uids();
+    TEST_ASSERT_TRUE_MESSAGE(cleared.ok, cleared.message);
+    // The message is shown verbatim in the toast, so it must say something.
+    TEST_ASSERT_TRUE(cleared.message[0] != '\0');
 
     // In-RAM: every student is now unbound, but still enrolled.
     for (int i = 0; i < roster_student_count(); i++) {
@@ -366,6 +402,20 @@ static void test_clear_all_uids(void) {
     TEST_ASSERT_NULL(strstr(buf, "04:A3:1B:2C"));
     roster_service_start();
     TEST_ASSERT_EQUAL_STRING("", roster_student_at(find_idx("2023-0142"))->rfid_uid);
+}
+
+// A failed wipe must explain WHY — the old bare-bool version could only ever
+// surface "Card clear failed", leaving nothing to debug from.
+static void test_clear_all_uids_reports_why_it_failed(void) {
+    mocksd_reset();  // no students.json at all -> roster never loads
+    roster_service_start();
+    TEST_ASSERT_NOT_EQUAL(ROSTER_OK, roster_get_status());
+
+    roster_result_t r = roster_clear_all_uids();
+    TEST_ASSERT_FALSE(r.ok);
+    TEST_ASSERT_TRUE(r.message[0] != '\0');
+    // Names the actual problem rather than a generic failure.
+    TEST_ASSERT_NOT_NULL(strstr(r.message, "not loaded"));
 }
 
 // --- roster_validate_tree (import: validate a staged tree, no live mutation) -
@@ -405,6 +455,100 @@ static void test_validate_tree_rejects_bad_staging_leaving_live_intact(void) {
 }
 
 // --- per-class settings (capture / face-verify / metadata editing) ----------
+
+// --- multi-professor classes (CONFIG_IMPORT.md §3.3 "teacher_emails") -------
+
+static void test_class_with_several_teachers(void) {
+    mocksd_reset();
+    mocksd_add_file("/students/students.json", STUDENTS_JSON);
+    mocksd_add_file("/classes/CS101-M1/class.json",
+                    "{ \"version\": 1, \"code\": \"CS101-M1\", \"name\": \"DS\", "
+                    "\"teacher_emails\": [ \"a@x.edu\", \"b@x.edu\", \"c@x.edu\" ], "
+                    "\"roster\": [ { \"id\": \"2023-0142\" } ] }");
+    roster_service_start();
+    TEST_ASSERT_EQUAL(ROSTER_OK, roster_get_status());
+
+    const class_rec_t* c = roster_class_at(0);
+    TEST_ASSERT_EQUAL_INT(3, c->teacher_count);
+    TEST_ASSERT_EQUAL_STRING("a@x.edu", c->teacher_emails[0]);
+    TEST_ASSERT_EQUAL_STRING("c@x.edu", c->teacher_emails[2]);
+
+    // The class lists for ANY of its professors, case-insensitively...
+    TEST_ASSERT_TRUE(roster_class_matches_teacher(c, "a@x.edu"));
+    TEST_ASSERT_TRUE(roster_class_matches_teacher(c, "B@X.edu"));
+    TEST_ASSERT_TRUE(roster_class_matches_teacher(c, "c@x.edu"));
+    // ...and not for anyone else. An empty email (staff login) sees everything.
+    TEST_ASSERT_FALSE(roster_class_matches_teacher(c, "ghost@x.edu"));
+    TEST_ASSERT_FALSE(roster_class_matches_teacher(c, "a@x.ed"));   // prefix, not a match
+    TEST_ASSERT_FALSE(roster_class_matches_teacher(c, "a@x.edu.br"));  // longer, not a match
+    TEST_ASSERT_TRUE(roster_class_matches_teacher(c, ""));
+}
+
+// Cards written before multi-professor support carry a scalar "teacher_email".
+static void test_legacy_scalar_teacher_email_still_loads(void) {
+    mocksd_reset();
+    mocksd_add_file("/students/students.json", STUDENTS_JSON);
+    mocksd_add_file("/classes/CS101-M1/class.json",
+                    "{ \"version\": 1, \"code\": \"CS101-M1\", \"name\": \"DS\", "
+                    "\"teacher_email\": \"legacy@x.edu\", "
+                    "\"roster\": [ { \"id\": \"2023-0142\" } ] }");
+    roster_service_start();
+    TEST_ASSERT_EQUAL(ROSTER_OK, roster_get_status());
+
+    const class_rec_t* c = roster_class_at(0);
+    TEST_ASSERT_EQUAL_INT(1, c->teacher_count);
+    TEST_ASSERT_EQUAL_STRING("legacy@x.edu", c->teacher_emails[0]);
+    TEST_ASSERT_TRUE(roster_class_matches_teacher(c, "legacy@x.edu"));
+}
+
+// A class with no professor loads (the device only warns) but lists for nobody.
+static void test_class_without_teachers_loads_but_matches_nobody(void) {
+    mocksd_reset();
+    mocksd_add_file("/students/students.json", STUDENTS_JSON);
+    mocksd_add_file("/classes/CS101-M1/class.json",
+                    "{ \"version\": 1, \"code\": \"CS101-M1\", \"name\": \"DS\", "
+                    "\"teacher_emails\": [], \"roster\": [ { \"id\": \"2023-0142\" } ] }");
+    roster_service_start();
+    TEST_ASSERT_EQUAL(ROSTER_OK, roster_get_status());
+
+    const class_rec_t* c = roster_class_at(0);
+    TEST_ASSERT_EQUAL_INT(0, c->teacher_count);
+    TEST_ASSERT_FALSE(roster_class_matches_teacher(c, "anyone@x.edu"));
+    TEST_ASSERT_TRUE(roster_class_matches_teacher(c, ""));  // staff still sees it
+}
+
+// More professors than the cap: extras are dropped, the class still loads.
+static void test_teacher_list_is_capped(void) {
+    mocksd_reset();
+    mocksd_add_file("/students/students.json", STUDENTS_JSON);
+    char json[512];
+    int n = snprintf(json, sizeof(json),
+                     "{ \"version\": 1, \"code\": \"CS101-M1\", \"name\": \"DS\", "
+                     "\"teacher_emails\": [");
+    for (int i = 0; i < ROSTER_MAX_CLASS_TEACHERS + 3; i++) {
+        n += snprintf(json + n, sizeof(json) - n, "%s\"t%d@x.edu\"", i ? ", " : "", i);
+    }
+    snprintf(json + n, sizeof(json) - n, "], \"roster\": [ { \"id\": \"2023-0142\" } ] }");
+    mocksd_add_file("/classes/CS101-M1/class.json", json);
+    roster_service_start();
+    TEST_ASSERT_EQUAL(ROSTER_OK, roster_get_status());
+    TEST_ASSERT_EQUAL_INT(ROSTER_MAX_CLASS_TEACHERS, roster_class_at(0)->teacher_count);
+}
+
+// Blank entries are skipped rather than becoming empty professors.
+static void test_blank_teacher_entries_are_skipped(void) {
+    mocksd_reset();
+    mocksd_add_file("/students/students.json", STUDENTS_JSON);
+    mocksd_add_file("/classes/CS101-M1/class.json",
+                    "{ \"version\": 1, \"code\": \"CS101-M1\", \"name\": \"DS\", "
+                    "\"teacher_emails\": [ \"\", \"real@x.edu\", \"\" ], "
+                    "\"roster\": [ { \"id\": \"2023-0142\" } ] }");
+    roster_service_start();
+    TEST_ASSERT_EQUAL(ROSTER_OK, roster_get_status());
+    const class_rec_t* c = roster_class_at(0);
+    TEST_ASSERT_EQUAL_INT(1, c->teacher_count);
+    TEST_ASSERT_EQUAL_STRING("real@x.edu", c->teacher_emails[0]);
+}
 
 static void test_class_capture_and_settings(void) {
     mocksd_reset();
@@ -459,7 +603,8 @@ int main(int, char**) {
     RUN_TEST(test_student_missing_name);
     RUN_TEST(test_duplicate_student_id);
     RUN_TEST(test_duplicate_uid_across_formats);
-    RUN_TEST(test_class_with_unknown_student);
+    RUN_TEST(test_class_with_unknown_student_is_skipped_not_fatal);
+    RUN_TEST(test_good_classes_survive_a_broken_sibling);
     RUN_TEST(test_class_student_twice_with_different_turmas);
     RUN_TEST(test_class_dir_without_class_json);
     RUN_TEST(test_no_classes_dir_is_ok);
@@ -473,9 +618,15 @@ int main(int, char**) {
     RUN_TEST(test_enroll_new_rejects_existing_id);
     RUN_TEST(test_enroll_new_rejects_overlong_turma);
     RUN_TEST(test_clear_all_uids);
+    RUN_TEST(test_clear_all_uids_reports_why_it_failed);
     RUN_TEST(test_enroll_rejects_professor_card);  // last of the enroll chain
     RUN_TEST(test_validate_tree_accepts_good_staging);          // resets to a fresh valid live tree
     RUN_TEST(test_validate_tree_rejects_bad_staging_leaving_live_intact);  // chains from above
     RUN_TEST(test_class_capture_and_settings);  // self-contained
+    RUN_TEST(test_class_with_several_teachers);
+    RUN_TEST(test_legacy_scalar_teacher_email_still_loads);
+    RUN_TEST(test_class_without_teachers_loads_but_matches_nobody);
+    RUN_TEST(test_teacher_list_is_capped);
+    RUN_TEST(test_blank_teacher_entries_are_skipped);
     return UNITY_END();
 }

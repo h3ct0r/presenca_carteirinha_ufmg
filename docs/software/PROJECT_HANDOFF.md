@@ -13,31 +13,39 @@ in-progress work. Last major session: **2026-07-23**.
 > updating project state. When rules change, update CLAUDE.md; when work
 > progresses, update this file.
 
-> **Honesty rule (important):** almost nothing here has been run on physical
-> hardware — everything is **build- and native-test-verified only** unless
-> explicitly noted. Runtime bugs (LVGL crashes, camera, WiFi, stack overflows)
-> surface only on device. Always flag this and encourage on-device checks.
+> **Hardware testing (important):** the maintainer **manually tests every
+> feature on the real device** before starting the next one — each change is
+> flashed and exercised by hand as part of the development loop, and as of
+> 2026-07-29 all shipped features behave as expected. An agent, however, can only run
+> `pio run` / `pio test`: report your own work as **build- and
+> native-test-verified**, never claim a device check you didn't perform, and keep
+> flagging the device-only surfaces (LVGL, camera, WiFi, SD timing, stack). See
+> the same section in `CLAUDE.md`.
 
 ---
 
 ## ▶ START HERE — current state
 
-### In progress: face detection detects 0 faces (case 3)
-The camera + ESP-DL face detection is **integrated and building**, and on
-hardware the **camera pipeline initializes** and the **model loads from SD**
-(`Detector: LOADED`), but inference returns **0 faces**. Last change: restored
-the original **3-way pixel-format auto-discovery** (RGB565-LE / RGB565-BE /
-manual RGB565→RGB888) in `run_detection()` — I'd dropped the 888 path in the
-refactor, which is the likely regression. The camera status line now shows the
-active format + luma: `frame N  faces K [fmt]  infer Xms  luma L`.
+### Current state: all shipped features verified on device (2026-07-29)
+Each feature is manually exercised on hardware before the next one begins, and
+everything shipped so far behaves as expected — including the camera + ESP-DL
+face detection path, which was the long-running blocker below.
 
-**Next diagnostic (needs the user on-device):** open camera, stand in front,
-read the status line:
-- `faces ≥1 [888]` (or LE/BE) → fixed, that format was missing.
-- `faces 0 [none]` → not a format issue. Then check: does the preview image
-  look correct on screen? What's `luma` (healthy ≈ 60–160; ~0 or ~255 = broken
-  exposure/pipeline)? Those point at CSI/ISP/AE rather than detection.
-- If image looks fine but still `[none]` → look at model input size/normalization.
+**Resolved: face detection detects 0 faces (was "case 3").** The camera pipeline
+initialized and the model loaded from SD (`Detector: LOADED`), but inference
+returned **0 faces**. The fix was restoring the original **3-way pixel-format
+auto-discovery** (RGB565-LE / RGB565-BE / manual RGB565→RGB888) in
+`run_detection()` — the 888 path had been dropped in a refactor. The camera
+status line shows the active format + luma: `frame N  faces K [fmt]  infer Xms
+luma L`.
+
+Kept for future debugging, if detection ever regresses — open camera, stand in
+front, read that status line:
+- `faces ≥1 [888]` (or LE/BE) → the working case; that format is being used.
+- `faces 0 [none]` → not a format issue. Check whether the preview image looks
+  correct, and what `luma` reads (healthy ≈ 60–160; ~0 or ~255 = broken
+  exposure/pipeline) — those point at CSI/ISP/AE rather than detection.
+- Image fine but still `[none]` → look at model input size/normalization.
 
 See `docs/FACE_DETECTION.md`. Models must be at `/models/*.espdl` on the SD card
 (staged in `docs/software/sd_card_example/models/`); a missing model no longer crashes
@@ -333,7 +341,7 @@ Export / WiFi File Editor / Admin. Active tab highlighted; nav can be disabled
 /config.json      { "teachers":[{name,email,rfid_uid,password}] }
 /students/students.json   { version, students:[{id,name,rfid_uid|null}] }
 /students/photos/<id>.jpg (reference avatar)   /students/checkins/<id>/*.jpg (face-verify)
-/classes/<CODE>/class.json  { version,code,name,schedule,teacher_email,color,
+/classes/<CODE>/class.json  { version,code,name,schedule,teacher_emails[],color,
                               capture_photos?,face_verify_seconds?,timed_attendance?,min_attendance_min?,
                               roster:[{id,turma?}] }
 /classes/<CODE>/attendance/YYYY-MM-DD.jsonl   append-only {"id":..,"present":bool}
@@ -410,10 +418,11 @@ Docs: `docs/FACE_DETECTION.md`. Memory: `camera-face-detection.md`.
 - **photo_store** (`storage/photo_store.cpp`): background writer; **JPEG via P4
   hardware encoder** (quality 85, ~300–500 KB @1080p) → `/photos/IMG_nnnn.jpg`;
   BMP only if the encoder is unavailable.
-- **Status: see "START HERE" — camera inits on hardware, model loads, but 0
-  faces detected.** Per-student face-verify check-in is wired (kiosk-only,
-  per-class `capture_photos`; saves `/students/checkins/<id>/*.jpg`) but is
-  build-verified only — see docs/software/FACE_CHECKIN.md.
+- **Status: working on hardware** (see "START HERE" — the 0-faces issue was a
+  missing RGB888 pixel-format path and is resolved). Per-student face-verify
+  check-in is wired (kiosk-only, per-class `capture_photos`; saves
+  `/students/checkins/<id>/*.jpg`) and verified on device — see
+  docs/software/FACE_CHECKIN.md.
 
 ## Theme / fonts / toast
 
@@ -443,7 +452,10 @@ config state (order matters). UI/LVGL, camera, WiFi, esp-dl are NOT native-teste
 ## Working style established with the user
 
 - After each change: `pio run -e esp32p4` AND `pio test -e native`; report
-  honestly; note "build/test-verified, not run on hardware."
+  honestly as "build- and native-test-verified", and say plainly that you have
+  not run it on hardware. The user then flashes and manually exercises the
+  feature on the device before the next one starts — that step is theirs, never
+  claim it as done.
 - Add native tests for new hardware-free logic; add mocks for new HW APIs.
 - Be direct about hard external deps (esp-dl) and unverifiable hardware paths.
 - Project memory lives in the Claude Code memory dir (MEMORY.md +

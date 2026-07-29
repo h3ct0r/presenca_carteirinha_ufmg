@@ -25,7 +25,7 @@
       "code": "CS101-M1",
       "name": "Data Structures",
       "schedule": "Tue/Thu 10:00-12:00",
-      "teacher_email": "hector@dcc.ufmg.br",
+      "teacher_emails": ["hector@dcc.ufmg.br", "2@dcc.ufmg.br"],
       "color": "272766",
       "roster": [
         { "id": "2023-0142", "turma": "M1" },
@@ -37,7 +37,7 @@
       "code": "MA110-F1",
       "name": "Calculus I",
       "schedule": "Mon/Wed 08:00-10:00",
-      "teacher_email": "2@dcc.ufmg.br",
+      "teacher_emails": ["2@dcc.ufmg.br"],
       "color": "1E6F50",
       "roster": [
         { "id": "2022-0311", "turma": "F1" },

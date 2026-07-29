@@ -44,7 +44,7 @@ void ui_toast_show(const char* msg, bool ok) {
     lv_obj_add_event_cb(s_toast, click_cb, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* lbl = lv_label_create(s_toast);
-    char full[160];
+    char full[224];
     snprintf(full, sizeof(full), "%s  %s", ok ? LV_SYMBOL_OK : LV_SYMBOL_WARNING, msg);
     lv_label_set_text(lbl, full);
     lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);

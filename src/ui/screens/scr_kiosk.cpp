@@ -9,6 +9,7 @@
 #include "app/teacher.h"
 #include "app/uid.h"
 #include "audio/beeper.h"
+#include "esp32-hal-log.h"
 #include "esp_timer.h"
 #include "services/face_detection_service.h"
 #include "services/roster_service.h"
@@ -27,7 +28,9 @@
 LV_FONT_DECLARE(font_montserrat_custom_32);
 #define GLYPH_ID_CARD "\xEF\x8B\x82"  // U+F2C2 fa-users-id-card
 
-static constexpr uint32_t RESULT_MS = 5000;    // how long the confirmation shows
+static const char* TAG = "kiosk";
+
+static constexpr uint32_t RESULT_MS = 5000;     // how long the confirmation shows
 static constexpr uint32_t KIOSK_BG = 0xFFE8CC;  // light orange
 
 static const class_rec_t* s_cls = nullptr;
@@ -42,6 +45,7 @@ static lv_obj_t* s_exit_ta = nullptr;
 
 static void on_kiosk_card(const char* uid_hex);
 static void on_exit_card(const char* uid_hex);
+static void do_exit(void);
 
 // Numeric-only keypad so the on-screen keyboard can stay up permanently
 // without a mode-switch/close key that would let students type letters.
@@ -256,6 +260,10 @@ static void kiosk_verify_done(bool verified) {
 static bool check_in(const student_t* st) {
     if (s_id_ta) lv_textarea_set_text(s_id_ta, "");  // clear the field on success
     if (s_cls && class_capture_enabled(s_cls)) {
+        // Loud, because "nothing happened and nothing was logged" is exactly how
+        // this feature fails in the field: photo check-in is a PER-CLASS flag and
+        // an imported config.tar resets it to false (CONFIG_IMPORT.md §3.3).
+        ESP_LOGI(TAG, "check-in %s: capture enabled, opening face verify", st->id);
         if (!face_detection_running()) {
             beeper_error();
             lv_obj_t* p = make_result(THEME_DANGER);
@@ -270,11 +278,24 @@ static bool check_in(const student_t* st) {
                          s_cls->face_verify_seconds, kiosk_verify_done);
         return true;
     }
+    ESP_LOGI(TAG, "check-in %s: photo capture OFF for class %s — no camera step",
+             st->id, s_cls ? s_cls->code : "?");
     kiosk_register(st);
     return false;
 }
 
 static void on_kiosk_card(const char* uid_hex) {
+    // A professor card is the way out: tapping it anywhere in kiosk leaves
+    // immediately, without going through the Exit button + gate modal. Checked
+    // BEFORE the student lookup so a professor who is also enrolled as a student
+    // still exits rather than checking themselves in. Students can't abuse this
+    // — the gate is the card itself, exactly as in the exit modal.
+    teacher_t prof;
+    if (auth_lookup_uid(uid_hex, &prof)) {
+        do_exit();
+        return;  // do_exit() navigates away; on_hide() disarms the capture
+    }
+
     const student_t* st = find_by_uid(uid_hex);
     bool async = false;
     if (st) {
@@ -297,13 +318,18 @@ static void do_submit(void) {
 }
 
 static void submit_cb(lv_event_t*) { do_submit(); }
-static void kb_ready_cb(lv_event_t*) { do_submit(); }  // keypad OK checks in
+static void kb_ready_cb(lv_event_t*) { do_submit(); }        // keypad OK checks in
 static void kb_key_beep_cb(lv_event_t*) { beeper_touch(); }  // tick on each keypress
 
 // --- exit gate (professor card or password) ---------------------------------
 //
-// Kiosk is unattended, so a student mustn't be able to leave it. Tapping Exit
-// opens a modal that only a professor card tap or a professor password closes.
+// Kiosk is unattended, so a student mustn't be able to leave it. There are two
+// ways out, both requiring professor credentials:
+//   1. Tap a professor card at any time — handled in on_kiosk_card(), exits
+//      straight away (the common case: the professor is standing right there).
+//   2. Tap the Exit button, which opens this modal; a professor card tap or a
+//      professor password closes it. This is the fallback for a professor who
+//      has no card bound, or whose card isn't to hand.
 
 static void close_exit_modal(void) {
     if (s_exit_modal) {
@@ -474,7 +500,7 @@ static lv_obj_t* create(void) {
     lv_obj_remove_style_all(s_id_ta);
     lv_obj_add_style(s_id_ta, &theme_style_input, 0);
     lv_obj_set_style_text_color(s_id_ta, lv_color_hex(THEME_MUTED), LV_PART_TEXTAREA_PLACEHOLDER);
-    lv_obj_set_style_text_font(s_id_ta, &lv_font_montserrat_32, 0);
+    lv_obj_set_style_text_font(s_id_ta, &lv_font_montserrat_20, 0);
     lv_obj_set_width(s_id_ta, LV_PCT(100));
     lv_textarea_set_one_line(s_id_ta, true);
     lv_textarea_set_max_length(s_id_ta, 15);
@@ -506,7 +532,7 @@ static void on_show(void* arg) {
     dismiss_result();
     close_exit_modal();
     if (s_cls && class_capture_enabled(s_cls)) face_detection_start();  // warm for verify
-    ui_set_card_capture(on_kiosk_card);  // students tap to check in
+    ui_set_card_capture(on_kiosk_card);                                 // students tap to check in
 }
 
 static void on_hide(void) {

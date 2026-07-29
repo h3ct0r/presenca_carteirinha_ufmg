@@ -1,3 +1,5 @@
+import { classTeacherEmails, pickClassColor } from './model.js';
+
 // Pure, DOM-free parser for the UFMG "Diário de Classe" CSV export, plus a
 // helper that folds the parsed roster into the authoring model.
 //
@@ -18,8 +20,6 @@
 // Encoding: these exports are commonly Latin-1 / Windows-1252 (accented
 // Portuguese names). decodeCsvBytes() tries strict UTF-8 first and falls back
 // to windows-1252, so "CAIO OTÁVIO" survives either way.
-
-const DEFAULT_COLOR = '272766';
 
 // --- decoding -------------------------------------------------------------
 export function decodeCsvBytes(buf) {
@@ -114,7 +114,9 @@ function nextNonEmpty(rows, from) {
 // --- apply to the authoring model ----------------------------------------
 // Merges a parsed Diário into `model` (mutates it): upserts each student
 // (tagging turma) and creates/updates the class. Returns a summary.
-export function applyDiario(model, parsed) {
+// `rng` only feeds the auto-assigned class colour; injectable so tests are
+// deterministic.
+export function applyDiario(model, parsed, rng = Math.random) {
   model.students = model.students || [];
   model.classes = model.classes || [];
   model.teachers = model.teachers || [];
@@ -143,15 +145,27 @@ export function applyDiario(model, parsed) {
   // Upsert the class, creating it (keyed by code) if it doesn't exist yet.
   let cls = model.classes.find((c) => c.code === code);
   if (!cls) {
-    cls = { code, name: '', schedule: '', teacher_email: '', color: '', roster: [] };
+    cls = { code, name: '', schedule: '', teacher_emails: [], color: '', roster: [] };
     model.classes.push(cls);
   }
   // Fill any blank class fields — on a fresh class every field is blank, and on
   // a re-import this backfills anything the author left empty (never overwrites
   // values they set).
   if (!cls.name) cls.name = name;
-  if (!cls.color) cls.color = DEFAULT_COLOR;
-  if (!cls.teacher_email) cls.teacher_email = onlyTeacherEmail(model.teachers);
+  // Each imported class gets its own colour, picked at random from the palette
+  // but skipping the ones other classes already use, so a Diário import of
+  // several classes comes out visually distinct on the device. Only filled when
+  // blank, so a re-import never recolours a class the author already tuned.
+  if (!cls.color) {
+    cls.color = pickClassColor(model.classes.map((c) => c.color), rng);
+  }
+  // A lone defined teacher is auto-assigned; otherwise the author picks the
+  // professors (a class may be co-taught) in the class editor.
+  if (!classTeacherEmails(cls).length) {
+    const only = onlyTeacherEmail(model.teachers);
+    cls.teacher_emails = only ? [only] : [];
+    delete cls.teacher_email;  // drop the legacy scalar once normalized
+  }
   // Roster entries are { id, turma }. Tag every imported student with this
   // Diário's turma (updating the tag if they're already on the roster).
   const rosterById = new Map(

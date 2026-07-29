@@ -45,10 +45,17 @@ drop** them onto the import box; each file is reported on its own summary line
   `<SEMESTER>-<ATIVIDADE>` (e.g. `2026_2-DCC219`; the semester `/` becomes `_`),
   enrolling every imported student and tagging each **roster entry** with its
   `turma`. All turmas of the same course+semester merge into that one class;
-- upserts by matricula, so re-importing updates instead of duplicating.
+- upserts by matricula, so re-importing updates instead of duplicating;
+- gives each new class a **random colour** from a built-in palette, skipping
+  colours already used by other classes so they stay easy to tell apart on the
+  device. Every palette entry is dark enough for the white class initial drawn
+  on top (WCAG AA). A colour you pick yourself is never overwritten, and
+  re-importing a class keeps the colour it already has.
 
-You still assign a **teacher** to the imported class before exporting (a lone
-defined teacher is auto-assigned). `turma` lives on each `class.json` roster
+You still assign the **professors** to the imported class before exporting — each
+class card has a checkbox list of the defined teachers, and a class may be
+**co-taught by several** (it then shows for each of them on the device). A lone
+defined teacher is auto-assigned. `turma` lives on each `class.json` roster
 entry (`{ "id", "turma" }`) — not on the student registry — so one class can span
 turmas and a student can carry a different turma per class. See
 `docs/software/CONFIG_IMPORT.md` §3.3. Roster turmas are editable inline per member.
@@ -57,7 +64,7 @@ turmas and a student can carry a different turma per class. See
 - **Run / host:** it's a static single-page app (no build, no backend). Serve it
   with `python3 -m http.server` for development or nginx for production — see
   [`DEPLOY.md`](DEPLOY.md).
-- **Test:** `node --test` (zero deps) — 89 cases across `uid`, `tarball`,
+- **Test:** `node --test` (zero deps) — 104 cases across `uid`, `tarball`,
   `untar`, `validate`, `diario`, `photomatch`. Run after every change (project rule).
 - **Layout:** pure, DOM-free modules in `src/` (`uid.js`, `tarball.js`,
   `untar.js`, `model.js`, `validate.js`, `diario.js`, `photomatch.js`) are

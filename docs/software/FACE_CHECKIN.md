@@ -6,10 +6,11 @@ within a countdown window**, and the captured frame is saved on the SD card
 **grouped by student** so a reviewer can later flip through a student's check-in
 photos and confirm the same person tapped every time.
 
-Status: **Stages 1–4 implemented** (Stage 5 = docs, this file). Storage/config
-are native-tested; the camera lifecycle + verify modal are build-verified only
-and **must be validated on hardware** (the camera is the surface that crashed
-before). See the changelog at the end.
+Status: **Stages 1–4 implemented** (Stage 5 = docs, this file) and **verified on
+hardware** — storage/config are native-tested, and the camera lifecycle + verify
+modal have been manually exercised on device and work as expected. See the
+changelog at the end (its entries record what was verified at the time each
+change landed).
 
 ## Goal (from the request)
 
@@ -121,9 +122,11 @@ Each stage ends green on `pio run -e esp32p4` and `pio test -e native`.
 
 - **Native-testable:** the `face_verify_seconds` config, the check-in path +
   counter logic, and the verify state machine (elapsed/face → outcome).
-- **Device-only (build-verified):** the JPEG encode, the camera lifecycle, and
-  the verify modal / preview rendering. Reported as build-verified, not run on
-  hardware.
+- **Device-only:** the JPEG encode, the camera lifecycle, and the verify modal /
+  preview rendering. These can't be covered by the native suite, so they are
+  checked by hand on hardware before the feature is called done. An agent should
+  still report its own work as build-verified and flag these for the on-device
+  pass.
 
 ## Resolved decisions (2026-07-28)
 
@@ -145,6 +148,20 @@ Each stage ends green on `pio run -e esp32p4` and `pio test -e native`.
 
 ## Changelog
 
+- **2026-07-29** — **shutter cue + 1 s photo review on capture.** The verify
+  overlay used to call `finish(true)` on the same tick the face was detected, so
+  the capture was invisible — the student never saw the shot (nor even the green
+  "detected" state, which was set and then immediately torn down). Now, on
+  detect: the preview **stops refreshing first** (so `s_buf`, and therefore the
+  image on screen, is exactly the frame being written), the photo is encoded, a
+  white sheet flashes to 80% and fades out over 280 ms (`lv_anim`, ease-out), and
+  the frozen shot is held for **1 s** before the tap registers. The status pill
+  reports **"Photo saved" / "Photo not saved"** (a failed encode now also logs,
+  instead of being silently ignored), and the countdown ring stops. The flash
+  sheet is a child of the overlay with `LV_OBJ_FLAG_IGNORE_LAYOUT` — the overlay
+  is a flex column, so without it the sheet would be laid out as another child;
+  its animation is explicitly deleted in `take_down()` so it can never tick on a
+  freed object. Build-verified + native 127/127; **not run on hardware.**
 - **2026-07-28** — **Verify overlay UI polish.** Reworked the `face_verify`
   overlay layout for a more professional kiosk look on the 480×800 portrait
   screen: full-bleed rounded/clipped **viewfinder** (thin border, top corners

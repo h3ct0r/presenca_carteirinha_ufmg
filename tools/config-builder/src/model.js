@@ -10,10 +10,62 @@
 //   {
 //     teachers: [ { name, email, rfid_uid?, password? } ],
 //     students: [ { id, name, rfid_uid? } ],      // rfid_uid "" / undefined => null
-//     classes:  [ { code, name, schedule?, teacher_email?, color?, roster: [id,...] } ]
+//     classes:  [ { code, name, schedule?, teacher_emails?: [email,...], color?,
+//                   roster: [id,...] } ]   // legacy scalar teacher_email accepted
 //   }
 
 const DEFAULT_COLOR = '272766';
+
+// Palette for auto-assigned class colours. The device paints this behind the
+// class initial in WHITE (`scr_classes.cpp` draws the 40x40 chip with
+// THEME_ON_PRIMARY text), so a light colour would be unreadable — every entry
+// here clears WCAG AA (>= 4.5:1 contrast against white). Hues are spread around
+// the wheel so classes stay distinguishable at a glance, and there are more
+// entries (14) than the 12-class cap, so every class can get a unique one.
+export const CLASS_COLORS = [
+  '272766', // indigo (the historical default)
+  'C62828', // red
+  'AD1457', // pink
+  '6A1B9A', // purple
+  '4527A0', // deep purple
+  '1565C0', // blue
+  '0277BD', // light blue
+  '00838F', // cyan
+  '00695C', // teal
+  '2E7D32', // green
+  '827717', // olive
+  '5D4037', // brown
+  '455A64', // blue grey
+  'B71C1C', // dark red
+];
+
+// Picks a colour for a new class: random, but never one already in `used`, so
+// two classes don't come out looking the same. Falls back to a random palette
+// entry once every colour is taken. `rng` is injectable so tests are
+// deterministic (defaults to Math.random).
+export function pickClassColor(used = [], rng = Math.random) {
+  const taken = new Set(
+    [].concat(used).filter(Boolean).map((c) => String(c).replace('#', '').toUpperCase()),
+  );
+  const free = CLASS_COLORS.filter((c) => !taken.has(c));
+  const pool = free.length ? free : CLASS_COLORS;
+  return pool[Math.floor(rng() * pool.length) % pool.length];
+}
+
+// The professors of a class, normalized to a de-duplicated string array.
+// A class may be co-taught (CONFIG_IMPORT.md §3.3 "teacher_emails"). Accepts the
+// legacy scalar `teacher_email` too, so older model JSON keeps loading.
+export function classTeacherEmails(cls) {
+  const raw = Array.isArray(cls?.teacher_emails)
+    ? cls.teacher_emails
+    : (cls?.teacher_email ? [cls.teacher_email] : []);
+  const out = [];
+  for (const e of raw) {
+    const s = String(e ?? '').trim();
+    if (s && !out.includes(s)) out.push(s);
+  }
+  return out;
+}
 
 export function buildConfig(model) {
   return {
@@ -43,7 +95,9 @@ export function buildClass(cls) {
     code: cls.code ?? '',
     name: cls.name ?? '',
     schedule: cls.schedule ?? '',
-    teacher_email: cls.teacher_email ?? '',
+    // Always the array form — the device reads the legacy scalar, but the
+    // builder emits only the current contract (CONFIG_IMPORT.md §3.3).
+    teacher_emails: classTeacherEmails(cls),
     color: cls.color ? cls.color : DEFAULT_COLOR,
     // Roster entries are {id, turma?}. A bare id string is tolerated (turma "").
     // turma is the optional per-student class-group tag (see CONFIG_IMPORT §3.3).

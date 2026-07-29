@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "esp32-hal-log.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "lvgl.h"
@@ -12,6 +13,8 @@
 #include "ui/components/student_photo.h"
 #include "ui/theme/theme.h"
 
+static const char* TAG = "face_verify";
+
 static lv_obj_t* s_overlay = nullptr;
 static lv_timer_t* s_timer = nullptr;
 static lv_obj_t* s_img = nullptr;
@@ -20,10 +23,18 @@ static lv_obj_t* s_arc = nullptr;
 static lv_obj_t* s_count_lbl = nullptr;
 static lv_obj_t* s_pill = nullptr;
 static lv_obj_t* s_status_lbl = nullptr;
-static bool s_detected = false;  // latch the "detected" pill styling once
 
 static lv_image_dsc_t s_dsc;
 static uint8_t* s_buf = nullptr;  // preview RGB565, reused across verifies
+
+// How long the captured shot stays on screen so the student can see what was
+// saved, and how long the "shutter" whitening takes to fade out.
+static constexpr int64_t FREEZE_US = 1000 * 1000;  // 1 s
+static constexpr uint32_t FLASH_MS = 280;
+
+static void flash_opa_cb(void* obj, int32_t v);  // defined with flash(), below
+static lv_obj_t* s_flash = nullptr;   // white sheet, faded out after the shot
+static int64_t s_freeze_until_us = 0;  // >0 while holding the captured frame
 
 static char s_id[20];
 static char s_date[12];
@@ -40,10 +51,17 @@ static face_verify_done_cb take_down(void) {
         s_timer = nullptr;
         lv_timer_delete(t);
     }
+    if (s_flash) {
+        // Kill the fade before its object goes away — an animation outliving its
+        // target would tick on freed memory.
+        lv_anim_delete(s_flash, flash_opa_cb);
+        s_flash = nullptr;
+    }
     if (s_overlay) {
-        lv_obj_delete(s_overlay);
+        lv_obj_delete(s_overlay);  // deletes s_flash too (it is a child)
         s_overlay = nullptr;
     }
+    s_freeze_until_us = 0;
     face_verify_done_cb cb = s_done;
     s_done = nullptr;
     return cb;
@@ -54,7 +72,36 @@ static void finish(bool verified) {
     if (cb) cb(verified);
 }
 
+// Animation target: the white sheet's background opacity.
+static void flash_opa_cb(void* obj, int32_t v) {
+    lv_obj_set_style_bg_opa((lv_obj_t*)obj, (lv_opa_t)v, 0);
+}
+
+// Camera-shutter cue: snap the sheet to a partial white, then fade it out over
+// the frozen frame. Partial (not full) white so the photo underneath stays
+// visible through the flash — this is a cue, not a blackout.
+static void flash(void) {
+    if (!s_flash) return;
+    lv_obj_remove_flag(s_flash, LV_OBJ_FLAG_HIDDEN);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_flash);
+    lv_anim_set_exec_cb(&a, flash_opa_cb);
+    lv_anim_set_values(&a, LV_OPA_80, LV_OPA_TRANSP);
+    lv_anim_set_duration(&a, FLASH_MS);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_start(&a);
+}
+
 static void verify_tick(lv_timer_t*) {
+    // Holding the captured shot: deliberately do NOT pull a new frame, so s_buf
+    // (and therefore what's on screen) stays the exact image that was saved.
+    // The tap is registered when the hold ends.
+    if (s_freeze_until_us) {
+        if (esp_timer_get_time() >= s_freeze_until_us) finish(true);
+        return;
+    }
+
     face_box_t boxes[FACE_MAX_BOXES];
     int n = face_detection_snapshot(s_buf, boxes, FACE_MAX_BOXES);
     if (n >= 0) lv_obj_invalidate(s_img);  // same buffer, new pixels
@@ -76,20 +123,33 @@ static void verify_tick(lv_timer_t*) {
     lv_arc_set_value(s_arc, (int32_t)(left_us / 1000));      // ms remaining -> ring
 
     if (n >= 1) {
-        // Face seen: grab this frame as the check-in photo, then finish success.
-        if (!s_detected) {
-            s_detected = true;
-            lv_label_set_text(s_status_lbl, LV_SYMBOL_OK "  Face detected");
-            lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(THEME_DARK_OK), 0);
-            lv_obj_set_style_bg_color(s_pill, lv_color_hex(THEME_DARK_OK), 0);
-            lv_obj_set_style_bg_opa(s_pill, LV_OPA_20, 0);
-            lv_obj_set_style_arc_color(s_arc, lv_color_hex(THEME_DARK_OK), LV_PART_INDICATOR);
-        }
+        // Face seen. Stop refreshing the preview FIRST: s_buf now holds exactly
+        // the frame we are about to save, so the frozen image on screen is the
+        // photo itself, not a later one.
         char path[96];
+        bool saved = false;
         if (checkin_store_next_path(s_id, s_date, s_code, path, sizeof(path))) {
-            photo_store_encode_to(path, s_buf, FACE_PREVIEW_W, FACE_PREVIEW_H);
+            saved = photo_store_encode_to(path, s_buf, FACE_PREVIEW_W, FACE_PREVIEW_H);
+            if (!saved) ESP_LOGE(TAG, "check-in photo NOT saved: %s", path);
+        } else {
+            ESP_LOGE(TAG, "could not build a check-in photo path for student %s", s_id);
         }
-        finish(true);
+
+        lv_label_set_text(s_status_lbl, saved ? LV_SYMBOL_OK "  Photo saved"
+                                              : LV_SYMBOL_WARNING "  Photo not saved");
+        lv_obj_set_style_text_color(s_status_lbl,
+                                    lv_color_hex(saved ? THEME_DARK_OK : THEME_DARK_WARN), 0);
+        lv_obj_set_style_bg_color(s_pill, lv_color_hex(saved ? THEME_DARK_OK : THEME_DARK_WARN),
+                                  0);
+        lv_obj_set_style_bg_opa(s_pill, LV_OPA_20, 0);
+        lv_obj_set_style_arc_color(s_arc, lv_color_hex(THEME_DARK_OK), LV_PART_INDICATOR);
+        lv_label_set_text(s_count_lbl, LV_SYMBOL_OK);  // ring stops counting down
+
+        // Shutter: whiten the screen, then fade it out over the held frame. The
+        // attendance tap is registered when the hold ends (see the branch above),
+        // so the student always sees the shot that was taken.
+        flash();
+        s_freeze_until_us = esp_timer_get_time() + FREEZE_US;
         return;
     }
 
@@ -128,7 +188,20 @@ static void verify_avatar(lv_obj_t* parent, const char* student_id) {
 
 void face_verify_open(const char* student_id, const char* student_name, const char* date,
                       const char* class_code, int timeout_s, face_verify_done_cb done) {
-    if (s_overlay) return;  // one at a time
+    // NEVER return from this function without resolving `done`. The kiosk
+    // disarms its card capture *before* calling us and re-arms only from the
+    // callback, so a silent bail leaves the kiosk deaf to every future tap —
+    // while the RFID task keeps logging "RFID card UID: ..." as if all is well.
+    // This is what stranded a device in kiosk mode with dead input.
+    if (s_overlay) {
+        // Shouldn't happen (one verify at a time), but if a previous overlay was
+        // somehow orphaned it is a full-screen CLICKABLE object on lv_layer_top()
+        // — a GLOBAL layer that survives screen changes — so it would swallow
+        // every touch, everywhere, forever. Tear it down and continue.
+        ESP_LOGW(TAG, "verify overlay already open — force-closing the stale one");
+        face_verify_done_cb stale = take_down();
+        if (stale) stale(false);  // let the stranded caller finish its flow
+    }
     if (!s_buf) {
         s_buf = (uint8_t*)heap_caps_aligned_calloc(128, 1, FACE_PREVIEW_W * FACE_PREVIEW_H * 2,
                                                    MALLOC_CAP_SPIRAM);
@@ -142,7 +215,7 @@ void face_verify_open(const char* student_id, const char* student_name, const ch
     snprintf(s_date, sizeof(s_date), "%s", date ? date : "");
     snprintf(s_code, sizeof(s_code), "%s", class_code ? class_code : "");
     s_done = done;
-    s_detected = false;
+    s_freeze_until_us = 0;
     s_start_us = esp_timer_get_time();
     s_timeout_us = (int64_t)(timeout_s > 0 ? timeout_s : 1) * 1000000;
 
@@ -265,6 +338,19 @@ void face_verify_open(const char* student_id, const char* student_name, const ch
     lv_label_set_text(s_status_lbl, "Looking for a face...");
     lv_obj_set_style_text_font(s_status_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(THEME_DARK_MUTED), 0);
+
+    // Shutter sheet, created last so it sits above everything in the overlay.
+    // IGNORE_LAYOUT is required: the overlay is a flex column, so without it the
+    // sheet would be laid out as another child and shove the content around.
+    s_flash = lv_obj_create(s_overlay);
+    lv_obj_remove_style_all(s_flash);
+    lv_obj_add_flag(s_flash, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    lv_obj_remove_flag(s_flash, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+    lv_obj_set_size(s_flash, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_pos(s_flash, 0, 0);
+    lv_obj_set_style_bg_color(s_flash, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(s_flash, LV_OPA_TRANSP, 0);
+    lv_obj_add_flag(s_flash, LV_OBJ_FLAG_HIDDEN);
 
     s_timer = lv_timer_create(verify_tick, 100, nullptr);
 }

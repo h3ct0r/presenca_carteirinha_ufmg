@@ -136,15 +136,17 @@ static void test_clear_removes_all_sessions(void) {
     attendance_close();
     TEST_ASSERT_TRUE(mocksd_exists("/classes/CS101-M1/attendance/2026-07-14.jsonl"));
 
-    int removed = attendance_clear(DIR);
+    int failed = -1;
+    int removed = attendance_clear(DIR, &failed);
     TEST_ASSERT_EQUAL_INT(2, removed);
+    TEST_ASSERT_EQUAL_INT(0, failed);  // nothing left behind
     TEST_ASSERT_FALSE(mocksd_exists("/classes/CS101-M1/attendance/2026-07-14.jsonl"));
     TEST_ASSERT_FALSE(mocksd_exists("/classes/CS101-M1/attendance/2026-07-16.jsonl"));
     TEST_ASSERT_FALSE(attendance_is_open());
 
     char dates[8][12];
     TEST_ASSERT_EQUAL_INT(0, attendance_list_dates(DIR, dates, 8));
-    TEST_ASSERT_EQUAL_INT(0, attendance_clear(DIR));  // idempotent: nothing left
+    TEST_ASSERT_EQUAL_INT(0, attendance_clear(DIR, nullptr));  // idempotent; NULL out-param ok
 }
 
 // --- timed (double-tap) attendance ------------------------------------------

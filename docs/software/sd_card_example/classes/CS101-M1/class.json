@@ -3,7 +3,7 @@
   "code": "CS101-M1",
   "name": "Data Structures",
   "schedule": "Tue/Thu 10:00-12:00",
-  "teacher_email": "hector@dcc.ufmg.br",
+  "teacher_emails": ["hector@dcc.ufmg.br", "aline@dcc.ufmg.br"],
   "color": "272766",
   "roster": [
     { "id": "2023-0142", "turma": "M1" },

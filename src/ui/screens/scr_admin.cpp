@@ -16,6 +16,7 @@
 #include "ui/components/keyboard.h"
 #include "ui/components/shell.h"
 #include "ui/components/toast.h"
+#include "app/version.h"
 #include "ui/screen_manager.h"
 #include "ui/theme/theme.h"
 #include "ui/ui.h"
@@ -340,6 +341,7 @@ static void build_rfid(void) {
 // --- device settings --------------------------------------------------------
 
 static void camera_preview_cb(lv_event_t*) { scr_mgr_show(SCREEN_CAMERA, nullptr); }
+static void about_cb(lv_event_t*) { scr_mgr_show(SCREEN_ABOUT, nullptr); }
 
 static void build_settings(void) {
     lv_obj_clean(s_settings);
@@ -364,16 +366,32 @@ static void build_settings(void) {
 // --- debug tools ------------------------------------------------------------
 
 // Performs the wipe: unbind every card + delete every class's attendance.
+// Both halves report specifically — a failure must never surface as a bare
+// "failed" with no cause (the details also go to the serial log).
 static void do_wipe(void) {
-    bool cards = roster_clear_all_uids();
-    int files = 0;
+    roster_result_t cards = roster_clear_all_uids();
+
+    int files = 0, failed = 0;
     for (int i = 0; i < roster_class_count(); i++) {
         const class_rec_t* c = roster_class_at(i);
-        if (c) files += attendance_clear(c->dir);
+        if (!c) continue;
+        int f = 0;
+        files += attendance_clear(c->dir, &f);
+        failed += f;
     }
-    char msg[96];
-    snprintf(msg, sizeof(msg), "Cleared cards, removed %d attendance file(s)", files);
-    ui_toast_show(cards ? msg : "Card clear failed", cards);
+
+    char msg[160];
+    if (!cards.ok) {
+        // The card wipe is the destructive half that can leave things
+        // inconsistent, so its reason wins the toast.
+        snprintf(msg, sizeof(msg), "Wipe failed: %s", cards.message);
+    } else if (failed) {
+        snprintf(msg, sizeof(msg), "%s, removed %d attendance file(s), %d could not be deleted",
+                 cards.message, files, failed);
+    } else {
+        snprintf(msg, sizeof(msg), "%s, removed %d attendance file(s)", cards.message, files);
+    }
+    ui_toast_show(msg, cards.ok && failed == 0);
     build_storage();  // usage just dropped
 }
 
@@ -697,6 +715,17 @@ static lv_obj_t* create(void) {
     // Extra breathing room between the camera-preview button and the password
     // section that follows it.
     lv_obj_set_style_margin_top(s_security, 16, 0);
+
+    // About: static content (credits/version), so it is built once here rather
+    // than rebuilt on every show like the data-backed sections above.
+    lv_obj_t* about_card = ui_make_card(sh.body);
+    lv_obj_set_flex_flow(about_card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(about_card, 8, 0);
+    ui_make_label(about_card, "About", THEME_PRIMARY, &lv_font_montserrat_20);
+    lv_obj_t* about_btn = ui_make_button(about_card, LV_SYMBOL_FILE "  Project info & credits",
+                                         &theme_style_btn_outline, about_cb, nullptr);
+    lv_obj_set_width(about_btn, LV_PCT(100));
+    ui_make_label(about_card, APP_VERSION_FULL, THEME_MUTED, &lv_font_montserrat_14);
 
     // Static sign-out button, built once (nothing to rebuild on show).
     lv_obj_t* sign_out = ui_make_button(sh.body, "Sign Out", &theme_style_btn_danger,

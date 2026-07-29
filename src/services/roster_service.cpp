@@ -169,10 +169,33 @@ static roster_status_t load_one_class(const char* root, const char* dname) {
     snprintf(c->dir, sizeof(c->dir), "%s", dname);
     snprintf(c->name, sizeof(c->name), "%s", name);
     snprintf(c->schedule, sizeof(c->schedule), "%s", (const char*)(doc["schedule"] | ""));
-    snprintf(c->teacher_email, sizeof(c->teacher_email), "%s",
-             (const char*)(doc["teacher_email"] | ""));
-    if (c->teacher_email[0] == '\0') {
-        ESP_LOGW(TAG, "classes/%s: no teacher_email, class won't show under any teacher",
+    // Professors: "teacher_emails" is an array (a class may be co-taught). The
+    // legacy scalar "teacher_email" is still accepted so cards written before
+    // multi-professor support keep working — it becomes a single entry.
+    c->teacher_count = 0;
+    JsonArray temails = doc["teacher_emails"].as<JsonArray>();
+    if (!temails.isNull()) {
+        for (JsonVariant tv : temails) {
+            const char* em = tv.as<const char*>();
+            if (!em || !em[0]) continue;  // skip blanks rather than failing the class
+            if (c->teacher_count >= ROSTER_MAX_CLASS_TEACHERS) {
+                ESP_LOGW(TAG, "classes/%s: more than %d teachers, extra ignored", dname,
+                         ROSTER_MAX_CLASS_TEACHERS);
+                break;
+            }
+            snprintf(c->teacher_emails[c->teacher_count],
+                     sizeof(c->teacher_emails[0]), "%s", em);
+            c->teacher_count++;
+        }
+    } else {
+        const char* legacy = doc["teacher_email"] | "";
+        if (legacy[0]) {
+            snprintf(c->teacher_emails[0], sizeof(c->teacher_emails[0]), "%s", legacy);
+            c->teacher_count = 1;
+        }
+    }
+    if (c->teacher_count == 0) {
+        ESP_LOGW(TAG, "classes/%s: no teacher_emails, class won't show under any teacher",
                  dname);
     }
 
@@ -227,7 +250,26 @@ static roster_status_t load_one_class(const char* root, const char* dname) {
     return ROSTER_OK;
 }
 
-static roster_status_t load_classes(const char* root) {
+// Classes that failed to load and were skipped (non-strict/live load only), plus
+// the first reason — surfaced in the UI so a skipped class is visible instead of
+// silently missing.
+static int s_skipped_classes = 0;
+static char s_skip_reason[160];
+
+int roster_skipped_class_count(void) { return s_skipped_classes; }
+
+void roster_get_skip_reason(char* out, size_t cap) {
+    if (!out || !cap) return;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    snprintf(out, cap, "%s", s_skip_reason);
+    xSemaphoreGive(s_lock);
+}
+
+// `strict` = fail the whole load on the first bad class. Used when validating a
+// staged import (a bad tar must be rejected outright). The LIVE load is
+// non-strict: one unloadable class — e.g. a leftover folder from a previous
+// config whose students no longer exist — must NOT blank the entire class list.
+static roster_status_t load_classes(const char* root, bool strict) {
     s_class_count = 0;
 
     char cdir[48];
@@ -248,8 +290,19 @@ static roster_status_t load_classes(const char* root) {
             e.close();
             roster_status_t st = load_one_class(root, dname);
             if (st != ROSTER_OK) {
-                dir.close();
-                return st;
+                if (strict) {
+                    dir.close();
+                    return st;
+                }
+                // Skip it and keep going: the remaining classes (and the
+                // freshly imported ones) must still be usable. load_one_class
+                // already wrote the reason into s_error and logged it.
+                if (s_skipped_classes == 0) {
+                    snprintf(s_skip_reason, sizeof(s_skip_reason), "%s", s_error);
+                }
+                s_skipped_classes++;
+                s_error[0] = '\0';  // not a fatal error; don't report it as one
+                ESP_LOGW(TAG, "skipping class %s (see error above), continuing", dname);
             }
         } else {
             e.close();
@@ -262,14 +315,20 @@ static roster_status_t load_classes(const char* root) {
 // Loads students + classes from a tree rooted at `root` ("" = the live SD root,
 // "/import_staging" = a staged import). Threading the prefix through lets
 // roster_validate_tree() reuse the exact loaders against a candidate tree.
-static roster_status_t load_all(const char* root) {
+//
+// `strict` is true only when validating a candidate tree: a tar containing a bad
+// class must be rejected before it is applied. The live load is lenient so one
+// broken class folder can't take the whole class list down with it.
+static roster_status_t load_all(const char* root, bool strict) {
     if (!sd_card_mount()) {
         return fail(ROSTER_NO_SD, "No SD card, or card not readable (FAT32 required)");
     }
+    s_skipped_classes = 0;
+    s_skip_reason[0] = '\0';
 
     roster_status_t st = load_students(root);
     if (st != ROSTER_OK) return st;
-    st = load_classes(root);
+    st = load_classes(root, strict);
     if (st != ROSTER_OK) return st;
 
     int bound = 0;
@@ -279,8 +338,16 @@ static roster_status_t load_all(const char* root) {
     ESP_LOGI(TAG, "loaded %d students (%d with cards), %d classes", s_student_count, bound,
              s_class_count);
     for (int i = 0; i < s_class_count; i++) {
+        // Join the professors so a co-taught class is obvious in the boot log.
+        char who[200];
+        size_t n = 0;
+        for (int t = 0; t < s_classes[i].teacher_count && n < sizeof(who) - 1; t++) {
+            n += snprintf(who + n, sizeof(who) - n, "%s%s", t ? ", " : "",
+                          s_classes[i].teacher_emails[t]);
+        }
+        if (n == 0) snprintf(who, sizeof(who), "no teacher");
         ESP_LOGI(TAG, "  %s \"%s\": %d students (%s)", s_classes[i].code, s_classes[i].name,
-                 s_classes[i].roster_count, s_classes[i].teacher_email);
+                 s_classes[i].roster_count, who);
     }
     s_error[0] = '\0';
     return ROSTER_OK;
@@ -288,7 +355,7 @@ static roster_status_t load_all(const char* root) {
 
 static roster_status_t locked_load(void) {
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    roster_status_t st = load_all("");
+    roster_status_t st = load_all("", /*strict=*/false);  // live: skip broken classes
     xSemaphoreGive(s_lock);
     return st;
 }
@@ -306,10 +373,10 @@ bool roster_validate_tree(const char* root, char* msg, size_t cap) {
     // and s_status is left untouched (validation must not change what's
     // published). Live RAM ends matching the live SD files, whatever happens.
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    roster_status_t st = load_all(root);
+    roster_status_t st = load_all(root, /*strict=*/true);  // a bad tar must be rejected
     char captured[128];
     snprintf(captured, sizeof(captured), "%s", s_error);
-    load_all("");  // restore live state from the SD root
+    load_all("", /*strict=*/false);  // restore live state from the SD root
     xSemaphoreGive(s_lock);
 
     if (msg && cap) snprintf(msg, cap, "%s", st == ROSTER_OK ? "" : captured);
@@ -369,12 +436,21 @@ int roster_class_index(const char* code) {
 
 // --- Enrollment writes ------------------------------------------------------
 
+// Both helpers log the failing step + path: every caller only propagates a
+// bool, so without this a failure is invisible in the serial log too.
 static bool read_json_file(const char* path, JsonDocument& doc) {
     File f = SD_MMC.open(path, FILE_READ);
-    if (!f) return false;
-    bool ok = !deserializeJson(doc, f);
+    if (!f) {
+        ESP_LOGE(TAG, "read %s: cannot open (missing file or SD not mounted)", path);
+        return false;
+    }
+    DeserializationError err = deserializeJson(doc, f);
     f.close();
-    return ok;
+    if (err) {
+        ESP_LOGE(TAG, "read %s: malformed JSON (%s)", path, err.c_str());
+        return false;
+    }
+    return true;
 }
 
 // Writes doc to a temp file then renames over path, so a power cut leaves
@@ -384,7 +460,10 @@ static bool read_json_file(const char* path, JsonDocument& doc) {
 static bool write_json_file(const char* path, JsonDocument& doc) {
     size_t need = measureJsonPretty(doc);
     char* buf = (char*)malloc(need + 1);
-    if (!buf) return false;
+    if (!buf) {
+        ESP_LOGE(TAG, "write %s: out of memory (%u bytes)", path, (unsigned)(need + 1));
+        return false;
+    }
     size_t len = serializeJsonPretty(doc, buf, need + 1);
 
     char tmp[112];
@@ -392,15 +471,27 @@ static bool write_json_file(const char* path, JsonDocument& doc) {
     File f = SD_MMC.open(tmp, FILE_WRITE, true);
     if (!f) {
         free(buf);
+        ESP_LOGE(TAG, "write %s: cannot create %s (SD not mounted or write-protected)", path,
+                 tmp);
         return false;
     }
     size_t written = f.write((const uint8_t*)buf, len);
     f.close();
     free(buf);
-    if (written != len) return false;
+    if (written != len) {
+        // Short write on FAT almost always means the card is full.
+        ESP_LOGE(TAG, "write %s: short write (%u of %u bytes) — SD card full?", path,
+                 (unsigned)written, (unsigned)len);
+        SD_MMC.remove(tmp);  // don't leave a truncated .tmp behind
+        return false;
+    }
 
     SD_MMC.remove(path);  // FAT rename requires the target to be absent
-    return SD_MMC.rename(tmp, path);
+    if (!SD_MMC.rename(tmp, path)) {
+        ESP_LOGE(TAG, "write %s: rename from %s failed", path, tmp);
+        return false;
+    }
+    return true;
 }
 
 // Is this normalized UID already assigned to a student other than `except`?
@@ -597,24 +688,41 @@ roster_result_t roster_enroll_new(const char* class_code, const char* id, const 
     return r;
 }
 
-bool roster_clear_all_uids(void) {
+roster_result_t roster_clear_all_uids(void) {
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    bool ok = false;
-    if (s_status == ROSTER_OK) {
+    roster_result_t r = {false, ""};
+
+    // Each failure gets its own message: the caller shows it verbatim, so
+    // "it failed" is never all the user sees. read/write_json_file log the
+    // underlying cause (missing file, malformed JSON, card full, ...).
+    if (s_status != ROSTER_OK) {
+        // Read s_error directly: roster_get_error() takes s_lock, which we
+        // already hold, and the mutex is not recursive (that would deadlock).
+        snprintf(r.message, sizeof(r.message), "Student data not loaded%s%s",
+                 s_error[0] ? ": " : "", s_error);
+    } else {
         JsonDocument doc;
-        if (read_json_file(STUDENTS_PATH, doc)) {
+        if (!read_json_file(STUDENTS_PATH, doc)) {
+            snprintf(r.message, sizeof(r.message), "Could not read %s (see serial log)",
+                     STUDENTS_PATH);
+        } else {
             for (JsonObject o : doc["students"].as<JsonArray>()) {
                 o["rfid_uid"] = nullptr;  // JSON null = unbound, per the schema
             }
-            if (write_json_file(STUDENTS_PATH, doc)) {
+            if (!write_json_file(STUDENTS_PATH, doc)) {
+                snprintf(r.message, sizeof(r.message),
+                         "Could not save %s — SD full or write-protected?", STUDENTS_PATH);
+            } else {
                 for (int i = 0; i < s_student_count; i++) s_students[i].rfid_uid[0] = '\0';
-                ok = true;
+                r.ok = true;
+                snprintf(r.message, sizeof(r.message), "Unbound %d card(s)", s_student_count);
                 ESP_LOGW(TAG, "DEBUG: cleared all %d student card bindings", s_student_count);
             }
         }
     }
+    if (!r.ok) ESP_LOGE(TAG, "clear all uids failed: %s", r.message);
     xSemaphoreGive(s_lock);
-    return ok;
+    return r;
 }
 
 bool class_capture_enabled(const class_rec_t* cls) { return cls && cls->capture_photos; }

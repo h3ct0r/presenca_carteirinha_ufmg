@@ -667,8 +667,12 @@ static void update_results(void) {
     lv_obj_clean(s_results);
     const char* q = s_search_ta ? lv_textarea_get_text(s_search_ta) : "";
 
+    // Every match is listed, not a truncated preview — with no query that means
+    // the whole class roster. Bounded by ROSTER_MAX_CLASS_STUDENTS (100), the
+    // same number of cards the session roll call already builds, so this is no
+    // new pressure on the 128 KB LVGL heap. The list grows the scrollable body.
     int shown = 0;
-    for (int j = 0; j < s_cls->roster_count && shown < 6; j++) {
+    for (int j = 0; j < s_cls->roster_count; j++) {
         int idx = s_cls->roster[j];  // index into the global registry
         const student_t* st = roster_student_at(idx);
         if (!st) continue;
@@ -691,17 +695,42 @@ static void update_results(void) {
         shown++;
     }
 
-    if (shown == 0) {
-        lv_obj_t* card = ui_make_card(s_results);
-        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-        lv_obj_set_style_pad_row(card, 8, 0);
-        ui_make_label(card, q[0] ? "No matching student" : "Type a name or ID to search",
-                      THEME_MUTED, &lv_font_montserrat_14);
+    if (shown > 0) {
+        // How many are listed — worth saying now that the list can be the whole
+        // roster. Built after the rows (that's where `shown` is known) and moved
+        // to the top.
+        char head[64];
         if (q[0]) {
-            lv_obj_t* add = ui_make_button(card, LV_SYMBOL_PLUS "  Add new student",
-                                           &theme_style_btn_outline, add_manual_cb, nullptr);
-            lv_obj_set_width(add, LV_PCT(100));
+            snprintf(head, sizeof(head), "%d match%s", shown, shown == 1 ? "" : "es");
+        } else {
+            snprintf(head, sizeof(head), "%d student%s in this class", shown,
+                     shown == 1 ? "" : "s");
         }
+        lv_obj_t* count = ui_make_label(s_results, head, THEME_MUTED, &lv_font_montserrat_14);
+        lv_obj_move_to_index(count, 0);
+        return;
+    }
+
+    lv_obj_t* card = ui_make_card(s_results);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(card, 8, 0);
+    // Nothing listed. With no query that is no longer "type to search" — the
+    // list shows everything by default — so name the actual reason.
+    const char* why;
+    if (q[0]) {
+        why = "No matching student";
+    } else if (s_unregistered_only) {
+        why = "Every student in this class already has a card. Turn off the filter to see them.";
+    } else {
+        why = "No students enrolled in this class yet.";
+    }
+    lv_obj_t* msg = ui_make_label(card, why, THEME_MUTED, &lv_font_montserrat_14);
+    lv_label_set_long_mode(msg, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(msg, LV_PCT(100));
+    if (q[0]) {
+        lv_obj_t* add = ui_make_button(card, LV_SYMBOL_PLUS "  Add new student",
+                                       &theme_style_btn_outline, add_manual_cb, nullptr);
+        lv_obj_set_width(add, LV_PCT(100));
     }
 }
 

@@ -3,6 +3,7 @@
 #include <lvgl.h>
 
 #include "app/event_bus.h"
+#include "app/version.h"
 #include "audio/beeper.h"
 #include "lcd/st7701_lcd.h"
 #include "lvgl_port.h"
@@ -52,7 +53,8 @@ static void app_dispatch(const app_event_t& ev) {
 
 void setup() {
     Serial.begin(115200);
-    Serial.println("ESP32-P4 face detection starting");
+    // First line on the wire: pins the exact firmware in any bug report.
+    Serial.printf("presenca-carteirinha-ufmg %s starting\n", APP_VERSION_FULL);
 
     event_bus_init();
 

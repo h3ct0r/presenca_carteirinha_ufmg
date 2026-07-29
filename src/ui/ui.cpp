@@ -1,10 +1,12 @@
 #include "ui/ui.h"
 
+#include "esp32-hal-log.h"
 #include "ui/components/keyboard.h"
 #include "ui/components/status_bar.h"
 #include "ui/lvgl_fs_sd.h"
 #include "ui/screen_manager.h"
 #include "ui/screens/scr_admin.h"
+#include "ui/screens/scr_about.h"
 #include "ui/screens/scr_class.h"
 #include "ui/screens/scr_class_form.h"
 #include "ui/screens/scr_class_stats.h"
@@ -18,6 +20,8 @@
 #include "ui/screens/scr_teacher_reg.h"
 #include "ui/theme/theme.h"
 #include "ui/ui_state.h"
+
+static const char* UI_TAG = "ui";
 
 static ui_card_cb_t s_card_capture = nullptr;
 
@@ -42,6 +46,7 @@ void ui_init(void) {
     scr_mgr_register(SCREEN_EXPORT, &scr_export);
     scr_mgr_register(SCREEN_WIFI_EDITOR, &scr_wifi_editor);
     scr_mgr_register(SCREEN_CAMERA, &scr_camera);
+    scr_mgr_register(SCREEN_ABOUT, &scr_about);
     scr_mgr_show(SCREEN_IDLE, nullptr);
 }
 
@@ -58,7 +63,16 @@ void ui_handle_event(const app_event_t* ev) {
                 break;
             }
             // Otherwise, on the idle page a scan is an access attempt.
-            if (scr_mgr_current() == SCREEN_IDLE) scr_idle_handle_scan(uid_hex);
+            if (scr_mgr_current() == SCREEN_IDLE) {
+                scr_idle_handle_scan(uid_hex);
+                break;
+            }
+            // Nothing was listening. On kiosk/enroll that means a flow disarmed
+            // the one-shot capture and never re-armed it, so the screen looks
+            // dead while the RFID task keeps logging every tap. Say so — this
+            // silence is exactly what made a stuck kiosk impossible to diagnose.
+            ESP_LOGW(UI_TAG, "card %s ignored: no capture armed on screen %d", uid_hex,
+                     (int)scr_mgr_current());
             break;
         }
         case APP_EVENT_NET_STATE:

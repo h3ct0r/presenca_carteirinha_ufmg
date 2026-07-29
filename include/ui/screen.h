@@ -19,6 +19,7 @@ typedef enum : uint8_t {
     SCREEN_EXPORT,        // per-class CSV attendance export
     SCREEN_WIFI_EDITOR,   // debug WiFi soft-AP + (future) file editor
     SCREEN_CAMERA,        // camera preview + face detection
+    SCREEN_ABOUT,         // project info, credits, version, repo QR
     SCREEN_COUNT,
 } screen_id_t;
 

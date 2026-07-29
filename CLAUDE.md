@@ -18,12 +18,24 @@ pio test -e native -f "native/test_roster"     # one suite
 - **Add every new hardware-free `.cpp` to the native `build_src_filter`** in
   `platformio.ini`, or it won't be tested.
 
-## Honesty rule (important)
+## Hardware testing (important)
 
-Almost nothing here has been run on physical hardware. Report changes as
-**"build- and native-test-verified, not run on hardware"** unless you actually
-ran it on device. Runtime bugs (LVGL crashes, camera, WiFi, stack overflows)
-surface only on hardware — always flag this and encourage an on-device check.
+**The maintainer manually tests every feature on the real device before starting
+the next one.** Each change is flashed and exercised by hand on hardware as part
+of the development loop, so shipped features here are device-verified, not just
+build-verified. As of 2026-07-29 all of them behave as expected on device.
+
+What this means for you:
+- **Still report what YOU actually did.** You can only run `pio run` and
+  `pio test`, so describe your own work as **"build- and native-test-verified"**
+  and say plainly that you have not run it on hardware. Never claim a device
+  check you didn't perform, and never infer one from this section.
+- **Still flag the device-only surfaces** — LVGL rendering/crashes, camera,
+  WiFi, SD timing, stack overflows — since they surface only when flashed. The
+  difference is that an on-device check reliably *happens* here; it is the
+  maintainer's step, not an open risk you should describe as unlikely to occur.
+- **Don't rewrite history.** Changelog entries that say "not run on hardware"
+  recorded the truth at the time; leave them.
 
 ## Architecture — strict layers, events flow up
 
