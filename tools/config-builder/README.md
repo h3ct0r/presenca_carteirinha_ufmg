@@ -22,6 +22,11 @@ authoring page); M3/M4 polish ongoing. See `SPEC.md` §9 for milestones.
    export and it fills the students and a class automatically (see below).
 3. Fill in teachers, students, and classes; fix any validation errors listed in
    the **Review & export** panel. **Save model JSON** to resume later.
+3a. *(optional)* **Student photos (Moodle)** — drop the Moodle photos `.tar`; it
+   matches each photo to a student by name, re-keys it to matrícula, re-encodes
+   it to a baseline 100×100 JPEG, and bundles it into `config.tar`. Confirm any
+   "needs review"/unmatched photos in the picker. Photos are **not** saved in the
+   model JSON — re-import the tar each session (see `STUDENT_PHOTOS.md`).
 4. Click **Download config.tar** (enabled only when there are no errors).
 5. Connect to the device's WiFi AP and upload the tar via the device's web file
    manager (see the contract for the import flow).
@@ -52,8 +57,8 @@ turmas and a student can carry a different turma per class. See
 - **Run / host:** it's a static single-page app (no build, no backend). Serve it
   with `python3 -m http.server` for development or nginx for production — see
   [`DEPLOY.md`](DEPLOY.md).
-- **Test:** `node --test` (zero deps) — 50 cases across `uid`, `tarball`,
-  `validate`, `diario`. Run after every change (project rule).
+- **Test:** `node --test` (zero deps) — 89 cases across `uid`, `tarball`,
+  `untar`, `validate`, `diario`, `photomatch`. Run after every change (project rule).
 - **Layout:** pure, DOM-free modules in `src/` (`uid.js`, `tarball.js`,
-  `model.js`, `validate.js`, `diario.js`) are unit-tested headlessly;
-  `src/app.js` is the only file that touches the DOM.
+  `untar.js`, `model.js`, `validate.js`, `diario.js`, `photomatch.js`) are
+  unit-tested headlessly; `src/app.js` is the only file that touches the DOM.

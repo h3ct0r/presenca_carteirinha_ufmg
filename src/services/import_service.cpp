@@ -18,7 +18,7 @@ static const char* TAG = "import";
 static constexpr const char* SD_TAR = "/config.tar";
 static constexpr const char* SENTINEL = "/config.tar.imported";
 static constexpr const char* STAGING = "/import_staging";
-static constexpr size_t MAX_TAR = 1024 * 1024;  // 1 MB cap (CONFIG_IMPORT.md §4)
+static constexpr size_t MAX_TAR = 16 * 1024 * 1024;  // 16 MB cap (CONFIG_IMPORT.md §4)
 
 const char* import_service_tar_path(void) { return SD_TAR; }
 
@@ -85,11 +85,31 @@ static bool copy_file(const char* src, const char* dst) {
     return SD_MMC.rename(tmp, dst);
 }
 
+// Removes every regular file directly inside `dir` (non-recursive). Used to
+// clear a staged tree's leaf files; empty dirs left behind are harmless.
+static void remove_dir_files(const char* dir) {
+    File d = SD_MMC.open(dir);
+    if (!d || !d.isDirectory()) {
+        if (d) d.close();
+        return;
+    }
+    File e;
+    while ((e = d.openNextFile())) {
+        bool is_dir = e.isDirectory();
+        char p[192];
+        snprintf(p, sizeof(p), "%s/%s", dir, e.name());
+        e.close();
+        if (!is_dir) SD_MMC.remove(p);
+    }
+    d.close();
+}
+
 // Removes the staged authored files so a stale class from a previous import
 // can't be applied. Leaves empty dirs (harmless; apply skips missing class.json).
 static void clean_staging(void) {
     SD_MMC.remove("/import_staging/config.json");
     SD_MMC.remove("/import_staging/students/students.json");
+    remove_dir_files("/import_staging/students/photos");
     File dir = SD_MMC.open("/import_staging/classes");
     if (dir && dir.isDirectory()) {
         File e;
@@ -153,6 +173,35 @@ static bool apply_tree(const char* root, char* err, size_t cap) {
     if (!copy_file(src, "/students/students.json")) {
         snprintf(err, cap, "Apply of students.json failed");
         return false;
+    }
+
+    // Optional authored avatars: overwrite each staged students/photos/<id>.jpg
+    // into place (dir created if new). Absent tree -> nothing to do. The device's
+    // own /photos/** and /students/checkins/** are never named here (preserved).
+    char photos_src[160];
+    snprintf(photos_src, sizeof(photos_src), "%s/students/photos", root);
+    File pdir = SD_MMC.open(photos_src);
+    if (pdir && pdir.isDirectory()) {
+        ensure_dir("/students/photos");
+        File pe;
+        while ((pe = pdir.openNextFile())) {
+            if (pe.isDirectory()) {
+                pe.close();
+                continue;
+            }
+            char fname[64];
+            snprintf(fname, sizeof(fname), "%s", pe.name());
+            pe.close();
+            char psrc[192], pdst[160];
+            snprintf(psrc, sizeof(psrc), "%s/%s", photos_src, fname);
+            snprintf(pdst, sizeof(pdst), "/students/photos/%s", fname);
+            if (!copy_file(psrc, pdst)) {
+                pdir.close();
+                snprintf(err, cap, "Apply of avatar %s failed", fname);
+                return false;
+            }
+        }
+        pdir.close();
     }
 
     char classes_dir[160];

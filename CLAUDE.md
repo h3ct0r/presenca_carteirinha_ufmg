@@ -9,7 +9,7 @@ open code-review backlog — this file is the always-loaded short version.
 
 ```sh
 pio run -e esp32p4                             # build device firmware
-pio test -e native                             # host unit tests (74 cases, 8 suites)
+pio test -e native                             # host unit tests (all suites)
 pio test -e native -f "native/test_roster"     # one suite
 ```
 
@@ -55,8 +55,9 @@ drivers/   lcd/, touch/, rfid/, audio/
 - Watch the LVGL heap: `LV_MEM_SIZE` is 128 KB and `LV_USE_ASSERT_MALLOC=1`
   turns exhaustion into a reboot. Prefer updating changed widgets over full
   rebuilds on large lists (roll call).
-- **No git in this repo → deletions are permanent.** Confirm before removing
-  files (e.g. the dead `scr_*` stubs).
+- **Git-tracked, but the user commits manually** — never commit, push, or open
+  PRs unless explicitly asked. Deletions are recoverable via git, but still
+  confirm before removing files (e.g. the dead `scr_*` stubs).
 - **No RTC** on the board — dates come from `lv_calendar`, not wall-clock time.
 
 ## Working style
@@ -64,5 +65,3 @@ drivers/   lcd/, touch/, rfid/, audio/
 - Add native tests for new hardware-free logic; add mocks (`lib/hw_mocks/`) for
   new hardware APIs.
 - Be direct about hard external deps (esp-dl) and unverifiable hardware paths.
-- Fonts enabled: Montserrat 14 (default), 20, 32 — plus custom FontAwesome
-  glyph fonts in `src/ui/assets/`.

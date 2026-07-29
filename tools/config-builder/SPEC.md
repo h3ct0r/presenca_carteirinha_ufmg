@@ -15,7 +15,10 @@ students, and classes; validate them exactly as the device will; and download a
 
 **Non-goals:** editing attendance; talking to the device (v1 downloads a file the
 user uploads via the device's existing web file manager — see contract §6);
-managing photos or ESP-DL models; being a general SD file browser.
+managing ESP-DL models; being a general SD file browser. *(Student **photos** were
+a former non-goal but are now in scope — the tool matches Moodle photos to
+students and bundles them into `config.tar`; see `STUDENT_PHOTOS.md` and the
+`untar.js` / `photomatch.js` modules.)*
 
 ## 2. Why this exists / relationship to the device
 
@@ -198,7 +201,8 @@ student can differ per class. See `docs/software/CONFIG_IMPORT.md` §3.3 and its
 The firmware reads only `id` from a roster entry and preserves `turma` on rewrite
 (no `roster.h` struct change needed). Validated in `validate.js` (`ROSTER_TURMA`).
 
-**Tests:** `node --test` → 50 cases (uid 6, tarball 7, validate 24, diario 13).
+**Tests:** `node --test` → 89 cases (uid 6, tarball 7, untar 7, validate 24,
+diario 13, photomatch 10, plus the schema-sync guard).
 Green.
 
 ## 10. Definition of done (v1)

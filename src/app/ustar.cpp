@@ -54,18 +54,35 @@ static bool path_is_safe(const char* n) {
     return true;
 }
 
-// The three authored file paths, and nothing else. Assumes path_is_safe passed.
+// True when `rest` is "<seg>/<suffix>" with exactly one non-empty segment and
+// no further '/' before the fixed suffix (e.g. "<CODE>/class.json").
+static bool one_segment_then(const char* rest, const char* suffix) {
+    const char* slash = strchr(rest, '/');
+    if (!slash || slash == rest) return false;  // missing or empty segment
+    return strcmp(slash, suffix) == 0;          // exact suffix, no further '/'
+}
+
+// True for "<pfx><seg>.jpg" with a single non-empty <seg> (no '/'). Used for the
+// authored avatar tree students/photos/<id>.jpg.
+static bool single_seg_file(const char* n, const char* pfx, const char* ext) {
+    size_t pl = strlen(pfx);
+    if (strncmp(n, pfx, pl) != 0) return false;
+    const char* seg = n + pl;                              // segment after the prefix
+    if (seg[0] == '\0' || strchr(seg, '/')) return false;  // empty or nested
+    size_t sl = strlen(seg), el = strlen(ext);
+    return sl > el && strcmp(seg + sl - el, ext) == 0;  // ends with ext, has a stem
+}
+
+// The authored file paths, and nothing else. Assumes path_is_safe passed.
 static bool is_whitelisted_file(const char* n) {
     if (strcmp(n, "config.json") == 0) return true;
     if (strcmp(n, "students/students.json") == 0) return true;
     // classes/<seg>/class.json — exactly one non-empty segment, no nested '/'.
-    static const char PFX[] = "classes/";
-    size_t pl = sizeof(PFX) - 1;
-    if (strncmp(n, PFX, pl) != 0) return false;
-    const char* rest = n + pl;             // "<seg>/class.json"
-    const char* slash = strchr(rest, '/');
-    if (!slash || slash == rest) return false;         // missing or empty segment
-    return strcmp(slash, "/class.json") == 0;          // exact suffix, no further '/'
+    if (strncmp(n, "classes/", 8) == 0) return one_segment_then(n + 8, "/class.json");
+    // students/photos/<id>.jpg — one non-empty segment ending in ".jpg".
+    if (strncmp(n, "students/photos/", 16) == 0)
+        return single_seg_file(n, "students/photos/", ".jpg");
+    return false;
 }
 
 bool ustar_name_allowed(const char* name) {

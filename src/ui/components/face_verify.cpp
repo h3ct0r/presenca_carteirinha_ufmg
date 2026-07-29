@@ -9,14 +9,18 @@
 #include "services/face_detection_service.h"
 #include "storage/checkin_store.h"
 #include "storage/photo_store.h"
+#include "ui/components/student_photo.h"
 #include "ui/theme/theme.h"
 
 static lv_obj_t* s_overlay = nullptr;
 static lv_timer_t* s_timer = nullptr;
 static lv_obj_t* s_img = nullptr;
 static lv_obj_t* s_boxes[FACE_MAX_BOXES];
+static lv_obj_t* s_arc = nullptr;
 static lv_obj_t* s_count_lbl = nullptr;
+static lv_obj_t* s_pill = nullptr;
 static lv_obj_t* s_status_lbl = nullptr;
+static bool s_detected = false;  // latch the "detected" pill styling once
 
 static lv_image_dsc_t s_dsc;
 static uint8_t* s_buf = nullptr;  // preview RGB565, reused across verifies
@@ -66,13 +70,21 @@ static void verify_tick(lv_timer_t*) {
     }
 
     int64_t now = esp_timer_get_time();
-    int remain = (int)((s_timeout_us - (now - s_start_us) + 999999) / 1000000);
-    if (remain < 0) remain = 0;
+    int64_t left_us = s_timeout_us - (now - s_start_us);
+    if (left_us < 0) left_us = 0;
+    int remain = (int)((left_us + 999999) / 1000000);       // seconds, rounded up
+    lv_arc_set_value(s_arc, (int32_t)(left_us / 1000));      // ms remaining -> ring
 
     if (n >= 1) {
         // Face seen: grab this frame as the check-in photo, then finish success.
-        lv_label_set_text(s_status_lbl, LV_SYMBOL_OK "  Face detected");
-        lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(THEME_SUCCESS), 0);
+        if (!s_detected) {
+            s_detected = true;
+            lv_label_set_text(s_status_lbl, LV_SYMBOL_OK "  Face detected");
+            lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(THEME_DARK_OK), 0);
+            lv_obj_set_style_bg_color(s_pill, lv_color_hex(THEME_DARK_OK), 0);
+            lv_obj_set_style_bg_opa(s_pill, LV_OPA_20, 0);
+            lv_obj_set_style_arc_color(s_arc, lv_color_hex(THEME_DARK_OK), LV_PART_INDICATOR);
+        }
         char path[96];
         if (checkin_store_next_path(s_id, s_date, s_code, path, sizeof(path))) {
             photo_store_encode_to(path, s_buf, FACE_PREVIEW_W, FACE_PREVIEW_H);
@@ -87,6 +99,31 @@ static void verify_tick(lv_timer_t*) {
     if (now - s_start_us >= s_timeout_us) {
         finish(false);
     }
+}
+
+// Small round avatar (reference photo if present, else a placeholder) shown for
+// context so the student sees whose attendance is being verified.
+static void verify_avatar(lv_obj_t* parent, const char* student_id) {
+    const int SZ = 64;
+    char src[80];
+    if (student_id && student_id[0] && student_photo_src(student_id, src, sizeof(src))) {
+        lv_obj_t* img = lv_image_create(parent);
+        lv_image_set_src(img, src);
+        lv_obj_set_style_radius(img, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_clip_corner(img, true, 0);
+        return;
+    }
+    lv_obj_t* ph = lv_obj_create(parent);
+    lv_obj_remove_flag(ph, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(ph, SZ, SZ);
+    lv_obj_set_style_radius(ph, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(ph, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(ph, LV_OPA_10, 0);
+    lv_obj_set_style_border_width(ph, 0, 0);
+    lv_obj_t* g = lv_label_create(ph);
+    lv_label_set_text(g, LV_SYMBOL_IMAGE);
+    lv_obj_set_style_text_color(g, lv_color_hex(THEME_DARK_MUTED), 0);
+    lv_obj_center(g);
 }
 
 void face_verify_open(const char* student_id, const char* student_name, const char* date,
@@ -105,38 +142,36 @@ void face_verify_open(const char* student_id, const char* student_name, const ch
     snprintf(s_date, sizeof(s_date), "%s", date ? date : "");
     snprintf(s_code, sizeof(s_code), "%s", class_code ? class_code : "");
     s_done = done;
+    s_detected = false;
     s_start_us = esp_timer_get_time();
     s_timeout_us = (int64_t)(timeout_s > 0 ? timeout_s : 1) * 1000000;
 
+    // Full-bleed overlay: viewfinder pinned to the top, a controls block filling
+    // (and centered in) the remaining height of the tall portrait screen.
     s_overlay = lv_obj_create(lv_layer_top());
     lv_obj_remove_style_all(s_overlay);
     lv_obj_set_size(s_overlay, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(s_overlay, lv_color_hex(THEME_DARK_BG), 0);
+    lv_obj_set_style_bg_color(s_overlay, lv_color_hex(THEME_DARK_BG_DEEP), 0);
     lv_obj_set_style_bg_opa(s_overlay, LV_OPA_COVER, 0);
     lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(s_overlay, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(s_overlay, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(s_overlay, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_top(s_overlay, 40, 0);
-    lv_obj_set_style_pad_row(s_overlay, 14, 0);
+    lv_obj_set_style_pad_all(s_overlay, 0, 0);
+    lv_obj_set_style_pad_row(s_overlay, 0, 0);
 
-    char who[64];
-    snprintf(who, sizeof(who), "%s", student_name ? student_name : "");
-    lv_obj_t* title = lv_label_create(s_overlay);
-    lv_label_set_text(title, "Show your face to the camera");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(THEME_DARK_TEXT), 0);
-    lv_obj_t* namel = lv_label_create(s_overlay);
-    lv_label_set_text(namel, who);
-    lv_obj_set_style_text_font(namel, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(namel, lv_color_hex(THEME_DARK_MUTED), 0);
-
-    // Live preview at native size so the face-box coordinates map 1:1.
+    // Live preview at native size so the face-box coordinates map 1:1. Rounded +
+    // clipped for a framed "viewfinder" look; the top corners blend into the bg.
     lv_obj_t* holder = lv_obj_create(s_overlay);
     lv_obj_remove_style_all(holder);
     lv_obj_set_size(holder, FACE_PREVIEW_W, FACE_PREVIEW_H);
     lv_obj_remove_flag(holder, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_radius(holder, 18, 0);
+    lv_obj_set_style_clip_corner(holder, true, 0);
+    lv_obj_set_style_border_width(holder, 1, 0);
+    lv_obj_set_style_border_color(holder, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_border_opa(holder, LV_OPA_10, 0);
 
     s_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
     s_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
@@ -160,12 +195,73 @@ void face_verify_open(const char* student_id, const char* student_name, const ch
         s_boxes[i] = b;
     }
 
-    s_count_lbl = lv_label_create(s_overlay);
+    // Controls block: grows to fill the space under the viewfinder, its content
+    // vertically centered so the tall portrait screen doesn't read as top-heavy.
+    lv_obj_t* body = lv_obj_create(s_overlay);
+    lv_obj_remove_style_all(body);
+    lv_obj_set_width(body, LV_PCT(100));
+    lv_obj_set_flex_grow(body, 1);
+    lv_obj_remove_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(body, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_hor(body, 24, 0);
+    lv_obj_set_style_pad_row(body, 16, 0);
+
+    lv_obj_t* title = lv_label_create(body);
+    lv_label_set_text(title, "Show your face to the camera");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(THEME_DARK_TEXT), 0);
+
+    // Avatar + name, side by side, for context on whose attendance this is.
+    lv_obj_t* who = lv_obj_create(body);
+    lv_obj_remove_style_all(who);
+    lv_obj_set_size(who, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_remove_flag(who, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(who, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(who, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(who, 12, 0);
+    verify_avatar(who, student_id);
+    lv_obj_t* namel = lv_label_create(who);
+    lv_label_set_text(namel, student_name && student_name[0] ? student_name : "");
+    lv_obj_set_style_text_font(namel, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(namel, lv_color_hex(THEME_DARK_TEXT), 0);
+
+    // Countdown ring with the remaining seconds in its center.
+    const int RING = 132;
+    s_arc = lv_arc_create(body);
+    lv_obj_set_size(s_arc, RING, RING);
+    lv_arc_set_rotation(s_arc, 270);
+    lv_arc_set_bg_angles(s_arc, 0, 360);
+    lv_arc_set_range(s_arc, 0, (int32_t)(s_timeout_us / 1000));
+    lv_arc_set_value(s_arc, (int32_t)(s_timeout_us / 1000));
+    lv_obj_remove_flag(s_arc, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    lv_obj_set_style_arc_width(s_arc, 8, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(s_arc, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(s_arc, LV_OPA_10, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(s_arc, 8, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(s_arc, lv_color_hex(THEME_DARK_ACCENT), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(s_arc, LV_OPA_TRANSP, LV_PART_KNOB);
+    lv_obj_set_style_pad_all(s_arc, 0, LV_PART_KNOB);
+
+    s_count_lbl = lv_label_create(s_arc);
     lv_label_set_text(s_count_lbl, "");
     lv_obj_set_style_text_font(s_count_lbl, &lv_font_montserrat_32, 0);
-    lv_obj_set_style_text_color(s_count_lbl, lv_color_hex(THEME_DARK_ACCENT), 0);
+    lv_obj_set_style_text_color(s_count_lbl, lv_color_hex(THEME_DARK_TEXT), 0);
+    lv_obj_center(s_count_lbl);
 
-    s_status_lbl = lv_label_create(s_overlay);
+    // Status pill: neutral while searching, green with a check on detect.
+    s_pill = lv_obj_create(body);
+    lv_obj_remove_flag(s_pill, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(s_pill, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_radius(s_pill, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(s_pill, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(s_pill, LV_OPA_10, 0);
+    lv_obj_set_style_border_width(s_pill, 0, 0);
+    lv_obj_set_style_pad_hor(s_pill, 16, 0);
+    lv_obj_set_style_pad_ver(s_pill, 8, 0);
+    s_status_lbl = lv_label_create(s_pill);
     lv_label_set_text(s_status_lbl, "Looking for a face...");
     lv_obj_set_style_text_font(s_status_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(s_status_lbl, lv_color_hex(THEME_DARK_MUTED), 0);

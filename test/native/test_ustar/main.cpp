@@ -221,6 +221,8 @@ static void test_name_allowed_predicate(void) {
     TEST_ASSERT_TRUE(ustar_name_allowed("students/students.json"));
     TEST_ASSERT_TRUE(ustar_name_allowed("classes/CS101-M1/class.json"));
     TEST_ASSERT_TRUE(ustar_name_allowed("classes/2026_2-DCC219/class.json"));
+    TEST_ASSERT_TRUE(ustar_name_allowed("students/photos/2025115525.jpg"));
+    TEST_ASSERT_TRUE(ustar_name_allowed("students/photos/abc.jpg"));
 
     TEST_ASSERT_FALSE(ustar_name_allowed("config.jsonx"));
     TEST_ASSERT_FALSE(ustar_name_allowed("students/other.json"));
@@ -230,6 +232,14 @@ static void test_name_allowed_predicate(void) {
     TEST_ASSERT_FALSE(ustar_name_allowed("/config.json"));            // absolute
     TEST_ASSERT_FALSE(ustar_name_allowed("classes/../class.json"));   // dotdot
     TEST_ASSERT_FALSE(ustar_name_allowed(""));
+
+    // Avatar tree: a single .jpg segment only.
+    TEST_ASSERT_FALSE(ustar_name_allowed("students/photos/"));          // no file
+    TEST_ASSERT_FALSE(ustar_name_allowed("students/photos/.jpg"));      // empty stem
+    TEST_ASSERT_FALSE(ustar_name_allowed("students/photos/a/b.jpg"));   // nested
+    TEST_ASSERT_FALSE(ustar_name_allowed("students/photos/id.png"));    // wrong ext
+    TEST_ASSERT_FALSE(ustar_name_allowed("students/photos/id.jpeg"));   // wrong ext
+    TEST_ASSERT_FALSE(ustar_name_allowed("students/photos/../x.jpg"));  // dotdot
 }
 
 int main(int, char**) {

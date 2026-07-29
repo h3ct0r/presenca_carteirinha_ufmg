@@ -145,6 +145,17 @@ Each stage ends green on `pio run -e esp32p4` and `pio test -e native`.
 
 ## Changelog
 
+- **2026-07-28** — **Verify overlay UI polish.** Reworked the `face_verify`
+  overlay layout for a more professional kiosk look on the 480×800 portrait
+  screen: full-bleed rounded/clipped **viewfinder** (thin border, top corners
+  blend into the deep bg) pinned to the top; a controls block that grows to fill
+  and centers its content in the remaining height (no more top-heavy dead space);
+  the bare countdown number replaced by a **circular countdown ring** (`lv_arc`)
+  with the seconds in its center; the muted status line replaced by a **status
+  pill** that turns green with a ✓ on detect; and a **student avatar + name**
+  context row (reuses `student_photo`, placeholder when no reference photo). Face
+  boxes still render 1:1 in preview pixels; tick/detect/timeout logic unchanged.
+  Build-verified (`pio run -e esp32p4`) + native 118/118; **not run on hardware.**
 - **2026-07-28** — **Stages 1–4 implemented.** Config `face_verify_seconds`
   (default 15, clamp 3–60) + Admin preset dropdown (Stage 1). `checkin_store`
   path/counter `/students/checkins/<id>/<date>_<code>_<NN>.jpg` and

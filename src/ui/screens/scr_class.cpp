@@ -397,7 +397,7 @@ static void build_session_open(void) {
         lv_obj_set_width(tl, LV_PCT(100));
     }
 
-    lv_obj_t* close = ui_make_button(summary, "Close session", &theme_style_btn_outline,
+    lv_obj_t* close = ui_make_button(summary, "Close session", &theme_style_btn_danger,
                                      close_session_cb, nullptr);
     lv_obj_set_width(close, LV_PCT(100));
 

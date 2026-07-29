@@ -7,6 +7,8 @@ import { validate, LIMITS } from './validate.js';
 import { buildFiles } from './model.js';
 import { makeTar } from './tarball.js';
 import { decodeCsvBytes, parseDiario, applyDiario } from './diario.js';
+import { parseTar } from './untar.js';
+import { matchPhotos } from './photomatch.js';
 
 const EXAMPLE_URL = new URL('../fixtures/example.model.json', import.meta.url);
 
@@ -116,6 +118,7 @@ function render() {
     importSection(),
     teachersSection(),
     studentsSection(),
+    photosSection(),
     classesSection(),
     reviewSection(),
   );
@@ -375,6 +378,193 @@ function studentsSection() {
   ]);
 }
 
+// --- student photos (Moodle) ----------------------------------------------
+// Session-scoped side store (NOT saved in model.json — re-import each session;
+// see STUDENT_PHOTOS.md §7). Each item: { filename, bytes, url, id, reason }.
+//   reason: 'exact' | 'suggested' | 'ambiguous' | 'unmatched'
+//   id:     the resolved student id, or '' when unassigned/skipped.
+let photoItems = [];
+let photoNote = null;  // { ok, text } status line from the last import.
+
+function basename(path) {
+  return String(path).split('/').pop();
+}
+
+// Decode a JPEG and re-encode it as a baseline 100×100 JPEG via a canvas
+// (guarantees baseline for the device's HW decoder, strips EXIF; STUDENT_PHOTOS
+// §6). Falls back to the original bytes if the browser can't decode it.
+function normalizeJpeg(bytes) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' }));
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = 100; c.height = 100;
+        c.getContext('2d').drawImage(img, 0, 0, 100, 100);
+        c.toBlob(
+          (blob) => {
+            URL.revokeObjectURL(url);
+            if (!blob) return resolve(bytes);
+            blob.arrayBuffer().then((ab) => resolve(new Uint8Array(ab))).catch(() => resolve(bytes));
+          },
+          'image/jpeg', 0.85,
+        );
+      } catch { URL.revokeObjectURL(url); resolve(bytes); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(bytes); };
+    img.src = url;
+  });
+}
+
+const IMG_RE = /\.(jpe?g|png|gif|webp|bmp)$/i;
+
+// Parse one or more Moodle photo tars, normalise each image, match by name to
+// the roster, and populate photoItems + a summary. Merges across tars/re-imports
+// (same basename → replaced).
+async function importPhotoTars(fileList) {
+  const files = Array.from(fileList || []).filter((f) => f);
+  if (!files.length) return;
+  if (!model.students.length) {
+    photoNote = { ok: false, text: '✕ Add or import students first — photos are matched to the roster by name.' };
+    render();
+    return;
+  }
+
+  // filename(basename) → raw bytes, across all selected tars.
+  const raw = new Map();
+  let tars = 0, badTars = 0, skipped = 0;
+  for (const f of files) {
+    try {
+      for (const e of parseTar(await f.arrayBuffer())) {
+        const bn = basename(e.name);
+        // Skip macOS archive cruft (AppleDouble sidecars, __MACOSX/, hidden files)
+        // and non-images — the "._Name.jpg" sidecars would otherwise match a
+        // student by name and clobber the real avatar bytes.
+        if (bn.startsWith('.') || e.name.includes('__MACOSX/') || !IMG_RE.test(bn)) {
+          skipped++;
+          continue;
+        }
+        raw.set(bn, e.data);
+      }
+      tars++;
+    } catch { badTars++; }
+  }
+
+  // Preserve any prior manual assignments for filenames we're re-importing.
+  const priorId = new Map(photoItems.map((it) => [it.filename, it.id]));
+
+  // Normalise every image (in parallel) and build id-keyed lookup for matching.
+  const names = [...raw.keys()];
+  const normalised = await Promise.all(names.map((n) => normalizeJpeg(raw.get(n))));
+  const bytesByName = new Map(names.map((n, i) => [n, normalised[i]]));
+
+  const { matched, review, unmatched } = matchPhotos(names, model.students);
+  const items = [];
+  const mk = (filename, id, reason) => {
+    const bytes = bytesByName.get(filename);
+    return {
+      filename, bytes, reason,
+      id: priorId.has(filename) ? priorId.get(filename) : id,
+      url: URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' })),
+    };
+  };
+  for (const m of matched) items.push(mk(m.filename, m.id, 'exact'));
+  for (const r of review) items.push(mk(r.filename, r.suggestion || '', r.reason));
+  for (const u of unmatched) items.push(mk(u.filename, '', 'unmatched'));
+
+  // Free the object URLs from any previous import before replacing the list.
+  for (const it of photoItems) if (it.url) URL.revokeObjectURL(it.url);
+  photoItems = items;
+
+  const parts = [`✓ ${raw.size} photo(s) from ${tars} tar(s)`];
+  if (badTars) parts.push(`${badTars} file(s) not a readable tar`);
+  if (skipped) parts.push(`${skipped} non-image entr(y/ies) skipped`);
+  photoNote = { ok: badTars === 0, text: parts.join(' · ') };
+  render();
+}
+
+// Photos ready to export (assigned to a real roster id), deduped by id.
+function exportablePhotos() {
+  const ids = new Set(model.students.map((s) => s.id));
+  const byId = new Map();
+  for (const it of photoItems) if (it.id && ids.has(it.id)) byId.set(it.id, it.bytes);
+  return [...byId.entries()].map(([id, data]) => ({ name: `students/photos/${id}.jpg`, data }));
+}
+
+function photosSection() {
+  const assigned = photoItems.filter((it) => it.id).length;
+  const needReview = photoItems.filter((it) => !it.id && it.reason !== 'unmatched').length
+    + photoItems.filter((it) => it.reason === 'suggested' && it.id).length;
+  const unmatched = photoItems.filter((it) => !it.id && it.reason === 'unmatched').length;
+  const withoutPhoto = model.students.filter(
+    (s) => !photoItems.some((it) => it.id === s.id)).length;
+
+  // File picker + drop zone (mirrors the Diário importer).
+  const file = el('input', { type: 'file', accept: '.tar,application/x-tar', multiple: true, class: 'hidden-dl' });
+  file.addEventListener('change', () => { importPhotoTars(file.files); file.value = ''; });
+  const dz = el('div', { class: 'dropzone' }, [
+    el('button', { class: 'small primary', text: 'Choose photo tar(s)…', onclick: () => file.click() }),
+    file,
+    el('span', { class: 'dz-text', text: 'or drag & drop Moodle photo .tar files here' }),
+  ]);
+  const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
+  dz.addEventListener('dragenter', (e) => { stop(e); dz.classList.add('dragover'); });
+  dz.addEventListener('dragover', (e) => { stop(e); dz.classList.add('dragover'); });
+  dz.addEventListener('dragleave', (e) => { stop(e); dz.classList.remove('dragover'); });
+  dz.addEventListener('drop', (e) => { stop(e); dz.classList.remove('dragover'); importPhotoTars(e.dataTransfer && e.dataTransfer.files); });
+
+  const note = photoNote
+    ? el('div', { class: 'import-result ' + (photoNote.ok ? 'ok' : 'bad'), text: photoNote.text })
+    : null;
+
+  const kids = [
+    el('h2', {}, ['Student photos (Moodle) ',
+      photoItems.length ? el('span', { class: 'count', text: `${assigned}/${photoItems.length}` }) : null]),
+    el('p', { class: 'hint', text:
+      'Upload the Moodle photos .tar (100×100 JPEGs named by student). They are matched '
+      + 'to the roster by name, re-keyed to matrícula, re-encoded to baseline JPEG, and '
+      + 'bundled into config.tar. Not saved in model JSON — re-import each session.' }),
+    el('div', { style: 'margin-top:16px' }, [dz]),
+    note,
+  ];
+
+  if (photoItems.length) {
+    kids.push(el('div', { class: 'photo-summary', text:
+      `${assigned} assigned · ${needReview} need review · ${unmatched} unmatched · ${withoutPhoto} student(s) without a photo` }));
+    kids.push(photoReviewList());
+  }
+  return el('section', {}, kids);
+}
+
+// A row per photo that isn't an exact auto-match: thumbnail + a student picker.
+function photoReviewList() {
+  const needing = photoItems.filter((it) => it.reason !== 'exact');
+  if (!needing.length) {
+    return el('p', { class: 'hint', text: '✓ Every uploaded photo matched a student exactly.' });
+  }
+  const studentOptions = (selected) => [
+    el('option', { value: '', text: '— skip —' }),
+    ...model.students.map((s) =>
+      el('option', { value: s.id, text: `${s.name} (${s.id})`, selected: s.id === selected || null })),
+  ];
+  const rows = needing.map((it) => {
+    const sel = el('select', { class: 'photo-pick' }, studentOptions(it.id));
+    sel.value = it.id;
+    sel.addEventListener('change', () => { it.id = sel.value; render(); });
+    const badge = it.reason === 'ambiguous' ? 'ambiguous' : it.reason === 'suggested' ? 'suggested' : 'no match';
+    return el('div', { class: 'photo-row' }, [
+      el('img', { src: it.url, class: 'photo-thumb', alt: it.filename, width: 48, height: 48 }),
+      el('div', { class: 'photo-meta' }, [
+        el('div', { class: 'photo-name', text: it.filename }),
+        el('span', { class: 'tag', text: badge }),
+      ]),
+      sel,
+    ]);
+  });
+  return el('div', { class: 'photo-review' }, rows);
+}
+
 function importStudentsCsv(text) {
   for (const line of text.split(/\r?\n/)) {
     const trimmed = line.trim();
@@ -484,7 +674,7 @@ function hasContent() {
 
 // --- file I/O -------------------------------------------------------------
 function downloadTar() {
-  const tar = makeTar(buildFiles(model));
+  const tar = makeTar([...buildFiles(model), ...exportablePhotos()]);
   triggerDownload(new Blob([tar], { type: 'application/x-tar' }), 'config.tar');
 }
 

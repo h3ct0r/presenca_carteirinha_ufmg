@@ -30,9 +30,12 @@ A **plain (uncompressed) POSIX `ustar`** archive whose entries are the
 config.json
 students/students.json
 classes/<CODE>/class.json          (one per class, <CODE> matches the "code" field)
+students/photos/<id>.jpg           (optional; one per student with an authored avatar)
 ```
 
 That is the **entire** allowed set. See §4 for why nothing else is permitted.
+Student avatars (`students/photos/<id>.jpg`) are optional and additive — a tar
+without them is still valid; see [`STUDENT_PHOTOS.md`](STUDENT_PHOTOS.md).
 
 Reference sample tree: [`docs/sd_card_example/`](sd_card_example/). Authoring a
 tar is literally "edit that tree, then archive these three kinds of file."
@@ -46,9 +49,11 @@ The device **produces** data that was never authored on a laptop and must
 |------|--------|-----------|
 | `/config.json` | authored | **overwrite** |
 | `/students/students.json` | authored | **overwrite** |
+| `/students/photos/<id>.jpg` | authored (avatars) | **overwrite** (create dir if new) |
 | `/classes/<CODE>/class.json` | authored | **overwrite** (create dir if new) |
 | `/classes/<CODE>/attendance/**` | device (roll-call) | **preserve — never touch** |
 | `/photos/**` | device (snapshots) | **preserve** |
+| `/students/checkins/**` | device (check-in snapshots) | **preserve** |
 | `/csv_export/**` | device | **preserve** |
 | `/backup/**` | device (pre-wipe snapshot) | **preserve** |
 | `/models/**` | provisioning (large) | **preserve** |
@@ -184,11 +189,17 @@ Rules (mirror `roster_service.cpp`):
   - `config.json`
   - `students/students.json`
   - `classes/<seg>/class.json` where `<seg>` has no `/` or `..`
+  - `students/photos/<seg>.jpg` where `<seg>` has no `/` or `..` (a student id;
+    the builder re-keys avatars name→id — unknown ids are harmless on the device,
+    they simply never display)
   Anything else — especially any `attendance/` path, `..`, or an absolute path —
   is **rejected and aborts the whole import** (classic tar/zip-slip defense; this
   is the S1 concern, so it is not optional).
-- **Size:** the device caps the staged tar (suggested **≤ 1 MB**; config for 600
-  students + 12 classes is still well under 100 KB). Oversize → reject.
+- **Size:** the device caps the staged tar at **≤ 16 MB** (raised from 1 MB to
+  fit bundled avatars — ~600 students of 100×100 JPEGs is < 6 MB; see
+  STUDENT_PHOTOS.md §9). Oversize → reject. The current importer reads the tar
+  into a single PSRAM-backed buffer; a true streaming unpack (STUDENT_PHOTOS.md
+  §3) is a future optimization, not required at this cap.
 
 ## 5. Device import flow (firmware side — IMPLEMENTED)
 
@@ -196,7 +207,7 @@ Implemented in [`src/services/import_service.cpp`](../../src/services/import_ser
 (`import_service_run`). Guarantees, in order:
 
 1. **Read** the staged tar (`/config.tar`) into a size-capped heap buffer
-   (≤ 1 MB, from PSRAM — never the 128 KB LVGL heap).
+   (≤ 16 MB, from PSRAM — never the 128 KB LVGL heap).
 2. **Structural + §4 check:** parse the ustar and enforce the name whitelist on
    every entry ([`src/app/ustar.cpp`](../../src/app/ustar.cpp)). A disallowed
    path (`..`, absolute, non-whitelisted) aborts here — before anything is
@@ -211,8 +222,10 @@ Implemented in [`src/services/import_service.cpp`](../../src/services/import_ser
    state — `config_validate_tree()` / `roster_validate_tree()`. **Any failure →
    discard staging, live config untouched.**
 6. **Apply** each authored file into place with the atomic `temp → remove →
-   rename` pattern, per file (FAT has no atomic dir swap; attendance / photos /
-   models / backup are preserved in place).
+   rename` pattern, per file — the three JSON kinds **and** any staged
+   `students/photos/<id>.jpg` avatars (dir created if new, files overwritten).
+   Attendance / device `/photos/**` / `/students/checkins/**` / models / backup
+   are never named here, so they are preserved in place.
 7. **Reload** config + roster services (`*_service_reload()`), which republish
    status so the UI refreshes on its own.
 8. **Sentinel:** on the SD path, rename `/config.tar → /config.tar.imported` so
@@ -260,6 +273,13 @@ worse than the current file editor — do not ship one.
 - The tar itself is unversioned; the file schemas version themselves.
 
 ### Changelog
+- **2026-07-28** — **student avatars are now bundled in the tar.** Added a fourth
+  authored kind, `students/photos/<id>.jpg` (§1, §2, §4), overwritten on import
+  beside `students.json` (dir created if new); device `/photos/**` and
+  `/students/checkins/**` are preserved. Raised the staged-tar cap **1 MB → 16 MB**
+  (§4, §5) to fit bundled avatars. Enforced by `ustar_name_allowed`
+  (`src/app/ustar.cpp`) and applied by `import_service.cpp`; the config-builder
+  re-keys Moodle photos name→id and packs them (STUDENT_PHOTOS.md).
 - **2026-07-28** — **photo check-in is now class-only.** Removed
   `capture_photos` from `config.json` (§3.1) — there is no device-wide capture
   flag. Documented the optional per-class attendance fields in `class.json`

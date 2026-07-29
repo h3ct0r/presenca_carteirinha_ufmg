@@ -236,6 +236,18 @@
 
     .hidden-dl { display: none; }
 
+    /* ---- student photos ---- */
+    .photo-summary { margin-top: var(--sp-3); font-size: 12.5px; font-family: var(--mono); color: var(--muted); }
+    .photo-review { margin-top: var(--sp-3); display: flex; flex-direction: column; gap: 6px; max-height: 340px; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+    .photo-review::-webkit-scrollbar { width: 11px; }
+    .photo-review::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; border: 3px solid var(--surface); }
+    .photo-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: var(--radius-sm); background: var(--surface-2); border: 1px solid var(--line-soft); }
+    .photo-thumb { width: 48px; height: 48px; flex: none; border-radius: 6px; object-fit: cover; background: var(--field); border: 1px solid var(--line); }
+    .photo-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+    .photo-name { font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .photo-meta .tag { align-self: flex-start; font: 600 10px/1.6 var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--warn); background: var(--warn-soft); padding: 2px 7px; border-radius: 5px; }
+    .photo-pick { width: 230px; max-width: 45%; flex: none; padding: 6px 8px; font-size: 12.5px; }
+
     /* ---- responsive ---- */
     @media (max-width: 720px) {
       .row.teacher, .row.student { grid-template-columns: 1fr 1fr; }

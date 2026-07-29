@@ -56,19 +56,35 @@ Everything camera/LVGL is **build-verified only**. On device, verify:
 - Also re-check the earlier build-verified UI on device: class hub/session nav,
   timed attendance, kiosk numeric exit keypad, class-settings scroll/keyboard.
 
-### 2. Student avatar ingestion (unbuilt — avatars are always the placeholder)
-Nothing puts `/students/photos/<id>.jpg` on the card yet. Until built, the
-check-in overlay + roll call show the placeholder and "0/N with photo".
-`docs/software/STUDENT_PHOTOS.md` is the proposal (Moodle tar → rename to
-matrícula in the config-builder → ship in `config.tar`). This is a real feature,
-not just polish.
+### 2. Student avatar ingestion (BUILT 2026-07-28 — validate on hardware)
+The config-builder now ingests the Moodle photo tar (parse → match by name →
+re-key to matrícula → re-encode baseline 100×100 → bundle as
+`students/photos/<id>.jpg`), and the device importer whitelists + applies that
+tree (cap raised 1 MB → 16 MB). New builder modules `untar.js` / `photomatch.js`
+(node-tested); firmware `ustar.cpp` / `import_service.cpp` (native-tested,
+119/119). See `docs/software/STUDENT_PHOTOS.md` (status + changelog). **Verified
+in a browser + against system `tar` + native tests; NOT run on device** — flash
+a real `config.tar` with photos and confirm avatars decode on the check-in /
+kiosk / face-verify overlays (JPEG-on-SD via TJPGD is the untested path). Still
+deferred: streaming unpack, device-side unknown-id skip+warn, orphan cleanup.
 
 ### 3. Check-in photo review aid (Stage 5, deferred)
 No way yet to browse `/students/checkins/<id>/` to audit "same person every tap"
 — reviewed off-device by opening the folder. An on-device gallery or a
 config-builder/desktop viewer is out of scope but wanted eventually.
 
-### 4. Smaller / optional
+### 4. On-device config-builder (DESIGNED, not built)
+Idea explored 2026-07-28: serve the browser-only config-builder from the ESP32
+over the existing soft-AP. Cheap (~23 KB gzipped vs ~2.36 MB free flash; the
+device does zero compute — the tool is 100% client-side) and it would give
+permanent tool/firmware **schema parity** plus **pre-fill from the live config**.
+Full design, measured numbers, security analysis, and a 4-step plan in
+`docs/software/ONBOARD_CONFIG_BUILDER.md`. **Decisions taken:** trust WPA2 alone
+for now, load passwords as usual, revisit password exposure later. Note it found
+two *pre-existing* holes (unauthenticated `/api/upload` to the SD; plaintext
+teacher passwords readable via `/api/read`) — both deferred by decision.
+
+### 5. Smaller / optional
 - **Config-builder per-class attendance fields:** the builder does NOT emit
   `capture_photos` / `face_verify_seconds` / `timed_attendance` /
   `min_attendance_min`, so importing a `config.tar` **resets** them to defaults
@@ -83,14 +99,15 @@ config-builder/desktop viewer is out of scope but wanted eventually.
 ## Verify commands
 ```sh
 pio run -e esp32p4                 # device build
-pio test -e native                 # host unit tests (118)
-cd tools/config-builder && node --test   # web-ui tests (72)
+pio test -e native                 # host unit tests (119)
+cd tools/config-builder && node --test   # web-ui tests (89)
 pio device monitor -e esp32p4      # serial (camera/panic logs)
 ```
 
 ## Key pointers
 - Feature docs: `FACE_CHECKIN.md`, `CLASS_SCREEN_REVAMP.md`, `CONFIG_IMPORT.md`,
-  `STUDENT_PHOTOS.md`, and this repo's `CLAUDE.md` (honesty rule: report as
+  `STUDENT_PHOTOS.md`, `ONBOARD_CONFIG_BUILDER.md` (design only), and this
+  repo's `CLAUDE.md` (honesty rule: report as
   build/native-verified, **not run on hardware**, unless actually flashed).
 - Camera stack: `services/face_detection_service`, `camera/csi_pipeline`,
   `camera/ov02c10_camera`, `storage/photo_store`.

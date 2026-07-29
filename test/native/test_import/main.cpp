@@ -146,6 +146,38 @@ static void test_import_applies_and_backs_up(void) {
     TEST_ASSERT_TRUE(mocksd_exists("/config.tar.imported"));
 }
 
+static void test_import_applies_avatars_and_preserves_device_photos(void) {
+    setup_live();
+    // Device-produced trees that MUST survive an import (never named by apply).
+    mocksd_add_file("/students/checkins/A/2026-07-28_CS101_01.jpg", "CHECKIN-A");
+    mocksd_add_file("/photos/snap.jpg", "DEVICE-SNAP");
+
+    TarBuf t;
+    t.add("config.json", NEW_CONFIG);
+    t.add("students/students.json", NEW_STUDENTS);
+    t.add("classes/CS101-M1/class.json", NEW_CLASS);
+    t.add("students/photos/A.jpg", "AVATAR-A-BYTES");  // authored avatar
+    t.end();
+    t.stage_at("/config.tar");
+
+    import_result_t r = import_service_run("/config.tar");
+    TEST_ASSERT_TRUE_MESSAGE(r.ok, r.message);
+
+    // The avatar landed beside students.json with its exact bytes.
+    char buf[64];
+    size_t n = mocksd_read_file("/students/photos/A.jpg", buf, sizeof(buf) - 1);
+    buf[n] = '\0';
+    TEST_ASSERT_EQUAL_STRING("AVATAR-A-BYTES", buf);
+
+    // Device-produced snapshots are untouched.
+    n = mocksd_read_file("/students/checkins/A/2026-07-28_CS101_01.jpg", buf, sizeof(buf) - 1);
+    buf[n] = '\0';
+    TEST_ASSERT_EQUAL_STRING("CHECKIN-A", buf);
+    n = mocksd_read_file("/photos/snap.jpg", buf, sizeof(buf) - 1);
+    buf[n] = '\0';
+    TEST_ASSERT_EQUAL_STRING("DEVICE-SNAP", buf);
+}
+
 static void test_revert_restores_previous(void) {
     // Chains from the import above: live is NEW, /backup/previous holds OLD.
     import_result_t r = import_service_revert();
@@ -206,5 +238,6 @@ int main(int, char**) {
     RUN_TEST(test_revert_restores_previous);  // chains from the import above
     RUN_TEST(test_import_rejects_zip_slip_leaving_live_intact);
     RUN_TEST(test_import_rejects_invalid_config_leaving_live_intact);
+    RUN_TEST(test_import_applies_avatars_and_preserves_device_photos);
     return UNITY_END();
 }

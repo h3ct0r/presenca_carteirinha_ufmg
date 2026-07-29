@@ -1,23 +1,38 @@
 # Student Photos (Moodle) → Device — Design & Implementation Plan
 
-**Status:** partially built. The **device display side (decision #4) is
-implemented** (2026-07-27): when a student registers presence in a class
-session, the check-in feedback overlay shows their avatar from
-`/students/photos/<id>.jpg` if it exists — success *or* failure — falling back to
-a placeholder otherwise. Rendering uses the LVGL TJPGD decoder (`LV_USE_TJPGD`)
-over a read-only SD filesystem driver on drive `S`
-([`src/ui/lvgl_fs_sd.cpp`](../../src/ui/lvgl_fs_sd.cpp)); the path helper is
-[`src/ui/components/student_photo.cpp`](../../src/ui/components/student_photo.cpp)
-and the overlay lives in the session tab of
-[`src/ui/screens/scr_class.cpp`](../../src/ui/screens/scr_class.cpp). **Build-
-verified, not run on hardware.** **The ingestion side is NOT built** — nothing
-yet gets photos onto the card (the config-builder does not parse the Moodle tar,
-re-key name→id, or bundle photos into `config.tar`; the importer's §4 whitelist
-does not yet allow `students/photos/**`). Until that lands there are no avatars
-to show, so the device always falls back to the placeholder. The rest of this
-doc is the plan for that ingestion work; follow the firmware-first sync order
-(contract → firmware → tool) and report changes as *build/test-verified, not run
-on hardware* until proven on the device.
+**Status: built end-to-end (2026-07-28).** Both sides now exist:
+
+- **Ingestion (this feature)** — the config-builder parses the Moodle photo
+  `.tar` in the browser, matches each filename to a student by name, re-keys it
+  name→matrícula, re-encodes it to a baseline 100×100 JPEG, and bundles the
+  results into `config.tar` as `students/photos/<id>.jpg`. New pure modules
+  [`untar.js`](../../tools/config-builder/src/untar.js) (ustar reader) and
+  [`photomatch.js`](../../tools/config-builder/src/photomatch.js) (name→id
+  matching) are `node --test`ed; the upload + review UI lives in
+  [`app.js`](../../tools/config-builder/src/app.js). The device importer now
+  whitelists and applies `students/photos/<id>.jpg`
+  ([`src/app/ustar.cpp`](../../src/app/ustar.cpp),
+  [`src/services/import_service.cpp`](../../src/services/import_service.cpp)),
+  overwriting avatars while preserving device `/photos/**` and
+  `/students/checkins/**`; the staged-tar cap was raised 1 MB → 16 MB. The
+  contract change is in [`CONFIG_IMPORT.md`](CONFIG_IMPORT.md) (§1/§2/§4/§5).
+  *Builder is `node --test`-verified (untar round-trips, matching, and a
+  system-`tar` round-trip); firmware is build- + native-test-verified
+  (`test_ustar`, `test_import`), **not run on hardware.***
+- **Device display (decision #4)** — implemented earlier (2026-07-27): the
+  check-in feedback overlay shows the avatar from `/students/photos/<id>.jpg` if
+  it exists, else a placeholder. Rendering uses the LVGL TJPGD decoder
+  (`LV_USE_TJPGD`) over the read-only SD `S` driver
+  ([`src/ui/lvgl_fs_sd.cpp`](../../src/ui/lvgl_fs_sd.cpp)); the path helper is
+  [`src/ui/components/student_photo.cpp`](../../src/ui/components/student_photo.cpp),
+  reused by the kiosk success screen and the face-verify overlay. **Build-
+  verified, not run on hardware.**
+
+**Deferred (see §3, §11):** a true *streaming* unpack (the importer still buffers
+the whole tar in PSRAM — fine at the 16 MB cap); device-side skip+warn for
+unknown-id avatars (harmless — they just never display); and orphan cleanup on
+re-import. The staged-plan sections below are the original design; the Changelog
+records what actually shipped.
 
 Related: [`CONFIG_IMPORT.md`](CONFIG_IMPORT.md) (the tar contract this extends),
 [`PROJECT_HANDOFF.md`](PROJECT_HANDOFF.md) (project state), the config-builder in
@@ -298,6 +313,28 @@ Steps 1–3 are self-contained and de-risk matching quality + sizing on real dat
 ## 12. Note on scope
 
 This intentionally **expands a former non-goal** — the config-builder SPEC lists
-"managing photos" under non-goals. That line should be updated when this lands.
-The device side (import endpoint + JPEG-on-SD display) is the bulk of the effort
-and is entirely new firmware.
+"managing photos" under non-goals; that line is updated now that this shipped
+(SPEC §2). The device side (import whitelist/apply + JPEG-on-SD display) reused
+the existing import endpoint and display path rather than being new firmware.
+
+---
+
+## Changelog
+
+- **2026-07-28** — **ingestion shipped (steps 1–4), display already present
+  (step 5).** Contract: `students/photos/<id>.jpg` whitelisted, cap 1 MB → 16 MB,
+  merge-rule + changelog (CONFIG_IMPORT.md). Firmware: `ustar.cpp` whitelists the
+  avatar path (single `.jpg` segment); `import_service.cpp` applies staged
+  avatars (overwrite, dir-created) and preserves device `/photos/**` +
+  `/students/checkins/**`; native tests extended (`test_ustar` predicate,
+  `test_import` avatar-apply + preservation) → **119/119**. Builder: `untar.js`
+  ustar reader + `photomatch.js` name→id matcher (canonical/loose keys, exact →
+  auto, ambiguous/fuzzy → review), both `node --test`ed (**89** cases total); a
+  "Student photos (Moodle)" section in `app.js` with tar upload, canvas re-encode
+  to baseline 100×100 JPEG (pass-through fallback), a review UI (thumbnail +
+  student picker per non-exact match, summary counts), macOS AppleDouble/`._`
+  filtering, and export packing into `config.tar`. Verified end-to-end in a
+  browser and against the system `tar` tool. **Not run on device hardware.**
+  Decisions taken from §11 proposals: normalise (not pass-through), skip+warn
+  unknown ids (builder-side; device tolerates them), no gzip. Deferred: streaming
+  unpack, device-side unknown-id filtering, orphan cleanup.
