@@ -13,6 +13,7 @@ static const char* TAG = "attend";
 
 static constexpr int MAX_PRESENT = 100;  // == ROSTER_MAX_CLASS_STUDENTS
 static constexpr int ID_LEN = 20;
+static constexpr long long MINUTE_US = 60000000LL;
 
 static char s_dir[24] = "";
 static char s_date[12] = "";
@@ -219,13 +220,28 @@ bool attendance_set(const char* id, bool present) {
     return append_record(id, present, 0, false);
 }
 
+// Whole minutes still to wait, rounded up so a student is never told "0 min"
+// while the threshold is not actually met yet.
+static int remaining_min(long long elapsed_us, int threshold_min) {
+    long long need = (long long)threshold_min * MINUTE_US - elapsed_us;
+    if (need <= 0) return 0;
+    return (int)((need + MINUTE_US - 1) / MINUTE_US);
+}
+
+// Microseconds since the arrival tap at index `t`, clamped at 0 (a monotonic
+// clock shouldn't go backwards, but a bad `now_us` must not underflow).
+static long long tapin_elapsed(int t, long long now_us) {
+    long long e = now_us - s_tapin_us[t];
+    return e < 0 ? 0 : e;
+}
+
 att_state_t attendance_tap(const char* id, long long now_us, int threshold_min) {
-    att_state_t r = {ATT_ABSENT, 0};
+    att_state_t r = {ATT_ABSENT, 0, 0};
     if (!s_open || !id || !id[0]) return r;
 
     int p = present_find(id);
-    if (p >= 0) {  // already finalized present — an extra tap is a no-op
-        r.status = ATT_PRESENT;
+    if (p >= 0) {  // registered already — this tap is ignored
+        r.status = ATT_ALREADY_PRESENT;
         r.minutes = s_present_min[p];
         return r;
     }
@@ -234,34 +250,39 @@ att_state_t attendance_tap(const char* id, long long now_us, int threshold_min) 
     if (t < 0) {  // first tap: record arrival
         tapin_add(id, now_us);
         r.status = ATT_IN_PROGRESS;
+        r.remaining = remaining_min(0, threshold_min);
         return r;
     }
 
-    // Second tap: finalize.
-    int minutes = (int)((now_us - s_tapin_us[t]) / 60000000LL);
-    if (minutes < 0) minutes = 0;
-    tapin_remove(t);
-    if (minutes >= threshold_min) {
-        present_set(id, true, minutes);
-        append_record(id, true, minutes, true);
-        r.status = ATT_PRESENT;
-    } else {
-        // Records the short visit (folds to absent) so the duration isn't lost.
-        append_record(id, false, minutes, true);
-        r.status = ATT_LEFT_EARLY;
+    long long elapsed = tapin_elapsed(t, now_us);
+    int minutes = (int)(elapsed / MINUTE_US);
+    if (minutes < threshold_min) {
+        // Too soon: nothing is written and the arrival stands, so the student
+        // can tap again later and still be registered.
+        r.status = ATT_TOO_EARLY;
+        r.minutes = minutes;
+        r.remaining = remaining_min(elapsed, threshold_min);
+        return r;
     }
+
+    // Threshold met: register the presence and close out the arrival.
+    tapin_remove(t);
+    present_set(id, true, minutes);
+    append_record(id, true, minutes, true);
+    r.status = ATT_PRESENT;
     r.minutes = minutes;
     return r;
 }
 
-att_state_t attendance_tap_state(const char* id, long long now_us) {
-    att_state_t r = {ATT_ABSENT, 0};
+att_state_t attendance_tap_state(const char* id, long long now_us, int threshold_min) {
+    att_state_t r = {ATT_ABSENT, 0, 0};
     if (!s_open || !id || !id[0]) return r;
     int t = tapin_find(id);
     if (t >= 0) {
+        long long elapsed = tapin_elapsed(t, now_us);
         r.status = ATT_IN_PROGRESS;
-        r.minutes = (int)((now_us - s_tapin_us[t]) / 60000000LL);
-        if (r.minutes < 0) r.minutes = 0;
+        r.minutes = (int)(elapsed / MINUTE_US);
+        r.remaining = remaining_min(elapsed, threshold_min);
         return r;
     }
     int p = present_find(id);

@@ -300,19 +300,23 @@ static void register_recognized(int idx) {
         switch (s.status) {
             case ATT_PRESENT:
                 color = THEME_SUCCESS;
-                snprintf(text, sizeof(text), "Present - %d min", s.minutes);
+                snprintf(text, sizeof(text), "Presence registered - %d min", s.minutes);
                 beeper_beep();
                 break;
-            case ATT_LEFT_EARLY:
+            case ATT_ALREADY_PRESENT:
+                color = THEME_SUCCESS;
+                snprintf(text, sizeof(text), "Already registered - %d min", s.minutes);
+                beeper_beep();
+                break;
+            case ATT_TOO_EARLY:
                 color = THEME_WARNING;
                 icon = LV_SYMBOL_WARNING;
-                snprintf(text, sizeof(text), "Left early - %d/%d min", s.minutes,
-                         s_cls->min_attendance_min);
+                snprintf(text, sizeof(text), "Too soon - %d min left", s.remaining);
                 beeper_error();
                 break;
             case ATT_IN_PROGRESS:
             default:
-                snprintf(text, sizeof(text), "Checked in - tap again to leave");
+                snprintf(text, sizeof(text), "Checked in - tap again in %d min", s.remaining);
                 beeper_beep();
                 break;
         }
@@ -457,21 +461,27 @@ static void build_session_open(void) {
         if (!st) continue;
         bool here = attendance_is_present(st->id);
 
-        // In timed mode a student may be "in class N min" without being present
-        // yet; reflect that with an amber chip and a running-minutes subtitle.
+        // In timed mode a student may be waiting out the threshold without being
+        // present yet; reflect that with an amber chip and a countdown subtitle.
         uint32_t bg = here ? THEME_SUCCESS_SOFT : THEME_SURFACE;
         uint32_t edge = here ? THEME_SUCCESS : THEME_BORDER;
         const char* trail_icon = here ? LV_SYMBOL_OK : "";
         uint32_t trail_color = here ? THEME_SUCCESS : THEME_MUTED;
         char sub[40] = "";
         if (s_cls->timed_attendance) {
-            att_state_t s = attendance_tap_state(st->id, esp_timer_get_time());
+            att_state_t s = attendance_tap_state(st->id, esp_timer_get_time(),
+                                                 s_cls->min_attendance_min);
             if (s.status == ATT_IN_PROGRESS) {
                 bg = THEME_WARNING_SOFT;
                 edge = THEME_WARNING;
                 trail_icon = LV_SYMBOL_REFRESH;
                 trail_color = THEME_WARNING;
-                snprintf(sub, sizeof(sub), "in class %d min", s.minutes);
+                if (s.remaining > 0) {
+                    snprintf(sub, sizeof(sub), "in class %d min - %d to go", s.minutes,
+                             s.remaining);
+                } else {
+                    snprintf(sub, sizeof(sub), "in class %d min - can confirm", s.minutes);
+                }
             } else if (s.status == ATT_PRESENT) {
                 snprintf(sub, sizeof(sub), "present %d min", s.minutes);
             }

@@ -34,34 +34,46 @@ bool attendance_set(const char* student_id, bool present);
 
 // --- Timed (double-tap) attendance ------------------------------------------
 //
-// In timed mode a student taps twice: once on arrival, once on leaving. They
-// only count as present if (leave - arrive) >= threshold. Duration is measured
-// from a monotonic clock (esp_timer_get_time), so it works without an RTC. The
-// in-progress "tapped in, not out" state lives in RAM only — a reboot voids it.
-// Finalized results are written to the same JSONL with an extra "min" field:
+// In timed mode a student taps twice: once on arrival, once to confirm after
+// they have been in class long enough. The confirming tap only counts once
+// (now - arrive) >= threshold; a tap before that is rejected without changing
+// anything, so the student can simply come back later — the arrival still
+// stands and the rejected tap reports the minutes still to wait. Once the
+// presence is registered, further taps are ignored (ATT_ALREADY_PRESENT).
+//
+// Elapsed time comes from a monotonic clock (esp_timer_get_time), so it works
+// without an RTC. The "tapped in, not confirmed" state lives in RAM only — a
+// reboot voids it. Registered results are written to the same JSONL with an
+// extra "min" field:
 //   {"id":"2023-0142","present":true,"min":52}
 
 typedef enum {
-    ATT_ABSENT = 0,    // not tapped (or tapped out too early)
-    ATT_IN_PROGRESS,   // tapped in, waiting for the tap-out
-    ATT_PRESENT,       // tapped out with enough minutes
-    ATT_LEFT_EARLY,    // tapped out below the threshold (not counted present)
+    ATT_ABSENT = 0,       // not tapped
+    ATT_IN_PROGRESS,      // tapped in, waiting out the threshold
+    ATT_PRESENT,          // this tap registered the presence
+    ATT_TOO_EARLY,        // tapped before the threshold: nothing recorded, still waiting
+    ATT_ALREADY_PRESENT,  // presence was already registered; this tap is ignored
 } att_status_t;
 
 typedef struct {
     att_status_t status;
-    int minutes;  // elapsed so far (IN_PROGRESS) or measured (PRESENT/LEFT_EARLY)
+    int minutes;    // elapsed so far (IN_PROGRESS/TOO_EARLY) or measured (PRESENT/ALREADY_PRESENT)
+    int remaining;  // whole minutes left before a tap can register (IN_PROGRESS/TOO_EARLY; else 0)
 } att_state_t;
 
-// Handles a timed tap for a student in the open session. First tap records the
-// arrival (RAM); the second finalizes: present (writes present+min) when the
-// gap is >= threshold_min, else left-early. `now_us` is a monotonic timestamp
+// Handles a timed tap for a student in the open session. The first tap records
+// the arrival (RAM only). A later tap registers the presence (writes
+// present+min) once the gap is >= threshold_min; before that it changes nothing
+// and returns ATT_TOO_EARLY with `remaining` set, and once registered it
+// returns ATT_ALREADY_PRESENT. `now_us` is a monotonic timestamp
 // (microseconds). Returns the resulting state.
 att_state_t attendance_tap(const char* student_id, long long now_us, int threshold_min);
 
 // The student's current timed state in the open session (for the roll call).
-// now_us lets IN_PROGRESS report the minutes elapsed so far.
-att_state_t attendance_tap_state(const char* student_id, long long now_us);
+// A query, never a tap: it reports ATT_IN_PROGRESS (with the minutes elapsed so
+// far and still to wait, per threshold_min) or ATT_PRESENT, never TOO_EARLY /
+// ALREADY_PRESENT.
+att_state_t attendance_tap_state(const char* student_id, long long now_us, int threshold_min);
 
 // Ends the open session (clears memory; the log is already on disk).
 void attendance_close(void);

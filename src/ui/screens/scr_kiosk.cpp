@@ -189,8 +189,9 @@ static void show_invalid(const char* typed) {
     s_timer = lv_timer_create(result_timer_cb, RESULT_MS, nullptr);
 }
 
-// Timed-mode result panel: checked in (accent), present (green), or left early
-// (red), each with the photo and the measured/running minutes.
+// Timed-mode result panel: checked in (accent), registered / already registered
+// (green), or tapped too soon (amber, nothing recorded — the student is told how
+// many minutes are left), each with the photo and the relevant minutes.
 static void show_timed_result(const student_t* st, att_state_t s) {
     uint32_t bg;
     const char* head;
@@ -198,21 +199,27 @@ static void show_timed_result(const student_t* st, att_state_t s) {
     switch (s.status) {
         case ATT_PRESENT:
             bg = THEME_SUCCESS;
-            head = "Present";
+            head = "Presence registered";
             snprintf(sub, sizeof(sub), "%d minutes", s.minutes);
             beeper_beep();
             break;
-        case ATT_LEFT_EARLY:
-            bg = THEME_DANGER;
-            head = "Left early";
-            snprintf(sub, sizeof(sub), "only %d minutes", s.minutes);
+        case ATT_ALREADY_PRESENT:
+            bg = THEME_SUCCESS;
+            head = "Already registered";
+            snprintf(sub, sizeof(sub), "%d minutes - no need to tap again", s.minutes);
+            beeper_beep();
+            break;
+        case ATT_TOO_EARLY:
+            bg = THEME_WARNING;
+            head = "Too soon";
+            snprintf(sub, sizeof(sub), "tap again in %d min", s.remaining);
             beeper_error();
             break;
         case ATT_IN_PROGRESS:
         default:
             bg = THEME_ACCENT;
             head = "Checked in";
-            snprintf(sub, sizeof(sub), "tap again when you leave");
+            snprintf(sub, sizeof(sub), "tap again in %d min to confirm", s.remaining);
             beeper_beep();
             break;
     }

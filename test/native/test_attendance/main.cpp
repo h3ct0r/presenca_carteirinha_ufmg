@@ -157,21 +157,24 @@ static void test_timed_present_when_over_threshold(void) {
     mocksd_reset();
     attendance_open(DIR, "2026-07-20");
 
-    // Tap in at t=0: in progress, not yet counted.
+    // Tap in at t=0: in progress, not yet counted, whole threshold still to wait.
     att_state_t s = attendance_tap("2023-0142", 0, 45);
     TEST_ASSERT_EQUAL_INT(ATT_IN_PROGRESS, s.status);
+    TEST_ASSERT_EQUAL_INT(45, s.remaining);
     TEST_ASSERT_FALSE(attendance_is_present("2023-0142"));
     TEST_ASSERT_EQUAL_INT(0, attendance_present_count());
 
-    // A poll partway through reports the running minutes.
-    s = attendance_tap_state("2023-0142", 30 * MIN_US);
+    // A poll partway through reports the running minutes and the countdown.
+    s = attendance_tap_state("2023-0142", 30 * MIN_US, 45);
     TEST_ASSERT_EQUAL_INT(ATT_IN_PROGRESS, s.status);
     TEST_ASSERT_EQUAL_INT(30, s.minutes);
+    TEST_ASSERT_EQUAL_INT(15, s.remaining);
 
-    // Tap out at t=52 min: present, minutes recorded and persisted.
+    // Confirming tap at t=52 min: present, minutes recorded and persisted.
     s = attendance_tap("2023-0142", 52 * MIN_US, 45);
     TEST_ASSERT_EQUAL_INT(ATT_PRESENT, s.status);
     TEST_ASSERT_EQUAL_INT(52, s.minutes);
+    TEST_ASSERT_EQUAL_INT(0, s.remaining);
     TEST_ASSERT_TRUE(attendance_is_present("2023-0142"));
     TEST_ASSERT_EQUAL_INT(1, attendance_present_count());
 
@@ -181,29 +184,72 @@ static void test_timed_present_when_over_threshold(void) {
     TEST_ASSERT_NOT_NULL(strstr(buf, "\"present\":true"));
 }
 
-static void test_timed_left_early_not_present(void) {
+// A tap before the threshold changes nothing: no record, and the arrival stands
+// so the student can come back later and still be registered.
+static void test_timed_early_tap_is_not_recorded(void) {
     mocksd_reset();
     attendance_open(DIR, "2026-07-20");
     attendance_tap("2023-0142", 0, 45);
-    att_state_t s = attendance_tap("2023-0142", 12 * MIN_US, 45);  // out after 12 min
-    TEST_ASSERT_EQUAL_INT(ATT_LEFT_EARLY, s.status);
+    att_state_t s = attendance_tap("2023-0142", 12 * MIN_US, 45);  // 33 min too soon
+    TEST_ASSERT_EQUAL_INT(ATT_TOO_EARLY, s.status);
     TEST_ASSERT_EQUAL_INT(12, s.minutes);
+    TEST_ASSERT_EQUAL_INT(33, s.remaining);
     TEST_ASSERT_FALSE(attendance_is_present("2023-0142"));
     TEST_ASSERT_EQUAL_INT(0, attendance_present_count());
+    // Nothing was written for the rejected tap.
+    TEST_ASSERT_FALSE(mocksd_exists("/classes/CS101-M1/attendance/2026-07-20.jsonl"));
+
+    // The original arrival is still the reference: waiting it out registers.
+    s = attendance_tap("2023-0142", 50 * MIN_US, 45);
+    TEST_ASSERT_EQUAL_INT(ATT_PRESENT, s.status);
+    TEST_ASSERT_EQUAL_INT(50, s.minutes);
+    TEST_ASSERT_TRUE(attendance_is_present("2023-0142"));
 }
 
-static void test_timed_no_tapout_is_absent(void) {
+// The countdown rounds up, so a student mid-minute is never told "0 min left"
+// while the threshold is not actually met.
+static void test_timed_remaining_rounds_up(void) {
     mocksd_reset();
     attendance_open(DIR, "2026-07-20");
-    attendance_tap("2023-0142", 0, 45);  // in, never out
+    attendance_tap("2023-0142", 0, 45);
+    att_state_t s = attendance_tap("2023-0142", 44 * MIN_US + MIN_US / 2, 45);
+    TEST_ASSERT_EQUAL_INT(ATT_TOO_EARLY, s.status);
+    TEST_ASSERT_EQUAL_INT(44, s.minutes);
+    TEST_ASSERT_EQUAL_INT(1, s.remaining);
+}
+
+// Once registered, further taps are ignored — reported, but never re-recorded.
+static void test_timed_extra_tap_after_present_is_ignored(void) {
+    mocksd_reset();
+    attendance_open(DIR, "2026-07-20");
+    attendance_tap("2023-0142", 0, 45);
+    attendance_tap("2023-0142", 50 * MIN_US, 45);  // registered, 50 min
+
+    char before[256];
+    read_file("/classes/CS101-M1/attendance/2026-07-20.jsonl", before, sizeof(before));
+
+    att_state_t s = attendance_tap("2023-0142", 80 * MIN_US, 45);
+    TEST_ASSERT_EQUAL_INT(ATT_ALREADY_PRESENT, s.status);
+    TEST_ASSERT_EQUAL_INT(50, s.minutes);  // still the registered duration
+    TEST_ASSERT_EQUAL_INT(1, attendance_present_count());
+
+    char after[256];
+    read_file("/classes/CS101-M1/attendance/2026-07-20.jsonl", after, sizeof(after));
+    TEST_ASSERT_EQUAL_STRING(before, after);  // no extra line
+}
+
+static void test_timed_no_confirm_is_absent(void) {
+    mocksd_reset();
+    attendance_open(DIR, "2026-07-20");
+    attendance_tap("2023-0142", 0, 45);  // in, never confirmed
     // Still in progress live...
     TEST_ASSERT_EQUAL_INT(ATT_IN_PROGRESS,
-                          attendance_tap_state("2023-0142", 90 * MIN_US).status);
+                          attendance_tap_state("2023-0142", 90 * MIN_US, 45).status);
     // ...but not present, and a reopen (in-progress is RAM-only) shows absent.
     TEST_ASSERT_FALSE(attendance_is_present("2023-0142"));
     attendance_open(DIR, "2026-07-20");
     TEST_ASSERT_EQUAL_INT(0, attendance_present_count());
-    TEST_ASSERT_EQUAL_INT(ATT_ABSENT, attendance_tap_state("2023-0142", 0).status);
+    TEST_ASSERT_EQUAL_INT(ATT_ABSENT, attendance_tap_state("2023-0142", 0, 45).status);
 }
 
 static void test_manual_override_clears_in_progress(void) {
@@ -212,10 +258,10 @@ static void test_manual_override_clears_in_progress(void) {
     attendance_tap("2023-0142", 0, 45);  // in progress
     TEST_ASSERT_TRUE(attendance_set("2023-0142", true));  // professor forces present
     TEST_ASSERT_TRUE(attendance_is_present("2023-0142"));
-    // The in-progress record was cleared, so a later tap starts a fresh cycle
-    // (already-present -> no-op returning PRESENT).
+    // The in-progress record was cleared and the student counts as present, so a
+    // later tap is just ignored.
     att_state_t s = attendance_tap("2023-0142", 10 * MIN_US, 45);
-    TEST_ASSERT_EQUAL_INT(ATT_PRESENT, s.status);
+    TEST_ASSERT_EQUAL_INT(ATT_ALREADY_PRESENT, s.status);
 }
 
 static void test_timed_present_survives_reopen(void) {
@@ -225,7 +271,7 @@ static void test_timed_present_survives_reopen(void) {
     attendance_tap("2023-0142", 50 * MIN_US, 45);  // present, 50 min
     attendance_open(DIR, "2026-07-20");            // reopen folds the file
     TEST_ASSERT_TRUE(attendance_is_present("2023-0142"));
-    att_state_t s = attendance_tap_state("2023-0142", 0);
+    att_state_t s = attendance_tap_state("2023-0142", 0, 45);
     TEST_ASSERT_EQUAL_INT(ATT_PRESENT, s.status);
     TEST_ASSERT_EQUAL_INT(50, s.minutes);
 }
