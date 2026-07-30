@@ -57,7 +57,7 @@ orders of magnitude.
 | Piece | Where |
 |---|---|
 | Soft-AP, WPA2, per-boot credentials | [`src/services/wifi_ap.cpp`](../../src/services/wifi_ap.cpp) |
-| HTTP server + list/read/download/save/delete/upload | [`src/services/file_server.cpp`](../../src/services/file_server.cpp) |
+| HTTP server + list/read/download/save/rename/delete/upload | [`src/services/file_server.cpp`](../../src/services/file_server.cpp) |
 | Precedent: an embedded web app in PROGMEM | the file-manager page itself (`INDEX_HTML`) |
 | Validated tar import with backup + rollback | [`src/services/import_service.cpp`](../../src/services/import_service.cpp) |
 | On-device import confirm dialog | [`src/ui/screens/scr_admin.cpp:618`](../../src/ui/screens/scr_admin.cpp) |

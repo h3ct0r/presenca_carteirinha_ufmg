@@ -6,6 +6,7 @@
 #include <WebServer.h>
 
 #include "esp32-hal-log.h"
+#include "storage/sd_tree.h"
 
 static const char* TAG = "fileserver";
 
@@ -25,7 +26,7 @@ body{margin:0;font-family:ui-sans-serif,system-ui,Arial,sans-serif;background:#0
 .mx-auto{margin-left:auto;margin-right:auto}.max-w-3xl{max-width:48rem}
 .p-4{padding:1rem}.p-3{padding:.75rem}.mb-4{margin-bottom:1rem}.mb-2{margin-bottom:.5rem}
 .flex{display:flex}.items-center{align-items:center}.justify-between{justify-content:space-between}
-.gap-2{gap:.5rem}.rounded-lg{border-radius:.5rem}.shadow{box-shadow:0 1px 3px rgba(0,0,0,.4)}
+.gap-2{gap:.5rem}.wrap{flex-wrap:wrap}.rounded-lg{border-radius:.5rem}.shadow{box-shadow:0 1px 3px rgba(0,0,0,.4)}
 .bg-slate-800{background:#1e293b}.text-xl{font-size:1.25rem}.text-sm{font-size:.875rem}
 .font-bold{font-weight:700}.font-mono{font-family:ui-monospace,Menlo,Consolas,monospace}
 .text-slate-400{color:#94a3b8}.truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:16rem}
@@ -88,11 +89,13 @@ async function load(){
   items.sort((a,b)=>(b.dir-a.dir)||a.name.localeCompare(b.name)).forEach(e=>{
     const full=join(cur,e.name);
     const nm=e.dir?`<span class="name" onclick="cd('${q(full)}')">${FOLDER} ${e.name}</span>`:e.name;
-    const act=e.dir?'':`<button class="btn btn-slate" onclick="edit('${q(full)}')">Edit</button>
-      <a class="btn btn-blue" href="/api/download?path=${esc(full)}">Download</a>
-      <button class="btn btn-red" onclick="del('${q(full)}')">Delete</button>`;
+    const fileAct=e.dir?'':`<button class="btn btn-slate" onclick="edit('${q(full)}')">Edit</button>
+      <a class="btn btn-blue" href="/api/download?path=${esc(full)}">Download</a>`;
+    const act=`${fileAct}
+      <button class="btn btn-slate" onclick="ren('${q(full)}')">Rename</button>
+      <button class="btn btn-red" onclick="del('${q(full)}',${e.dir?1:0})">Delete</button>`;
     const tr=document.createElement('tr');
-    tr.innerHTML=`<td class="truncate">${nm}</td><td class="text-slate-400">${e.dir?'':fmt(e.size)}</td><td class="flex gap-2">${act}</td>`;
+    tr.innerHTML=`<td class="truncate">${nm}</td><td class="text-slate-400">${e.dir?'':fmt(e.size)}</td><td class="flex gap-2 wrap">${act}</td>`;
     rows.appendChild(tr);
   });
 }
@@ -102,7 +105,20 @@ function up(){if(cur==='/')return; cur=cur.replace(/\/[^/]*\/?$/,'')||'/'; load(
 async function edit(p){$('editarea').value=await (await fetch('/api/read?path='+esc(p))).text();$('editname').textContent=p;editing=p;$('editor').classList.remove('hidden');}
 function closeEd(){$('editor').classList.add('hidden');}
 async function save(){await fetch('/api/save?path='+esc(editing),{method:'POST',body:$('editarea').value});closeEd();load();}
-async function del(p){if(!confirm('Delete '+p+'?'))return;await fetch('/api/delete?path='+esc(p),{method:'POST'});load();}
+async function post(u){const r=await fetch(u,{method:'POST'});const t=await r.text();if(!r.ok)alert(t);load();return r.ok;}
+async function del(p,isdir){
+  const msg=isdir?'Delete the folder '+p+' AND EVERYTHING INSIDE IT?':'Delete '+p+'?';
+  if(!confirm(msg))return;
+  await post('/api/delete?path='+esc(p)+(isdir?'&recursive=1':''));
+}
+async function ren(p){
+  const old=p.split('/').pop();
+  const n=prompt('Rename to:',old);
+  if(n===null)return;                       // cancelled
+  const t=n.trim();
+  if(!t||t===old)return;
+  await post('/api/rename?path='+esc(p)+'&name='+esc(t));
+}
 async function upload(f){if(!f)return;const fd=new FormData();fd.append('file',f);await fetch('/api/upload?dir='+esc(cur),{method:'POST',body:fd});$('fileinput').value='';load();}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeEd();});
 load();
@@ -189,10 +205,36 @@ static void handle_save(void) {
     s_server.send(ok ? 200 : 500, "text/plain", ok ? "saved" : "write failed");
 }
 
+// Deleting a directory takes everything under it, so it needs an explicit
+// `recursive=1` from the caller — the UI only sends it after a confirm that
+// spells that out.
 static void handle_delete(void) {
     String path = arg_path();
-    bool ok = SD_MMC.remove(path);
-    s_server.send(ok ? 200 : 500, "text/plain", ok ? "deleted" : "delete failed");
+    if (sd_tree_is_dir(path.c_str()) && !s_server.hasArg("recursive")) {
+        s_server.send(400, "text/plain", "that is a folder — pass recursive=1 to delete it");
+        return;
+    }
+    char err[80] = "delete failed";
+    sd_tree_stats_t st = {0, 0};
+    if (!sd_tree_remove(path.c_str(), &st, err, sizeof(err))) {
+        s_server.send(500, "text/plain", err);
+        return;
+    }
+    char msg[48];
+    snprintf(msg, sizeof(msg), "deleted %d item%s", st.removed, st.removed == 1 ? "" : "s");
+    s_server.send(200, "text/plain", msg);
+}
+
+// Renames a file or folder in place; `name` is a bare name, not a path.
+static void handle_rename(void) {
+    String path = arg_path();
+    String name = s_server.hasArg("name") ? s_server.arg("name") : String("");
+    char err[80] = "rename failed";
+    if (!sd_tree_rename(path.c_str(), name.c_str(), err, sizeof(err))) {
+        s_server.send(400, "text/plain", err);
+        return;
+    }
+    s_server.send(200, "text/plain", "renamed");
 }
 
 static void handle_upload_done(void) { s_server.send(200, "text/plain", "uploaded"); }
@@ -221,6 +263,7 @@ void file_server_begin(void) {
     s_server.on("/api/download", HTTP_GET, handle_download);
     s_server.on("/api/save", HTTP_POST, handle_save);
     s_server.on("/api/delete", HTTP_POST, handle_delete);
+    s_server.on("/api/rename", HTTP_POST, handle_rename);
     s_server.on("/api/upload", HTTP_POST, handle_upload_done, handle_upload_data);
     s_server.onNotFound([]() { s_server.send(404, "text/plain", "not found"); });
     s_server.begin();

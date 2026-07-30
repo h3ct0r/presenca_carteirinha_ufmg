@@ -20,9 +20,12 @@ native-tested; the screens/tap UX are device-only and were exercised by hand.
   check-in** (on/off + face-verify seconds; class-only, no device-wide flag) +
   **timed attendance** (on/off + threshold, default 45 min) + **edit name /
   schedule / color**.
-- **Timed attendance:** two taps — tap in (arrival) then tap out (leaving).
-  Present **iff** `out − in ≥ threshold` **and** the student tapped out; a student
-  who taps in but never taps out is **absent** at session close. **Store the
+- **Timed attendance:** two taps — tap in (arrival), then tap again to register
+  the presence once `now − in ≥ threshold`. A tap **before** the threshold is
+  **rejected without recording anything**: the arrival stands and the student is
+  told how many minutes are left, so they just come back later. Once registered,
+  further taps are **ignored** with an "already registered" message. A student
+  who taps in but never taps again is **absent** at session close. **Store the
   measured minutes.** Duration comes from the monotonic uptime
   (`esp_timer_get_time`), which measures elapsed time fine without an RTC.
   In-progress (tapped-in-only) state is **RAM only**, so a reboot mid-session
@@ -83,10 +86,22 @@ back/title, with a context-aware back (deeper view → hub → classes list).
   The changelog entries below record what was verified when each landed.
 - Phase 3's decision logic sits in `attendance_store` (native-tested); only the
   tap UX is device-only, and that was checked by hand.
-- The strict "must tap out ⇒ absent" rule leans on students tapping out — the
-  timed roll call / kiosk should show a clear "tap again when you leave" hint.
+- The "must tap again ⇒ absent" rule leans on students coming back — the timed
+  roll call / kiosk show the countdown ("tap again in N min") so the second tap
+  is never a guess.
 
 ### Changelog
+
+- **2026-07-30** — **Timed attendance reworked from in/out to arrival +
+  confirm.** A second tap below the threshold no longer finalizes anything: it
+  returns `ATT_TOO_EARLY` with the minutes still to wait, writes nothing, and
+  **keeps the arrival**, so the student can tap again later and still be
+  registered (the old rule burned the attempt as "left early"). A tap at or
+  after the threshold registers the presence; any tap after that returns
+  `ATT_ALREADY_PRESENT` and is ignored. `ATT_LEFT_EARLY` is gone, `att_state_t`
+  gained `remaining`, and `attendance_tap_state` now takes the threshold so the
+  roll call can show the countdown. Native: `test_attendance` 11 → 15 cases.
+  **Build- and native-test-verified, not run on hardware.**
 
 - **2026-07-28** — **Phase 3: timed (double-tap) attendance.** `attendance_store`
   gained the tap state machine (`attendance_tap`, `attendance_tap_state`) — first

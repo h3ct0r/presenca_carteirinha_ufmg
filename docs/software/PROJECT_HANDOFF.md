@@ -157,14 +157,26 @@ All build + native-test verified unless noted; **not run on hardware**.
 - `services/file_server.cpp`: a synchronous `WebServer` on :80 **pumped from an
   LVGL timer** (all SD I/O on the LVGL thread). Single-page file manager
   (offline Tailwind-style CSS embedded — no CDN): list/navigate, download,
-  **upload**, **edit-in-browser**, delete; hidden-dotfiles toggle; folder icon;
-  Esc closes the editor. **Confirmed on hardware: AP works, page loads.**
+  **upload**, **edit-in-browser**, **rename**, delete (files *and* folders);
+  hidden-dotfiles toggle; folder icon; Esc closes the editor. **Confirmed on
+  hardware: AP works, page loads.**
+- `storage/sd_tree.cpp` backs the last two (added 2026-07-30, 11 native tests):
+  `sd_tree_remove` walks a folder depth-first, and `sd_tree_rename` renames in
+  place within the parent. Two deliberate constraints — a directory delete needs
+  `recursive=1` on the request (the UI sends it only behind a confirm naming the
+  folder), and the walk re-opens the directory for each child instead of
+  deleting while a directory handle is open, which is unsafe on this core (same
+  reason `attendance_clear` lists dates first). Depth is capped at 8.
 - Screen: shows SSID/password in clear text, Start/Stop, green top-bar WiFi icon
   + green button while live, big centered IP. Footer nav is **disabled while the
   AP is up** (can't leave it running). "Turning on WiFi…" shown via `lv_refr_now`
   before the blocking `softAP` call.
 - ⚠ **Security**: no auth, plain HTTP, full read/write incl. `config.json`
-  passwords. Debug-only. (Assessment S1.)
+  passwords. Debug-only. (Assessment S1.) Recursive folder delete widens S1's
+  blast radius — anyone on the AP can drop `/classes` in one request, where
+  before they had to delete files one at a time. The AP is per-boot,
+  WPA2-protected and professor-started, so the exposure is unchanged in *kind*;
+  it is the reason to keep S1 (auth) on the list rather than a new hole.
 
 **Camera + face detection** — see dedicated section below.
 
@@ -218,13 +230,13 @@ Full assessment done at the user's request. Severity + status:
   (mirrored paths, single slot cleared each time). The wipe **aborts if the
   backup fails**. Restore is manual via the WiFi file editor (no in-app restore).
   4 native tests.
-- **D1 dead screens** — `scr_teacher_reg` was **removed 2026-07-29** (it was an
-  unreachable stub whose "Waiting for card..." box never captured a card and
-  whose Confirm discarded everything — dangerous to leave around looking
-  functional). Still open: `scr_student` and `scr_class_form` are registered but
-  **never navigated to** (0 inbound); `scr_class_form` is likewise a
-  non-functional demo stub. Deletions are recoverable via git, but confirm
-  before removing.
+- **D1 dead screens** — RESOLVED. `scr_teacher_reg` was removed 2026-07-29; the
+  last two, `scr_student` (superseded by the in-class feedback overlay and the
+  kiosk result panel) and `scr_class_form` (a demo stub whose Create button
+  persisted nothing), were **removed 2026-07-30** along with their
+  `SCREEN_STUDENT` / `SCREEN_CLASS_FORM` enum ids and registrations. All three
+  were unreachable (0 inbound nav) and dangerous to leave around looking
+  functional. Every remaining screen in `screen.h` now has an inbound path.
 - **D2 `photo_store`** — RESOLVED: it's now wired as the JPEG snapshot writer.
 - **D3** — leftover commented test block in `scr_idle.cpp:~383`.
 - **U1** footer "WiFi File Editor" label wraps (longest of 4 tabs).
@@ -331,8 +343,8 @@ drivers/   lcd/, touch/, rfid/, audio/
 - `scr_wifi_editor` — debug WiFi AP + file server. Footer "WiFi File Editor".
 - `scr_camera` — camera preview + face boxes + model diagnostics. From Admin.
 - `scr_kiosk` — unattended self check-in (exit is professor-gated).
-- **Dead (D1):** `scr_class_form` (demo stub, 0 inbound nav), `scr_student`
-  (superseded confirmation screen). `scr_teacher_reg` was removed 2026-07-29.
+No dead screens: `scr_teacher_reg` was removed 2026-07-29, `scr_class_form` and
+`scr_student` on 2026-07-30. Every id in `screen.h` is reachable.
 
 Footer nav (`shell.cpp add_footer`, on Classes/Export/WiFi/Admin): Classes /
 Export / WiFi File Editor / Admin. Active tab highlighted; nav can be disabled

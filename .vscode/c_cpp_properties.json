@@ -723,7 +723,7 @@
                 ]
             },
             "defines": [
-                "APP_GIT_SHA=\"1025c77\"",
+                "APP_GIT_SHA=\"364283d-dirty\"",
                 "PLATFORMIO=60118",
                 "BOARD_HAS_PSRAM",
                 "BOARD_HAS_PSRAM",

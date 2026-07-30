@@ -287,8 +287,10 @@ int main(int, char**) {
     RUN_TEST(test_present_for_does_not_disturb_open_session);
     RUN_TEST(test_clear_removes_all_sessions);
     RUN_TEST(test_timed_present_when_over_threshold);
-    RUN_TEST(test_timed_left_early_not_present);
-    RUN_TEST(test_timed_no_tapout_is_absent);
+    RUN_TEST(test_timed_early_tap_is_not_recorded);
+    RUN_TEST(test_timed_remaining_rounds_up);
+    RUN_TEST(test_timed_extra_tap_after_present_is_ignored);
+    RUN_TEST(test_timed_no_confirm_is_absent);
     RUN_TEST(test_manual_override_clears_in_progress);
     RUN_TEST(test_timed_present_survives_reopen);
     return UNITY_END();

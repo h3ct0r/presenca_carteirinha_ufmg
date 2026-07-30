@@ -141,7 +141,7 @@ Rules (mirror `roster_service.cpp`):
   "color": "272766",                     // 6-hex RGB, no leading '#'
   "capture_photos": false,               // optional; kiosk photo check-in (default false)
   "face_verify_seconds": 15,             // optional; face-verify countdown, 3..60 (default 15)
-  "timed_attendance": false,             // optional; double-tap in/out (default false)
+  "timed_attendance": false,             // optional; arrival tap + confirm tap (default false)
   "min_attendance_min": 45,              // optional; timed threshold minutes (default 45)
   "roster": [                            // 0..100 (ROSTER_MAX_CLASS_STUDENTS)
     { "id": "2023-0142", "turma": "TE1" }, // turma optional, ≤ 15 chars

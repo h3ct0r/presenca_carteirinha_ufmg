@@ -201,19 +201,52 @@ bool MockSDMMC::mkdir(const char* path) {
     return true;
 }
 
+bool MockSDMMC::rmdir(const char* path) {
+    Store& s = S();
+    std::lock_guard<std::mutex> lk(s.m);
+    if (!s.dirs.count(path)) return false;
+    if (!children_locked(s, path).empty()) return false;  // real rmdir needs it empty
+    s.dirs.erase(path);
+    return true;
+}
+
 bool MockSDMMC::remove(const char* path) {
     Store& s = S();
     std::lock_guard<std::mutex> lk(s.m);
-    return s.files.erase(path) > 0;
+    return s.files.erase(path) > 0;  // files only, like the real one
 }
 
+// Renames a file, or a directory together with everything under it (FatFs
+// f_rename handles both).
 bool MockSDMMC::rename(const char* from, const char* to) {
     Store& s = S();
     std::lock_guard<std::mutex> lk(s.m);
     auto it = s.files.find(from);
-    if (it == s.files.end()) return false;
-    s.files[to] = it->second;
-    s.files.erase(it);
+    if (it != s.files.end()) {
+        s.files[to] = it->second;
+        s.files.erase(it);
+        add_parent_dirs_locked(s, to);
+        return true;
+    }
+    if (!s.dirs.count(from)) return false;
+
+    // Re-key the subtree: <from> and every path prefixed with "<from>/".
+    const std::string prefix = std::string(from) + "/";
+    auto moved = [&](const std::string& p) {
+        return std::string(to) + p.substr(strlen(from));
+    };
+    std::map<std::string, std::string> files;
+    for (auto& kv : s.files) {
+        files[kv.first.compare(0, prefix.size(), prefix) == 0 ? moved(kv.first) : kv.first] =
+            kv.second;
+    }
+    std::set<std::string> dirs;
+    for (const auto& d : s.dirs) {
+        bool under = d == from || d.compare(0, prefix.size(), prefix) == 0;
+        dirs.insert(under ? moved(d) : d);
+    }
+    s.files.swap(files);
+    s.dirs.swap(dirs);
     add_parent_dirs_locked(s, to);
     return true;
 }

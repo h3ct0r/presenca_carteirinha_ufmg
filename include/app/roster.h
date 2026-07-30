@@ -47,9 +47,10 @@ typedef struct {
     // false) + "face_verify_seconds" int (default 15, clamped).
     bool capture_photos;
     int16_t face_verify_seconds;
-    // Timed (double-tap) attendance: students tap in and out, counting present
-    // only if they stayed >= min_attendance_min. From class.json's optional
-    // "timed_attendance" bool + "min_attendance_min" int (default 45).
+    // Timed (double-tap) attendance: students tap on arrival, then tap again to
+    // register once >= min_attendance_min have passed (an earlier tap is
+    // rejected, not recorded). From class.json's optional "timed_attendance"
+    // bool + "min_attendance_min" int (default 45).
     bool timed_attendance;
     int16_t min_attendance_min;
     // Per-student class group ("turma") lives on each class.json roster entry

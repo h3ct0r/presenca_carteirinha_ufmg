@@ -41,8 +41,11 @@ change landed).
 - **A photo is saved per accepted tap** (each check-in event), not once per
   session — that is what lets you audit "same person, every tap."
 - **Timed mode (Phase 3) interaction**: face-verify gates each accepted tap, so
-  in timed mode both the tap-in and tap-out are verified (a photo each). The
-  verify modal is the same either way.
+  in timed mode both the arrival tap and the confirming tap are verified (a photo
+  each). The verify modal is the same either way. Note that verification runs
+  *before* the tap is judged, so a tap rejected as too early (below the class
+  threshold) still leaves a photo behind — the extra shot is evidence the student
+  came by, and the `NN` counter keeps same-day files distinct.
 
 ## Storage layout
 

@@ -11,6 +11,7 @@ class MockSDMMC {
     bool exists(const char* path);
     File open(const char* path, const char* mode = FILE_READ, bool create = false);
     bool mkdir(const char* path);
+    bool rmdir(const char* path);  // empty directories only, like the real one
     bool remove(const char* path);
     bool rename(const char* from, const char* to);
     uint64_t cardSize();

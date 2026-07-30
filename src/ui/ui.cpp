@@ -8,7 +8,6 @@
 #include "ui/screens/scr_admin.h"
 #include "ui/screens/scr_about.h"
 #include "ui/screens/scr_class.h"
-#include "ui/screens/scr_class_form.h"
 #include "ui/screens/scr_class_stats.h"
 #include "ui/screens/scr_camera.h"
 #include "ui/screens/scr_classes.h"
@@ -16,7 +15,6 @@
 #include "ui/screens/scr_idle.h"
 #include "ui/screens/scr_wifi_editor.h"
 #include "ui/screens/scr_kiosk.h"
-#include "ui/screens/scr_student.h"
 #include "ui/theme/theme.h"
 #include "ui/ui_state.h"
 
@@ -34,11 +32,9 @@ void ui_init(void) {
     keyboard_create();  // after the status bar so it stacks above on layer_top
 
     scr_mgr_register(SCREEN_IDLE, &scr_idle);
-    scr_mgr_register(SCREEN_STUDENT, &scr_student);
     scr_mgr_register(SCREEN_CLASSES, &scr_classes);
     scr_mgr_register(SCREEN_CLASS, &scr_class);
     scr_mgr_register(SCREEN_CLASS_STATS, &scr_class_stats);
-    scr_mgr_register(SCREEN_CLASS_FORM, &scr_class_form);
     scr_mgr_register(SCREEN_ADMIN, &scr_admin);
     scr_mgr_register(SCREEN_KIOSK, &scr_kiosk);
     scr_mgr_register(SCREEN_EXPORT, &scr_export);
