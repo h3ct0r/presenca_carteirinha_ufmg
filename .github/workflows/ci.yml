@@ -1,5 +1,5 @@
-# Run host-side tests on every push/PR. Firmware build is reserved for tagged
-# releases (see release.yml) — the esp32p4 + esp-dl compile is heavy.
+# Host-side tests plus an esp32p4 compile smoke check on every push/PR to main.
+# Tagged releases (release.yml) re-run tests, rebuild, and publish firmware.bin.
 name: CI
 
 on:
@@ -57,3 +57,34 @@ jobs:
       - name: Run config-builder unit tests
         working-directory: tools/config-builder
         run: node --test
+
+  firmware-build:
+    name: Firmware build smoke (esp32p4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+            ~/.platformio/platforms
+            ~/.platformio/packages
+          key: pio-esp32p4-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            pio-esp32p4-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Compile firmware
+        run: pio run -e esp32p4
+
+      - name: Assert firmware.bin was produced
+        run: test -f .pio/build/esp32p4/firmware.bin && ls -lh .pio/build/esp32p4/firmware.bin

@@ -34,9 +34,9 @@ jobs:
             ~/.platformio/.cache
             ~/.platformio/platforms
             ~/.platformio/packages
-          key: pio-release-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          key: pio-esp32p4-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
           restore-keys: |
-            pio-release-${{ runner.os }}-
+            pio-esp32p4-${{ runner.os }}-
 
       - name: Install build tools
         run: |
