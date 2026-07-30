@@ -3,7 +3,18 @@
  * Release metadata from GitHub API; .bin served from ./bins/ (same origin).
  */
 
-const REPO = "h3ct0r/presenca_carteirinha_ufmg";
+/** Resolve owner/repo from GitHub Pages host so forks work without edits. */
+function detectRepo() {
+  const host = location.hostname || "";
+  const m = /^([\w-]+)\.github\.io$/i.exec(host);
+  if (m) {
+    const segs = location.pathname.split("/").filter(Boolean);
+    if (segs[0]) return `${m[1]}/${segs[0]}`;
+  }
+  return "h3ct0r/presenca_carteirinha_ufmg";
+}
+
+const REPO = detectRepo();
 const BIN_PREFIX = "rfid-attendance-";
 const BIN_SUFFIX = "-firmware.bin";
 const FLASH_ADDR = 0x10000;
@@ -568,7 +579,24 @@ async function installFirmware() {
   }
 }
 
+function wireRepoLinks() {
+  const releases = $("releasesLink");
+  const repo = $("repoLink");
+  const deploy = $("deployLink");
+  if (releases) releases.href = `https://github.com/${REPO}/releases`;
+  if (repo) {
+    repo.href = `https://github.com/${REPO}`;
+    repo.textContent = REPO;
+  }
+  if (deploy) {
+    deploy.href = `https://github.com/${REPO}/blob/main/docs/flasher/DEPLOY.md`;
+  }
+  log(`Using repository ${REPO}`);
+}
+
 function init() {
+  wireRepoLinks();
+
   if (!("serial" in navigator)) {
     $("noSerial").classList.remove("hidden");
     $("btnInstall").disabled = true;

@@ -86,7 +86,9 @@ jobs:
             echo ""
             echo "### Flash"
             echo ""
-            echo "- **Web installer** (Chrome/Edge): https://h3ct0r.github.io/presenca_carteirinha_ufmg/"
+            OWNER="${GITHUB_REPOSITORY_OWNER}"
+            REPO_NAME="${GITHUB_REPOSITORY#*/}"
+            echo "- **Web installer** (Chrome/Edge): https://${OWNER}.github.io/${REPO_NAME}/"
             echo "- esptool:"
             echo '```'
             echo "esptool.py --chip esp32p4 write_flash 0x10000 rfid-attendance-${TAG}-firmware.bin"
@@ -103,6 +105,7 @@ jobs:
         with:
           name: ${{ steps.pkg.outputs.tag }}
           body_path: dist/RELEASE_NOTES.md
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') || contains(github.ref_name, 'test') }}
           files: |
             dist/rfid-attendance-*-firmware.bin
             dist/rfid-attendance-*-bootloader.bin

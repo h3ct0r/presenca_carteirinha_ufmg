@@ -33,6 +33,8 @@
 *.la
 *.a
 *.lib
+# Vendored esp-dl FlatBuffer parser (required to link face detection on P4)
+!lib/esp-dl/fbs_loader/lib/**/*.a
 
 # Executables
 *.exe
