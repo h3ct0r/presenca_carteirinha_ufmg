@@ -157,9 +157,15 @@ All build + native-test verified unless noted; **not run on hardware**.
 - `services/file_server.cpp`: a synchronous `WebServer` on :80 **pumped from an
   LVGL timer** (all SD I/O on the LVGL thread). Single-page file manager
   (offline Tailwind-style CSS embedded — no CDN): list/navigate, download,
-  **upload**, **edit-in-browser**, **rename**, delete (files *and* folders);
-  hidden-dotfiles toggle; folder icon; Esc closes the editor. **Confirmed on
-  hardware: AP works, page loads.**
+  **upload** (button, multi-select, or **drag-and-drop** onto the page — files
+  land in the folder that was open when the drop happened, uploaded one at a
+  time with a progress banner; dropped *folders* are skipped, and drops are
+  ignored while the editor is open), **edit-in-browser**, **rename**, delete
+  (files *and* folders); hidden-dotfiles toggle; folder icon; Esc closes the
+  editor. `/api/upload` now answers **500** when the card write fails instead of
+  always claiming success, and reduces the client-supplied filename to a
+  basename so an upload cannot climb out of `dir`. **Confirmed on hardware: AP
+  works, page loads.**
 - `storage/sd_tree.cpp` backs the last two (added 2026-07-30, 11 native tests):
   `sd_tree_remove` walks a folder depth-first, and `sd_tree_rename` renames in
   place within the parent. Two deliberate constraints — a directory delete needs

@@ -13,6 +13,7 @@ static const char* TAG = "fileserver";
 static WebServer s_server(80);
 static bool s_running = false;
 static File s_upload;
+static bool s_upload_ok = false;  // false makes /api/upload answer 500
 
 // The single-page file manager. The AP has no internet, so a Tailwind-style
 // utility CSS is embedded rather than pulled from a CDN. Kept in flash (PROGMEM).
@@ -38,6 +39,10 @@ th{color:#94a3b8;font-weight:600}
 .name{cursor:pointer}.name:hover{color:#60a5fa}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:1rem}
 .hidden{display:none!important}
+/* The drop overlay must not swallow the drag events it is reacting to. */
+#drop{pointer-events:none;background:rgba(15,23,42,.85)}
+#drop .card{max-width:26rem;text-align:center;border:2px dashed #2563eb}
+#dropmsg{white-space:pre-wrap;word-break:break-all}
 .card{background:#1e293b;border-radius:.5rem;padding:1rem;width:100%;max-width:48rem}
 textarea{width:100%;height:60vh;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:.375rem;padding:.6rem;font-family:ui-monospace,monospace;font-size:.85rem}
 a.btn{text-decoration:none}
@@ -51,7 +56,7 @@ a.btn{text-decoration:none}
       <button class="btn btn-blue" onclick="document.getElementById('fileinput').click()">Upload</button>
       <button class="btn btn-slate" onclick="load()">Refresh</button>
       <label class="text-sm text-slate-400" style="display:flex;align-items:center;gap:.3rem;cursor:pointer"><input type="checkbox" onchange="toggleHidden(this.checked)"> Hidden</label>
-      <input id="fileinput" type="file" class="hidden" onchange="upload(this.files[0])">
+      <input id="fileinput" type="file" class="hidden" multiple onchange="upload(this.files)">
     </div>
   </div>
   <div id="crumb" class="text-slate-400 font-mono text-sm mb-2">/</div>
@@ -59,6 +64,9 @@ a.btn{text-decoration:none}
     <table><thead><tr><th>Name</th><th>Size</th><th>Actions</th></tr></thead>
     <tbody id="rows"></tbody></table>
   </div>
+</div>
+<div id="drop" class="modal hidden">
+  <div class="card"><div id="dropmsg" class="font-mono text-sm"></div></div>
 </div>
 <div id="editor" class="modal hidden">
   <div class="card">
@@ -119,7 +127,66 @@ async function ren(p){
   if(!t||t===old)return;
   await post('/api/rename?path='+esc(p)+'&name='+esc(t));
 }
-async function upload(f){if(!f)return;const fd=new FormData();fd.append('file',f);await fetch('/api/upload?dir='+esc(cur),{method:'POST',body:fd});$('fileinput').value='';load();}
+// --- upload (button or drag-and-drop) ---------------------------------------
+function banner(msg){$('dropmsg').textContent=msg;$('drop').classList.remove('hidden');}
+function hideBanner(){$('drop').classList.add('hidden');}
+async function sendOne(f,dir){
+  const fd=new FormData(); fd.append('file',f,f.name);
+  const r=await fetch('/api/upload?dir='+esc(dir),{method:'POST',body:fd});
+  if(!r.ok) throw new Error(f.name+': '+await r.text());
+}
+// Uploads land in the folder that was open when the drop happened, even if the
+// listing is navigated away mid-transfer.
+async function upload(files,extra){
+  const list=[...(files||[])];
+  if(!list.length){hideBanner();return;}
+  const dir=cur, errs=[];
+  for(let i=0;i<list.length;i++){
+    banner(`Uploading ${i+1} of ${list.length} to ${dir}\n${list[i].name}`);
+    try{await sendOne(list[i],dir);}catch(e){errs.push(e.message);}
+  }
+  hideBanner();
+  $('fileinput').value='';
+  if(extra) errs.push(extra);
+  if(errs.length) alert(errs.join('\n'));
+  load();
+}
+
+// --- drag and drop ----------------------------------------------------------
+// Only file drags are hijacked, and never while the editor is open (a drag in
+// there is someone moving text around, not uploading).
+const editorOpen=()=>!$('editor').classList.contains('hidden');
+const dropping=e=>e.dataTransfer&&[...e.dataTransfer.types||[]].includes('Files')&&!editorOpen();
+let dragDepth=0;   // dragenter/leave also fire for child elements
+document.addEventListener('dragenter',e=>{
+  if(!dropping(e))return; e.preventDefault();
+  if(++dragDepth===1) banner('Drop files to upload into '+cur);
+});
+document.addEventListener('dragover',e=>{
+  if(!dropping(e))return; e.preventDefault(); e.dataTransfer.dropEffect='copy';
+});
+document.addEventListener('dragleave',e=>{
+  if(!dropping(e))return; if(--dragDepth<=0){dragDepth=0;hideBanner();}
+});
+document.addEventListener('drop',e=>{
+  if(!dropping(e))return;
+  e.preventDefault(); dragDepth=0;
+  // webkitGetAsEntry/getAsFile must run synchronously, before any await:
+  // the DataTransfer is cleared once the handler yields.
+  const items=[...(e.dataTransfer.items||[])];
+  const files=[]; let dirs=0;
+  if(items.length&&items[0].webkitGetAsEntry){
+    for(const it of items){
+      if(it.kind!=='file')continue;
+      const en=it.webkitGetAsEntry();
+      if(en&&en.isDirectory){dirs++;continue;}   // folders need a recursive walk
+      const f=it.getAsFile(); if(f) files.push(f);
+    }
+  }else{
+    files.push(...(e.dataTransfer.files||[]));
+  }
+  upload(files,dirs?`Skipped ${dirs} folder(s) — drop files, not folders.`:'');
+});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeEd();});
 load();
 </script>
@@ -237,7 +304,25 @@ static void handle_rename(void) {
     s_server.send(200, "text/plain", "renamed");
 }
 
-static void handle_upload_done(void) { s_server.send(200, "text/plain", "uploaded"); }
+// The browser sends a bare filename, but it is still client input: keep only
+// the part after any separator so an upload can't climb out of `dir`.
+static String upload_basename(const String& name) {
+    int cut = 0;
+    for (int i = 0; i < (int)name.length(); i++) {
+        if (name[i] == '/' || name[i] == '\\') cut = i + 1;
+    }
+    String base = name.substring(cut);  // "" when the name ended in a separator
+    if (base == "." || base == "..") return String("");
+    return base;
+}
+
+static void handle_upload_done(void) {
+    if (s_upload_ok) {
+        s_server.send(200, "text/plain", "uploaded");
+    } else {
+        s_server.send(500, "text/plain", "could not write the file to the card");
+    }
+}
 
 static void handle_upload_data(void) {
     HTTPUpload& up = s_server.upload();
@@ -245,13 +330,25 @@ static void handle_upload_data(void) {
         String dir = s_server.hasArg("dir") ? s_server.arg("dir") : String("/");
         if (dir.length() == 0) dir = "/";
         if (!dir.endsWith("/")) dir += "/";
-        String path = dir + up.filename;
+        String name = upload_basename(up.filename);
+        s_upload_ok = name.length() > 0;
+        if (!s_upload_ok) {
+            ESP_LOGE(TAG, "upload rejected: empty filename");
+            return;
+        }
+        String path = dir + name;
         s_upload = SD_MMC.open(path, FILE_WRITE, true);
-        ESP_LOGI(TAG, "upload -> %s", path.c_str());
+        s_upload_ok = (bool)s_upload;
+        ESP_LOGI(TAG, "upload -> %s%s", path.c_str(), s_upload_ok ? "" : " (open failed)");
     } else if (up.status == UPLOAD_FILE_WRITE) {
-        if (s_upload) s_upload.write(up.buf, up.currentSize);
+        if (s_upload && s_upload.write(up.buf, up.currentSize) != up.currentSize) {
+            s_upload_ok = false;  // card full or write error
+        }
     } else if (up.status == UPLOAD_FILE_END) {
         if (s_upload) s_upload.close();
+    } else if (up.status == UPLOAD_FILE_ABORTED) {
+        if (s_upload) s_upload.close();
+        s_upload_ok = false;
     }
 }
 
