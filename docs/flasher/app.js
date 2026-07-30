@@ -17,7 +17,12 @@ function detectRepo() {
 const REPO = detectRepo();
 const BIN_PREFIX = "rfid-attendance-";
 const BIN_SUFFIX = "-firmware.bin";
-const FLASH_ADDR = 0x10000;
+/** ESP32-P4 / PlatformIO esp32-p4-evboard layout (see `pio run -t upload`). */
+const FLASH_MAP = {
+  bootloader: 0x2000,
+  partitions: 0x8000,
+  firmware: 0x10000,
+};
 const MONITOR_BAUD = 115200;
 const DEFAULT_FLASH_BAUD = 115200;
 const CONNECT_TIMEOUT_MS = 28000;
@@ -227,6 +232,12 @@ function isFirmwareAsset(name) {
   );
 }
 
+function companionName(firmwareName, kind) {
+  // rfid-attendance-<tag>-firmware.bin → …-bootloader.bin / …-partitions.bin
+  if (!firmwareName.endsWith(BIN_SUFFIX)) return null;
+  return firmwareName.slice(0, -BIN_SUFFIX.length) + `-${kind}.bin`;
+}
+
 function updateUI() {
   const rel = releases.find((r) => r.tag === $("releaseSelect").value);
   const cmp = $("versionCompare");
@@ -290,6 +301,10 @@ async function fetchReleases() {
     const tag = rel.tag_name || rel.name;
     const asset = (rel.assets || []).find((a) => isFirmwareAsset(a.name));
     if (!asset) continue;
+    const bootName = companionName(asset.name, "bootloader");
+    const partName = companionName(asset.name, "partitions");
+    const boot = (rel.assets || []).find((a) => a.name === bootName);
+    const part = (rel.assets || []).find((a) => a.name === partName);
     releases.push({
       tag,
       name: rel.name || tag,
@@ -297,6 +312,10 @@ async function fetchReleases() {
       url: localBinUrl(asset.name),
       size: asset.size,
       prerelease: !!rel.prerelease,
+      bootloaderName: boot ? boot.name : null,
+      bootloaderUrl: boot ? localBinUrl(boot.name) : null,
+      partitionsName: part ? part.name : null,
+      partitionsUrl: part ? localBinUrl(part.name) : null,
     });
   }
 
@@ -408,16 +427,35 @@ async function loadEsptool() {
   return esptoolModule;
 }
 
-async function downloadFirmware(rel) {
-  log(`Downloading ${rel.fileName}…`);
-  const res = await fetch(rel.url);
+async function downloadBin(url, label) {
+  log(`Downloading ${label}…`);
+  const res = await fetch(url);
   if (!res.ok) {
     throw new Error(
-      `Firmware file not on this site (HTTP ${res.status}). ` +
+      `${label} not on this site (HTTP ${res.status}). ` +
         "Re-deploy Pages after a new Release, or wait a few minutes."
     );
   }
-  return new Uint8Array(await res.arrayBuffer());
+  const data = new Uint8Array(await res.arrayBuffer());
+  log(`Downloaded ${label} (${(data.byteLength / 1024).toFixed(1)} KB).`);
+  return data;
+}
+
+async function downloadFlashImages(rel) {
+  if (!rel.bootloaderUrl || !rel.partitionsUrl) {
+    throw new Error(
+      "This release is missing bootloader/partitions assets. " +
+        "ESP32-P4 needs a full flash (bootloader @ 0x2000, partitions @ 0x8000, app @ 0x10000)."
+    );
+  }
+  const bootloader = await downloadBin(rel.bootloaderUrl, rel.bootloaderName);
+  const partitions = await downloadBin(rel.partitionsUrl, rel.partitionsName);
+  const firmware = await downloadBin(rel.url, rel.fileName);
+  return [
+    { data: bootloader, address: FLASH_MAP.bootloader },
+    { data: partitions, address: FLASH_MAP.partitions },
+    { data: firmware, address: FLASH_MAP.firmware },
+  ];
 }
 
 function portPid(port) {
@@ -558,14 +596,19 @@ async function installFirmware() {
   };
 
   try {
-    const firmware = await downloadFirmware(rel);
-    log(`Downloaded ${(firmware.byteLength / 1024).toFixed(0)} KB.`);
+    setStatus("Downloading bootloader + partitions + app…");
+    const fileArray = await downloadFlashImages(rel);
 
     setStatus("Select USB port and flash…");
     selectedPort = null;
     const port = await requestPort();
     log(`Port: ${usbAdapterName(port)}`);
-    log(`Flashing ${rel.tag} @ ${baud} baud…`);
+    log(
+      `Flashing ${rel.tag} @ ${baud} baud ` +
+        `(bootloader 0x${FLASH_MAP.bootloader.toString(16)}, ` +
+        `partitions 0x${FLASH_MAP.partitions.toString(16)}, ` +
+        `app 0x${FLASH_MAP.firmware.toString(16)})…`
+    );
 
     setStatus("Connecting to ESP32-P4 bootloader…");
     const { loader, transport, chip } = await connectLoader(
@@ -576,18 +619,22 @@ async function installFirmware() {
     log(`Chip: ${chip}`);
 
     setStatus("Writing flash… do not unplug USB.");
+    const totals = fileArray.map((f) => f.data.byteLength);
+    const grand = totals.reduce((a, b) => a + b, 0);
     await loader.writeFlash({
-      fileArray: [{ data: firmware, address: FLASH_ADDR }],
+      fileArray,
       flashMode: "dio",
       flashFreq: "80m",
       flashSize: "16MB",
       eraseAll: false,
       compress: true,
-      reportProgress: (_idx, written, total) => {
-        setProgress((written / total) * 100);
+      reportProgress: (idx, written) => {
+        const before = totals.slice(0, idx).reduce((a, b) => a + b, 0);
+        setProgress(((before + written) / grand) * 100);
       },
     });
-    log("Flash written.");
+    setProgress(100);
+    log(`Flash written (${(grand / 1024).toFixed(0)} KB across ${fileArray.length} images).`);
 
     await rebootAfterFlash(port, loader, transport, baud);
     selectedPort = null;

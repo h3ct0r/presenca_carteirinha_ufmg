@@ -51,12 +51,16 @@ jobs:
           downloaded=0
           for tag in $(gh release list --repo "${{ github.repository }}" --limit 12 \
             --json tagName -q '.[].tagName'); do
+            # Full ESP32-P4 flash needs bootloader + partitions + app (PIO layout).
             if gh release download "$tag" --repo "${{ github.repository }}" \
-              -p 'rfid-attendance-*-firmware.bin' -D _site/bins --clobber; then
+              -p 'rfid-attendance-*-firmware.bin' \
+              -p 'rfid-attendance-*-bootloader.bin' \
+              -p 'rfid-attendance-*-partitions.bin' \
+              -D _site/bins --clobber; then
               downloaded=$((downloaded + 1))
               echo "OK: $tag"
             else
-              echo "WARN: no firmware.bin for $tag (skipped)"
+              echo "WARN: incomplete bins for $tag (skipped)"
             fi
           done
           echo "Downloaded ${downloaded} firmware bin(s)"
