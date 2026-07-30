@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Install firmware · RFID Attendance</title>
+    <meta
+      name="description"
+      content="USB firmware installer for the RFID Attendance device (ESP32-P4) — Web Serial, GitHub Releases."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Source+Sans+3:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="bg" aria-hidden="true"></div>
+    <div class="wrap">
+      <header class="hero">
+        <div class="brands">
+          <img src="assets/verlab.jpg" alt="VerLab" class="logo verlab" />
+          <img src="assets/GEAR.jpg" alt="GEAR" class="logo gear" />
+        </div>
+        <div class="hero-copy">
+          <p class="eyebrow">VerLab · UFMG</p>
+          <h1>RFID Attendance</h1>
+          <p class="product">ESP32-P4 · USB · Web Serial installer</p>
+          <p class="sub">
+            Firmware from
+            <a href="https://github.com/h3ct0r/presenca_carteirinha_ufmg/releases"
+              >GitHub Releases</a
+            >
+          </p>
+        </div>
+        <img
+          src="assets/device.jpg"
+          alt="RFID Attendance device"
+          class="device-photo"
+          width="160"
+          height="200"
+        />
+      </header>
+
+      <noscript>
+        <p class="banner err">JavaScript is required for USB flashing.</p>
+      </noscript>
+
+      <div id="noSerial" class="banner err hidden" role="alert">
+        Your browser does not support Web Serial. Open this page in
+        <strong>Google Chrome</strong> or <strong>Microsoft Edge</strong> on a
+        desktop PC (not on iOS).
+      </div>
+
+      <ol class="steps">
+        <li>
+          Connect the <strong>RFID Attendance</strong> device (Guition ESP32-P4)
+          with a USB <strong>data</strong> cable. On battery, press
+          <strong>SW3</strong> to power on.
+        </li>
+        <li>
+          Close any program that uses the USB serial port (PlatformIO monitor,
+          terminal, IDE).
+        </li>
+        <li>
+          Select a release, acknowledge the risk, click <strong>Install</strong>,
+          and choose the correct serial port.
+        </li>
+        <li>
+          If connect fails, enter download mode:
+          <strong>hold BOOT → tap RST → release RST → release BOOT</strong>.
+        </li>
+      </ol>
+
+      <section class="install-panel">
+        <div class="row">
+          <label for="releaseSelect">Firmware</label>
+          <select id="releaseSelect" disabled>
+            <option value="">Loading releases…</option>
+          </select>
+        </div>
+
+        <div class="row row-split">
+          <div>
+            <label for="flashBaud">Flash speed</label>
+            <select id="flashBaud">
+              <option value="115200" selected>115200 baud</option>
+              <option value="230400">230400 baud</option>
+              <option value="460800">460800 baud</option>
+              <option value="921600">921600 baud</option>
+            </select>
+          </div>
+          <div class="installed">
+            <span class="label">Installed</span>
+            <span id="deviceVersion" class="mono">—</span>
+            <button
+              type="button"
+              class="linkish"
+              id="btnReadVersion"
+              title="Reset and read boot banner @ 115200 baud"
+            >
+              Read
+            </button>
+          </div>
+        </div>
+
+        <p id="versionCompare" class="hint"></p>
+        <p id="statusLine" class="status-line" role="status"></p>
+
+        <label class="ack">
+          <input type="checkbox" id="ackFlash" />
+          <span
+            >I understand the risks (do not unplug USB during flash; attendance
+            data on the SD card is not erased by this app flash).</span
+          >
+        </label>
+
+        <button type="button" class="install-btn" id="btnInstall" disabled>
+          Install
+        </button>
+
+        <div class="progress" id="progressWrap">
+          <div id="progressBar"></div>
+        </div>
+
+        <details class="log-details">
+          <summary>Log</summary>
+          <div class="log" id="log" aria-live="polite"></div>
+        </details>
+      </section>
+
+      <footer>
+        <a href="https://github.com/h3ct0r/presenca_carteirinha_ufmg"
+          >h3ct0r/presenca_carteirinha_ufmg</a
+        >
+        · VerLab / GEAR · UFMG ·
+        <a
+          href="https://github.com/h3ct0r/presenca_carteirinha_ufmg/blob/main/docs/flasher/DEPLOY.md"
+          >Deploy notes</a
+        >
+      </footer>
+    </div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

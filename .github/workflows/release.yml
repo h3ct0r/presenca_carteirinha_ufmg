@@ -84,14 +84,12 @@ jobs:
             echo "- App image: \`rfid-attendance-${TAG}-firmware.bin\` (flash at \`0x10000\`)"
             echo "- Git SHA baked into build: \`$(git rev-parse --short=7 HEAD)\`"
             echo ""
-            echo "Flash with esptool:"
+            echo "### Flash"
+            echo ""
+            echo "- **Web installer** (Chrome/Edge): https://h3ct0r.github.io/presenca_carteirinha_ufmg/"
+            echo "- esptool:"
             echo '```'
             echo "esptool.py --chip esp32p4 write_flash 0x10000 rfid-attendance-${TAG}-firmware.bin"
-            echo '```'
-            echo ""
-            echo "Or with PlatformIO after copying the file into \`.pio/build/esp32p4/firmware.bin\`:"
-            echo '```'
-            echo "pio run -e esp32p4 -t upload"
             echo '```'
             echo ""
             echo "Native unit tests and config-builder tests passed in this workflow before the build."
