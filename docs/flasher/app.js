@@ -20,7 +20,8 @@ const BIN_SUFFIX = "-firmware.bin";
 const FLASH_ADDR = 0x10000;
 const MONITOR_BAUD = 115200;
 const DEFAULT_FLASH_BAUD = 115200;
-const CONNECT_TIMEOUT_MS = 22000;
+const CONNECT_TIMEOUT_MS = 28000;
+const USB_JTAG_SERIAL_PID = 0x1001;
 
 /** Prefer Espressif USB-JTAG/Serial and common USB-UART bridges. */
 const USB_PORT_FILTERS = [
@@ -419,8 +420,25 @@ async function downloadFirmware(rel) {
   return new Uint8Array(await res.arrayBuffer());
 }
 
+function portPid(port) {
+  try {
+    return port.getInfo()?.usbProductId || 0;
+  } catch (_) {
+    return 0;
+  }
+}
+
 async function connectLoader(port, baud, terminal) {
-  const { ESPLoader, Transport, ClassicReset } = await loadEsptool();
+  const { ESPLoader, Transport, ClassicReset, UsbJtagSerialReset } =
+    await loadEsptool();
+
+  const pid = portPid(port);
+  const isUsbJtag = pid === USB_JTAG_SERIAL_PID;
+  log(
+    isUsbJtag
+      ? "Port is Espressif USB-JTAG/Serial — using UsbJtagSerialReset (classic DTR/RTS alone usually fails)."
+      : `Port PID 0x${pid.toString(16)} — trying classic + USB-JTAG reset strategies.`
+  );
 
   const probe = await probeSerialControl(port);
   if (!probe.ok) {
@@ -429,29 +447,40 @@ async function connectLoader(port, baud, terminal) {
     log("USB control signals OK.");
   }
 
+  // Order matters for Guition ESP32-P4 (native USB 0x303a:0x1001):
+  // let esptool-js run UsbJtagSerialReset first; only then ask for BOOT+RST.
   const attempts = [
     {
-      label: "HW auto-reset",
-      mode: "no_reset",
+      label: "USB-JTAG reset",
+      mode: "usb_reset",
       async prep() {
-        log("Toggle DTR/RTS for bootloader entry…");
-        await classicBootloaderReset(port, baud);
+        log("esptool UsbJtagSerialReset…");
+      },
+    },
+    {
+      label: "esptool default_reset",
+      mode: "default_reset",
+      async prep() {
+        await sleep(200);
       },
     },
     {
       label: "manual BOOT+RST",
       mode: "no_reset",
       async prep() {
-        log("Hold BOOT → tap RST → release RST → release BOOT (4 s)…");
-        setStatus("Download mode: BOOT + RST now…", "ok");
-        await sleep(4000);
+        log(
+          "Manual download mode: hold BOOT → tap RST → release RST → release BOOT (you have ~6 s)…"
+        );
+        setStatus("Hold BOOT, tap RST, then release both…", "ok");
+        await sleep(6000);
       },
     },
     {
-      label: "esptool auto-reset",
-      mode: "default_reset",
+      label: "classic UART reset",
+      mode: "no_reset",
       async prep() {
-        await sleep(300);
+        log("Toggle classic DTR/RTS (UART adapters)…");
+        await classicBootloaderReset(port, baud);
       },
     },
   ];
@@ -473,6 +502,7 @@ async function connectLoader(port, baud, terminal) {
         debugLogging: false,
         resetConstructors: {
           classicReset: (t, delay) => new ClassicReset(t, Math.max(delay, 400)),
+          usbJTAGSerialReset: (t) => new UsbJtagSerialReset(t),
         },
       });
       configureLoaderBaud(loader, baud);
@@ -498,7 +528,8 @@ async function connectLoader(port, baud, terminal) {
 
   throw new Error(
     (lastErr?.message || "Failed to connect with the device") +
-      ". Close other serial tools, then try BOOT+RST."
+      ". Close PlatformIO Serial Monitor / other serial tools, then retry. " +
+      "If it still fails: hold BOOT, tap RST, release RST, release BOOT while the installer says so."
   );
 }
 

@@ -69,8 +69,10 @@
           and choose the correct serial port.
         </li>
         <li>
-          If connect fails, enter download mode:
-          <strong>hold BOOT → tap RST → release RST → release BOOT</strong>.
+          This board uses <strong>Espressif USB-JTAG</strong>. If auto-reset
+          fails, when prompted:
+          <strong>hold BOOT → tap RST → release RST → release BOOT</strong>
+          (GPIO35 / EN). Leave PlatformIO monitor closed.
         </li>
       </ol>
 
