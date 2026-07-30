@@ -30,7 +30,12 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
+      # Always deploy from main — workflow_run after a tag Release otherwise
+      # leaves the job on a non-main ref and the github-pages environment
+      # branch policy can leave the run stuck in "queued".
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
