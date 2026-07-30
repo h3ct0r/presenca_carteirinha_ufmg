@@ -436,7 +436,7 @@ static lv_obj_t* create(void) {
     lv_obj_set_style_bg_opa(s_pw_button, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(s_pw_button, 10, 0);
     lv_obj_set_style_pad_all(s_pw_button, 12, 0);
-    lv_obj_align(s_pw_button, LV_ALIGN_BOTTOM_MID, 0, -16);
+    lv_obj_align(s_pw_button, LV_ALIGN_BOTTOM_MID, 0, -32);
     lv_obj_add_event_cb(s_pw_button, open_pw_modal, LV_EVENT_CLICKED, nullptr);
     ui_add_press_feedback(s_pw_button);
     lv_obj_t* pl = lv_label_create(s_pw_button);
