@@ -39,10 +39,10 @@
 *.out
 *.app
 
-# Build directories
-build/
-Build/
-build-*/
+# Build Directories (anchored at repo root so tools/build/ is not ignored)
+/build/
+/Build/
+/build-*/
 
 # CMake generated files
 CMakeFiles/
@@ -71,3 +71,6 @@ Testing/
 .pio/
 .DS_Store/
 .DS_Store
+
+# Cursor IDE local rules / memories (not shared with the repo)
+.cursor/

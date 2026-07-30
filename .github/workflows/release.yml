@@ -1,0 +1,114 @@
+# On version tags (v*): run host tests, build esp32p4 firmware, publish a
+# GitHub Release with the flashable firmware.bin (esptool / PlatformIO upload).
+# ESP32 targets are flashed from .bin — Intel HEX is not required.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish firmware
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+            ~/.platformio/platforms
+            ~/.platformio/packages
+          key: pio-release-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            pio-release-${{ runner.os }}-
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+          pip install --upgrade platformio
+
+      - name: Config-builder tests
+        working-directory: tools/config-builder
+        run: node --test
+
+      - name: Native unit tests
+        run: pio test -e native
+
+      - name: Build firmware (esp32p4)
+        run: pio run -e esp32p4
+
+      - name: Package release artifacts
+        id: pkg
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          BUILD_DIR=".pio/build/esp32p4"
+          OUT="dist"
+          mkdir -p "$OUT"
+
+          BIN_SRC="${BUILD_DIR}/firmware.bin"
+          test -f "$BIN_SRC"
+
+          BIN_OUT="${OUT}/rfid-attendance-${TAG}-firmware.bin"
+          cp "$BIN_SRC" "$BIN_OUT"
+
+          # Companions for full-chip flash / recovery if the build emits them
+          if [ -f "${BUILD_DIR}/bootloader.bin" ]; then
+            cp "${BUILD_DIR}/bootloader.bin" "${OUT}/rfid-attendance-${TAG}-bootloader.bin"
+          fi
+          if [ -f "${BUILD_DIR}/partitions.bin" ]; then
+            cp "${BUILD_DIR}/partitions.bin" "${OUT}/rfid-attendance-${TAG}-partitions.bin"
+          fi
+
+          {
+            echo "### Firmware ${TAG}"
+            echo ""
+            echo "- Board / env: Guition JC4880P443C (\`esp32p4\`)"
+            echo "- App image: \`rfid-attendance-${TAG}-firmware.bin\` (flash at \`0x10000\`)"
+            echo "- Git SHA baked into build: \`$(git rev-parse --short=7 HEAD)\`"
+            echo ""
+            echo "Flash with esptool:"
+            echo '```'
+            echo "esptool.py --chip esp32p4 write_flash 0x10000 rfid-attendance-${TAG}-firmware.bin"
+            echo '```'
+            echo ""
+            echo "Or with PlatformIO after copying the file into \`.pio/build/esp32p4/firmware.bin\`:"
+            echo '```'
+            echo "pio run -e esp32p4 -t upload"
+            echo '```'
+            echo ""
+            echo "Native unit tests and config-builder tests passed in this workflow before the build."
+          } > "${OUT}/RELEASE_NOTES.md"
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          ls -la "$OUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ steps.pkg.outputs.tag }}
+          body_path: dist/RELEASE_NOTES.md
+          files: |
+            dist/rfid-attendance-*-firmware.bin
+            dist/rfid-attendance-*-bootloader.bin
+            dist/rfid-attendance-*-partitions.bin
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
