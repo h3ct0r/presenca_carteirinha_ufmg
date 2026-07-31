@@ -1,12 +1,29 @@
-# RFID Attendance Device (ESP32-P4 + LVGL)
+<div align="center">
+
+# Presença Carteirinha UFMG
+
+**A classroom attendance device — students register presence with a tap of their university RFID card.**
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform: ESP32-P4](https://img.shields.io/badge/Platform-ESP32--P4-E7352C?logo=espressif&logoColor=white)](https://www.espressif.com/en/products/socs/esp32-p4)
+[![UI: LVGL 9](https://img.shields.io/badge/UI-LVGL%209-1D4ED8)](https://lvgl.io)
+[![Build: PlatformIO](https://img.shields.io/badge/Build-PlatformIO-FF7F00?logo=platformio&logoColor=white)](https://platformio.org)
 
 <a href="https://youtube.com/shorts/oyJePKWmUqI?feature=share" target="_blank">
-   <img src="https://raw.githubusercontent.com/h3ct0r/presenca_carteirinha_ufmg/refs/heads/main/assets/carteirinha_v0.1.jpg" alt="Watch the video" width="360" />
+   <img src="https://raw.githubusercontent.com/h3ct0r/presenca_carteirinha_ufmg/refs/heads/main/assets/carteirinha_v0.1.jpg" alt="Watch the demo video" width="380" />
 </a>
 
-A classroom attendance device. Students register presence by tapping an RFID
-card — or, in kiosk mode, by typing their university id. A portrait touchscreen
-runs the UI (LVGL 9); an SD card holds all data; a buzzer gives audio feedback.
+<sub>▶ Click to watch the demo</sub>
+
+[Documentation](#documentation) · [Architecture](docs/software/ARCHITECTURE.md) · [Config import](docs/software/CONFIG_IMPORT.md) · [Backlog](docs/software/BACKLOG.md)
+
+</div>
+
+---
+
+Students register presence by tapping an RFID card — or, in kiosk mode, by typing
+their university id. A portrait touchscreen runs the UI (LVGL 9); an SD card
+holds all data; a buzzer gives audio feedback.
 
 **Typical workflow:** a professor taps their card at the idle screen to unlock
 the device → picks a class → opens a dated attendance session → takes roll call
@@ -94,6 +111,35 @@ tests against the mocks in `lib/hw_mocks/`). See [`test/README.md`](test/README.
 - [`CLAUDE.md`](CLAUDE.md) — build/test commands, layer rules, and the conventions
   agents and contributors follow.
 - [`test/README.md`](test/README.md) — the native test setup and suite list.
+
+## Authors
+
+- **Prof. Héctor Azpúrua**
+- **Prof. Paulo Rezeck**
+- **Prof. Douglas G. Macharet**
+- **Aline Molinar**
+
+Computer Science Department (DCC) — Universidade Federal de Minas Gerais.
+
+## Acknowledgements
+
+<div align="center">
+   <img src="assets/verlab.jpg" alt="VeRLab" height="72" />
+   &nbsp;&nbsp;&nbsp;&nbsp;
+   <img src="assets/GEAR.jpg" alt="GEAR" height="72" />
+</div>
+
+Developed with the support of **VeRLab** (Laboratory of Computer Vision and
+Robotics) and **GEAR** (Grupo de Estudos Avançados em Robótica).
+
+## Built with
+
+| Project | License |
+|---|---|
+| [LVGL](https://lvgl.io) | MIT |
+| [Montserrat](https://fonts.google.com/specimen/Montserrat) | SIL OFL 1.1 |
+| [Font Awesome Free](https://fontawesome.com) | CC BY 4.0 |
+| [ESP-DL](https://github.com/espressif/esp-dl) | Apache 2.0 |
 
 ## License
 
