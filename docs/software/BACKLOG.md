@@ -29,6 +29,10 @@ over the soft-AP, including `config.json` with cleartext professor passwords via
 folder delete widens the blast radius without changing the kind of exposure. The
 AP is per-boot, WPA2-protected and professor-started, which is why this is
 tolerated for a debug tool — it is the reason to add auth, not a new hole.
+The background switch (`scr_wifi_editor`) widens the window: the AP can now stay
+up while the professor is on another screen, so nobody is necessarily looking at
+it. It is bounded on both sides — off at every boot, never persisted, and the
+idle gate stops the AP on sign-out — but it is one more reason to add auth.
 
 **S2 — neither debug wipe takes a backup.** "Delete all cards & attendance" and
 "Erase the whole SD card" are immediate and unrecoverable, gated only by the

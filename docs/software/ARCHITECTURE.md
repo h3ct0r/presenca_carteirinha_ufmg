@@ -46,8 +46,22 @@ be seen half-written. That is the reason the rule stands for everything else.
 
 The file server is the deliberate exception (`services/file_server`): it is a
 synchronous `WebServer`, so serving it from an LVGL timer froze the UI for the
-length of every transfer. It runs on its own `fileserv` task instead, and the
-UI stays parked on the WiFi screen while the AP is up.
+length of every transfer. It runs on its own `fileserv` task instead.
+
+By default the footer nav is locked while the AP is up, so the browser can only
+change the card while the professor watches one screen. The debug switch on
+`scr_wifi_editor` lifts that lock (off at every boot, never persisted), and then
+the card can change under any screen. Two rules keep that honest:
+
+- the server counts its writes (`file_server_write_count()`), and `ui/sd_resync`
+  turns "the count moved" into dropped caches: `ui_sd_resync_light()` for the
+  memoised attendance counts — safe anywhere — and `ui_sd_resync_full()`, which
+  adds a config + roster reload and is called **only** from the class list and
+  the idle gate. `roster_service_reload()` rewrites the storage `scr_class`
+  holds a `class_rec_t*` into, so reloading under an open class screen would
+  retarget it;
+- returning to the idle gate calls `scr_wifi_editor_stop_ap()`, so signing out
+  cannot leave an unauthenticated file manager on air.
 
 ## Screens
 
@@ -69,7 +83,7 @@ lazily; per-visit state belongs in `on_show`. Ids are in `include/ui/screen.h`.
 
 Footer nav appears on Classes / Export / WiFi File Editor / Admin, and is
 disabled while the soft-AP is running so the AP cannot be left on by walking
-away.
+away — unless the debug background switch is on (see §Threading).
 
 **Gotcha:** `create()` runs *before* `s_current` is set, so `scr_mgr_current()`
 returns the *previous* screen during create.

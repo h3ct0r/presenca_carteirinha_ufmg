@@ -31,6 +31,12 @@ static bool s_routes_registered = false;      // on() appends, so register once
 static File s_upload;
 static bool s_upload_ok = false;  // false makes /api/upload answer 500
 
+// Bumped on every successful change to the card. The UI compares it against its
+// own last-seen value to know when its cached view of the card went stale (see
+// ui/sd_resync.h). Written by this task, read on the LVGL thread — an aligned
+// 32-bit word, and the reader only ever tests it for inequality.
+static volatile uint32_t s_writes = 0;
+
 // The single-page file manager. The AP has no internet, so a Tailwind-style
 // utility CSS is embedded rather than pulled from a CDN. Kept in flash (PROGMEM).
 static const char INDEX_HTML[] PROGMEM = R"HTMLDOC(<!doctype html>
@@ -285,6 +291,7 @@ static void handle_save(void) {
     size_t n = f.write((const uint8_t*)body.c_str(), body.length());
     f.close();
     bool ok = (n == body.length());
+    if (ok) s_writes++;
     s_server.send(ok ? 200 : 500, "text/plain", ok ? "saved" : "write failed");
 }
 
@@ -303,6 +310,7 @@ static void handle_delete(void) {
         s_server.send(500, "text/plain", err);
         return;
     }
+    s_writes++;
     char msg[48];
     snprintf(msg, sizeof(msg), "deleted %d item%s", st.removed, st.removed == 1 ? "" : "s");
     s_server.send(200, "text/plain", msg);
@@ -317,6 +325,7 @@ static void handle_rename(void) {
         s_server.send(400, "text/plain", err);
         return;
     }
+    s_writes++;
     s_server.send(200, "text/plain", "renamed");
 }
 
@@ -361,9 +370,15 @@ static void handle_upload_data(void) {
             s_upload_ok = false;  // card full or write error
         }
     } else if (up.status == UPLOAD_FILE_END) {
-        if (s_upload) s_upload.close();
+        if (s_upload) {
+            s_upload.close();
+            s_writes++;
+        }
     } else if (up.status == UPLOAD_FILE_ABORTED) {
-        if (s_upload) s_upload.close();
+        if (s_upload) {
+            s_upload.close();
+            s_writes++;  // a partial file is still a change to the card
+        }
         s_upload_ok = false;
     }
 }
@@ -447,3 +462,5 @@ void file_server_end(void) {
 }
 
 bool file_server_running(void) { return s_running; }
+
+uint32_t file_server_write_count(void) { return s_writes; }

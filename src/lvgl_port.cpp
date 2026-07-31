@@ -17,6 +17,12 @@ static constexpr int LCD_H_RES = 480;
 static constexpr int LCD_V_RES = 800;
 static constexpr int LCD_BYTES_PER_PIXEL = 2;  // RGB565
 
+// Touch sampling period, independent of the 33 ms display refresh — see the
+// note in lvgl_port_init().
+static constexpr uint32_t TOUCH_READ_PERIOD_MS = 10;
+// Scroll momentum decay, percent lost per throw step (LVGL default 10).
+static constexpr uint8_t SCROLL_THROW_PCT = 20;
+
 // The drivers are owned by the caller; we keep references only so the LVGL
 // callbacks (which carry no user context of their own) can reach them.
 static st7701_lcd* s_lcd = nullptr;
@@ -81,4 +87,22 @@ void lvgl_port_init(st7701_lcd& lcd, gt911_touch& touch) {
     lv_indev_t* indev = lv_indev_create();
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(indev, touch_read_cb);
+
+    // Sample the touch panel faster than the display refreshes. lv_indev_create()
+    // gives the read timer LV_DEF_REFR_PERIOD (33 ms), which is too coarse twice
+    // over: the list follows the finger in ~20 px steps during a fast drag, and
+    // LVGL estimates the flick from a time-decayed sum of the last 8 per-sample
+    // deltas that ignores anything older than 99 ms — at 33 ms only ~3 of those 8
+    // slots are ever in the window, so how far a flick throws depends on where
+    // the release happened to land between samples. At 10 ms the window is full
+    // of small deltas and the throw becomes repeatable. Costs one extra I2C read
+    // per period on the shared bus.
+    lv_timer_set_period(lv_indev_get_read_timer(indev), TOUCH_READ_PERIOD_MS);
+
+    // Momentum decay per throw step, in percent (LVGL's default is 10, i.e. it
+    // keeps 90% of the velocity each step, which glides well past where the
+    // finger stopped). Note this is per animation STEP, not per millisecond, so
+    // it is tied to the refresh period: changing LV_DEF_REFR_PERIOD changes how
+    // long the glide lasts in wall time.
+    lv_indev_set_scroll_throw(indev, SCROLL_THROW_PCT);
 }

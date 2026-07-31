@@ -13,6 +13,7 @@
 #include "ui/components/student_photo.h"
 #include "ui/components/toast.h"
 #include "ui/screen_manager.h"
+#include "ui/sd_resync.h"
 #include "ui/theme/theme.h"
 
 static shell_t s_sh;
@@ -220,6 +221,8 @@ static lv_obj_t* create(void) {
 
 static void on_show(void* arg) {
     if (arg) s_cls = (const class_rec_t*)arg;
+    // Attendance only: s_cls points into roster storage, which a reload rewrites.
+    ui_sd_resync_light();
     keyboard_set_visibility_cb(kb_visibility_cb);
     keyboard_hide();  // release before cleaning the keyboard textareas (UAF guard)
     lv_obj_clean(s_content);

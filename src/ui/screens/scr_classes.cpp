@@ -8,6 +8,7 @@
 #include "ui/screen_manager.h"
 #include "ui/screens/scr_class.h"
 #include "ui/screens/scr_class_stats.h"
+#include "ui/sd_resync.h"
 #include "ui/theme/theme.h"
 
 static lv_obj_t* s_subtitle = nullptr;  // shows the logged-in professor
@@ -157,6 +158,9 @@ static lv_obj_t* create(void) {
 }
 
 static void on_show(void*) {
+    // Safe place for the roster reload: the list below is rebuilt from scratch
+    // and this screen holds no class_rec_t* across the call.
+    ui_sd_resync_full();
     const teacher_t* t = session_get();
     char subtitle[80];
     snprintf(subtitle, sizeof(subtitle), "Prof. %s", t ? t->name : "");

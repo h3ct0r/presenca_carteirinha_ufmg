@@ -13,6 +13,8 @@
 #include "ui/components/keyboard.h"
 #include "ui/components/toast.h"
 #include "ui/screen_manager.h"
+#include "ui/screens/scr_wifi_editor.h"
+#include "ui/sd_resync.h"
 #include "ui/theme/theme.h"
 #include "ui/ui_state.h"
 
@@ -472,6 +474,14 @@ static lv_obj_t* create(void) {
     return s_root;
 }
 
+// Reaching the gate means nobody is signed in, so the debug file manager — which
+// has no password of its own — must not still be serving. Covers the Admin
+// logout and any future path back here; a no-op at boot.
+static void on_show(void*) {
+    scr_wifi_editor_stop_ap();
+    ui_sd_resync_full();  // the web editor may have rewritten config/roster
+}
+
 static void on_hide(void) {
     close_pw_modal();
     close_import_modal();
@@ -484,6 +494,6 @@ static void on_hide(void) {
 
 const screen_t scr_idle = {
     .create = create,
-    .on_show = nullptr,
+    .on_show = on_show,
     .on_hide = on_hide,
 };

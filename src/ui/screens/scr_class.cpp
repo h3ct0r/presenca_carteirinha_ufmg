@@ -18,6 +18,7 @@
 #include "ui/components/student_photo.h"
 #include "ui/components/toast.h"
 #include "ui/screen_manager.h"
+#include "ui/sd_resync.h"
 #include "ui/theme/theme.h"
 #include "ui/ui.h"
 
@@ -1262,6 +1263,8 @@ void scr_class_request_session_view(void) { s_pending_session_view = true; }
 
 static void on_show(void* arg) {
     if (arg) s_cls = (const class_rec_t*)arg;
+    // Attendance only: s_cls points into roster storage, which a reload rewrites.
+    ui_sd_resync_light();
     // Returning from kiosk drops back into the running session; a fresh entry
     // from the class list lands on the hub.
     if (s_pending_session_view) {
