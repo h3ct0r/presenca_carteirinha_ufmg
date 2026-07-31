@@ -12,11 +12,22 @@ lv_style_t theme_style_tab_active;
 lv_style_t theme_style_tab_idle;
 lv_style_t theme_style_pressed;
 
-// Press feedback dims the object; the transition eases it in/out so it reads
-// as a tap. Opacity only (no transform): transforms shrink the hit area in
-// LVGL 9's transform-aware input, which can make buttons miss taps.
-static const lv_style_prop_t s_press_props[] = {LV_STYLE_OPA, LV_STYLE_PROP_INV};
-static lv_style_transition_dsc_t s_press_trans;
+// Press feedback darkens and dims the object. No transform: transforms shrink
+// the hit area in LVGL 9's transform-aware input, which can make buttons miss
+// taps.
+static const lv_style_prop_t s_press_props[] = {LV_STYLE_OPA, LV_STYLE_RECOLOR_OPA,
+                                                LV_STYLE_PROP_INV};
+
+// Two descriptors, because the two directions want opposite timing: the press
+// must land under the finger, the release should ease so it doesn't blink.
+//
+// LVGL makes this separable. On a state change it collects transitions ONLY
+// from styles that apply in the NEW state, and for a property the higher state
+// selector wins (lv_obj.c, lv_obj_update_state). Entering PRESSED, the pressed
+// style outranks the base style, so IN governs; returning to default, the
+// pressed style is skipped entirely, so OUT governs.
+static lv_style_transition_dsc_t s_press_in_trans;   // on theme_style_pressed
+static lv_style_transition_dsc_t s_press_out_trans;  // on every base style
 
 static void init_button_base(lv_style_t* s, uint32_t bg, uint32_t text) {
     lv_style_init(s);
@@ -27,20 +38,26 @@ static void init_button_base(lv_style_t* s, uint32_t bg, uint32_t text) {
     lv_style_set_text_color(s, lv_color_hex(text));
     lv_style_set_pad_ver(s, 10);
     lv_style_set_pad_hor(s, 14);
-    lv_style_set_transition(s, &s_press_trans);
+    lv_style_set_transition(s, &s_press_out_trans);
 }
 
 void theme_init(void) {
-    // Must come before init_button_base(), which references s_press_trans.
-    lv_style_transition_dsc_init(&s_press_trans, s_press_props, lv_anim_path_ease_out, 120, 0,
+    // Must come before init_button_base(), which references s_press_out_trans.
+    lv_style_transition_dsc_init(&s_press_in_trans, s_press_props, lv_anim_path_linear, 0, 0,
+                                 nullptr);
+    lv_style_transition_dsc_init(&s_press_out_trans, s_press_props, lv_anim_path_ease_out, 120, 0,
                                  nullptr);
 
-    // The single "pressed" look reused across the whole app: dim the object.
-    // Opacity is color-agnostic, so one style gives consistent feedback on
-    // every button style and clickable object.
+    // The single "pressed" look reused across the whole app. Both properties are
+    // color-agnostic, so one style gives consistent feedback on every button
+    // style and clickable object: recolor darkens whatever the widget draws
+    // (which a plain opacity dim cannot do on a saturated button — it only makes
+    // it paler), and the opacity keeps the softening the UI already had.
     lv_style_init(&theme_style_pressed);
-    lv_style_set_opa(&theme_style_pressed, LV_OPA_60);
-    lv_style_set_transition(&theme_style_pressed, &s_press_trans);
+    lv_style_set_recolor(&theme_style_pressed, lv_color_black());
+    lv_style_set_recolor_opa(&theme_style_pressed, LV_OPA_20);
+    lv_style_set_opa(&theme_style_pressed, LV_OPA_80);
+    lv_style_set_transition(&theme_style_pressed, &s_press_in_trans);
 
     lv_style_init(&theme_style_card);
     lv_style_set_radius(&theme_style_card, 14);
@@ -53,7 +70,7 @@ void theme_init(void) {
     lv_style_set_shadow_color(&theme_style_card, lv_color_hex(0x000000));
     lv_style_set_pad_all(&theme_style_card, 12);
     lv_style_set_text_color(&theme_style_card, lv_color_hex(THEME_TEXT));
-    lv_style_set_transition(&theme_style_card, &s_press_trans);  // clickable cards ease back
+    lv_style_set_transition(&theme_style_card, &s_press_out_trans);  // clickable cards ease back
 
     init_button_base(&theme_style_btn_primary, THEME_PRIMARY, THEME_ON_PRIMARY);
     init_button_base(&theme_style_btn_accent, THEME_ACCENT, THEME_ON_PRIMARY);
@@ -81,7 +98,7 @@ void theme_init(void) {
     lv_style_set_pad_ver(&theme_style_tab_active, 8);
     lv_style_set_pad_hor(&theme_style_tab_active, 6);  // keep label off the rounded edges
     lv_style_set_text_font(&theme_style_tab_active, &lv_font_montserrat_20);
-    lv_style_set_transition(&theme_style_tab_active, &s_press_trans);
+    lv_style_set_transition(&theme_style_tab_active, &s_press_out_trans);
 
     lv_style_init(&theme_style_tab_idle);
     lv_style_set_radius(&theme_style_tab_idle, 10);
@@ -93,7 +110,7 @@ void theme_init(void) {
     lv_style_set_pad_ver(&theme_style_tab_idle, 8);
     lv_style_set_pad_hor(&theme_style_tab_idle, 6);
     lv_style_set_text_font(&theme_style_tab_idle, &lv_font_montserrat_20);
-    lv_style_set_transition(&theme_style_tab_idle, &s_press_trans);
+    lv_style_set_transition(&theme_style_tab_idle, &s_press_out_trans);
 }
 
 static void beep_on_click_cb(lv_event_t*) { beeper_touch(); }

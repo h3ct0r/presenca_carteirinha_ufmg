@@ -62,7 +62,8 @@ extern lv_style_t theme_style_btn_danger;
 extern lv_style_t theme_style_input;
 extern lv_style_t theme_style_tab_active;
 extern lv_style_t theme_style_tab_idle;
-// Applied on LV_STATE_PRESSED for consistent tap feedback (shrink + dim).
+// Applied on LV_STATE_PRESSED for consistent tap feedback: darken + dim,
+// arriving with no ramp and easing back on release (see theme.cpp).
 extern lv_style_t theme_style_pressed;
 
 // Call once from ui_init(), before any screen is created.
@@ -74,8 +75,14 @@ lv_obj_t* ui_make_label(lv_obj_t* parent, const char* text, uint32_t color,
 lv_obj_t* ui_make_button(lv_obj_t* parent, const char* text, lv_style_t* style,
                          lv_event_cb_t cb, void* user_data);
 
-// Adds the standard press feedback (shrink + dim on LV_STATE_PRESSED) to any
-// clickable object. ui_make_button() already calls this; use it for other
-// actionable items (cards, custom buttons) so feedback stays consistent.
+// Adds the standard press feedback (darken + dim on LV_STATE_PRESSED) AND the
+// click beep to any clickable object. ui_make_button() already calls this; use
+// it for other actionable items (cards, chips, rows) so feedback stays
+// consistent.
+//
+// Deliberately opt-in, and deliberately both at once. Plenty of objects are
+// clickable only to swallow taps — every modal backdrop, the tap-to-dismiss
+// result overlays — and flashing those on a stray tap looks broken. The
+// keyboard's silence also depends on the coupling: its keys don't call this.
 void ui_add_press_feedback(lv_obj_t* obj);
 lv_obj_t* ui_make_card(lv_obj_t* parent);  // surface card, 100% wide, auto height

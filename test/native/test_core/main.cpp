@@ -79,11 +79,11 @@ static void test_battery_endpoints(void) {
 }
 
 static void test_battery_table_points(void) {
-    // Linear 2.7 V (0%) .. 4.0 V (100%), anchors every 5% (65 mV).
-    TEST_ASSERT_EQUAL_UINT8(50, battery_mv_to_pct(3350));  // midpoint anchor
-    TEST_ASSERT_EQUAL_UINT8(75, battery_mv_to_pct(3675));
-    TEST_ASSERT_EQUAL_UINT8(25, battery_mv_to_pct(3025));
-    TEST_ASSERT_EQUAL_UINT8(60, battery_mv_to_pct(3480));
+    // Linear 2.7 V (0%) .. 3.75 V (100%), anchors every 5% (~52 mV).
+    TEST_ASSERT_EQUAL_UINT8(50, battery_mv_to_pct(3225));  // midpoint anchor
+    TEST_ASSERT_EQUAL_UINT8(75, battery_mv_to_pct(3488));
+    TEST_ASSERT_EQUAL_UINT8(25, battery_mv_to_pct(2963));
+    TEST_ASSERT_EQUAL_UINT8(60, battery_mv_to_pct(3330));
 }
 
 // The board has no charge-status line, so "charging" is inferred from the rail
@@ -103,9 +103,9 @@ static void test_battery_full_pack_is_not_charging(void) {
 }
 
 static void test_battery_interpolates_between_points(void) {
-    // 3400 mV is 50/65 of the way from the 50% anchor (3350) to the 55% anchor
-    // (3415): 53.85 -> rounds to 54.
-    TEST_ASSERT_EQUAL_UINT8(54, battery_mv_to_pct(3400));
+    // 3250 mV is 25/53 of the way from the 50% anchor (3225) to the 55% anchor
+    // (3278): 52.36 -> rounds to 52.
+    TEST_ASSERT_EQUAL_UINT8(52, battery_mv_to_pct(3250));
 }
 
 static void test_battery_monotonic(void) {

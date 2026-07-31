@@ -156,6 +156,7 @@ static void build_settings(lv_obj_t* parent) {
         lv_obj_set_style_bg_color(sw, lv_color_hex(PALETTE[i]), 0);
         lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, 0);
         lv_obj_add_flag(sw, LV_OBJ_FLAG_CLICKABLE);
+        ui_add_press_feedback(sw);
         lv_obj_add_event_cb(sw, swatch_cb, LV_EVENT_CLICKED, (void*)(uintptr_t)PALETTE[i]);
         s_swatches[i] = sw;
     }
