@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RFID Attendance · VerLab tools</title>
+    <meta
+      name="description"
+      content="Config builder and USB firmware installer for the UFMG RFID attendance device."
+    />
+    <link rel="stylesheet" href="hub.css" />
+  </head>
+  <body>
+    <header class="hub-top">
+      <div class="hub-brand">
+        <strong>Presença Carteirinha UFMG</strong>
+        <span>VerLab · GEAR · device tools</span>
+      </div>
+      <nav class="hub-tabs" aria-label="Tools">
+        <a href="./" class="active">Home</a>
+        <a href="config/">Config</a>
+        <a href="firmware/">Firmware</a>
+      </nav>
+    </header>
+
+    <main class="hub">
+      <h1>Device tools</h1>
+      <p class="lede">
+        Author classroom config in the browser, then flash firmware over USB.
+        Nothing is uploaded to this site — work stays on your machine until you
+        put files on the device SD card.
+      </p>
+
+      <div class="cards">
+        <a class="card" href="config/">
+          <span class="kicker">1 · Config</span>
+          <h2>Config builder</h2>
+          <p>
+            Teachers, students, classes, and photos → download
+            <code>config.tar</code>. Copy it to the SD root (or upload via the
+            device Wi‑Fi file manager), then import on the device.
+          </p>
+          <span class="cta">Open config builder →</span>
+        </a>
+
+        <a class="card" href="firmware/">
+          <span class="kicker">2 · Firmware</span>
+          <h2>USB installer</h2>
+          <p>
+            Chrome / Edge + Web Serial. Pick a GitHub Release and flash
+            bootloader, partitions, and app to the ESP32-P4.
+          </p>
+          <span class="cta">Open firmware installer →</span>
+        </a>
+      </div>
+
+      <section class="apply">
+        <h2>Apply config.tar to the SD card</h2>
+        <ol>
+          <li>
+            In <a href="config/">Config</a>, download <code>config.tar</code>
+            (built entirely in your browser).
+          </li>
+          <li>
+            Put the file at the <strong>root</strong> of the device SD card as
+            <code>/config.tar</code> — either copy with a card reader, or join
+            the device Wi‑Fi soft‑AP and use <strong>SD File Manager</strong>
+            (Admin → Wi‑Fi) to upload it.
+          </li>
+          <li>
+            On the device: confirm import on idle (new setup) or
+            <strong>Admin → Import config</strong>. The firmware validates and
+            overlays teachers / students / classes; attendance data is kept.
+          </li>
+        </ol>
+      </section>
+
+      <p class="foot">
+        <a href="https://github.com/verlab/presenca_carteirinha_ufmg">Repository</a>
+        ·
+        <a href="https://github.com/verlab/presenca_carteirinha_ufmg/releases">Releases</a>
+        · Sources:
+        <code>tools/config-builder/</code>,
+        <code>docs/flasher/</code>
+      </p>
+    </main>
+  </body>
+</html>

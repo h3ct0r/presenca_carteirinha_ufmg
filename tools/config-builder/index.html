@@ -43,6 +43,26 @@
     }
     code { font-family: var(--mono); font-size: .9em; background: var(--surface-2); padding: 1px 6px; border-radius: 5px; }
 
+    /* ---- site tabs (GitHub Pages hub; relative links for /config/) ---- */
+    .site-nav {
+      display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+      gap: 10px 16px; padding: 10px 22px; border-bottom: 1px solid var(--line-soft);
+      background: #0b0e1a;
+    }
+    .site-nav .site-label { font-size: 12.5px; color: var(--faint); }
+    .site-nav .tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+    .site-nav a {
+      display: inline-flex; align-items: center; padding: 7px 12px; border-radius: 999px;
+      border: 1px solid var(--line); color: var(--ink); text-decoration: none;
+      font-size: 13px; font-weight: 600;
+    }
+    .site-nav a:hover { border-color: var(--accent); }
+    .site-nav a.active {
+      background: var(--accent-soft);
+      border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+      color: #fff;
+    }
+
     /* ---- brand header ---- */
     .brand {
       display: flex; align-items: center; gap: 14px;
@@ -267,6 +287,15 @@
     .photo-meta .tag { align-self: flex-start; font: 600 10px/1.6 var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--warn); background: var(--warn-soft); padding: 2px 7px; border-radius: 5px; }
     .photo-pick { width: 230px; max-width: 45%; flex: none; padding: 6px 8px; font-size: 12.5px; }
 
+    .apply-steps {
+      margin-top: var(--sp-3); padding: 12px 14px; border-radius: var(--radius-sm);
+      background: var(--surface-2); border: 1px solid var(--line-soft);
+      font-size: 13px; color: var(--muted);
+    }
+    .apply-steps ol { margin: 8px 0 0; padding-left: 1.2rem; }
+    .apply-steps li { margin-bottom: 6px; }
+    .apply-steps strong { color: var(--ink); }
+
     /* ---- responsive ---- */
     @media (max-width: 720px) {
       .row.teacher, .row.student { grid-template-columns: 1fr 1fr; }
@@ -281,6 +310,14 @@
   </style>
 </head>
 <body>
+  <nav class="site-nav" aria-label="Site tools">
+    <span class="site-label">Presença Carteirinha · device tools</span>
+    <div class="tabs">
+      <a href="../">Home</a>
+      <a href="./" class="active">Config</a>
+      <a href="../firmware/">Firmware</a>
+    </div>
+  </nav>
   <header class="brand">
     <span class="brand-mark" aria-hidden="true">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -291,7 +328,7 @@
     </span>
     <div>
       <h1>Config Builder</h1>
-      <div class="sub">Author <code>config.tar</code> for the RFID attendance device · fully offline</div>
+      <div class="sub">Author <code>config.tar</code> for the RFID attendance device · runs in your browser</div>
     </div>
   </header>
   <main id="app"><p class="loading">Loading…</p></main>

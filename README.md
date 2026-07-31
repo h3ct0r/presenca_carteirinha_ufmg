@@ -30,9 +30,10 @@ the device → picks a class → opens a dated attendance session → takes roll
 (tap cards / tap names), enrolls students, or starts an unattended kiosk for
 students to self-check-in. Attendance exports to CSV.
 
-Classes and students are authored on a laptop with
-[`tools/config-builder/`](tools/config-builder/) and imported as a `config.tar`;
-the device never needs a keyboard for data entry.
+Classes and students are authored in the browser
+[**Config builder**](https://verlab.github.io/presenca_carteirinha_ufmg/config/)
+(source: [`tools/config-builder/`](tools/config-builder/)) and imported as a
+`config.tar`; the device never needs a keyboard for data entry.
 
 ## Hardware
 
@@ -50,13 +51,18 @@ are in [`docs/hardware/`](docs/hardware/).
   on battery it must be pressed to boot.
 - **No RTC:** session dates are chosen with a calendar picker.
 
-## Firmware update (USB)
+## Web tools (GitHub Pages)
 
-Web installer (Chrome / Edge, Web Serial):
 **[verlab.github.io/presenca_carteirinha_ufmg](https://verlab.github.io/presenca_carteirinha_ufmg/)**
 
-Tag `v*` → GitHub Release with `rfid-attendance-<tag>-firmware.bin` → Pages
-syncs the bins for same-origin download. See
+| Tab | URL | What it does |
+|-----|-----|----------------|
+| Config | [/config/](https://verlab.github.io/presenca_carteirinha_ufmg/config/) | Author `config.tar` (teachers, students, classes, photos) |
+| Firmware | [/firmware/](https://verlab.github.io/presenca_carteirinha_ufmg/firmware/) | USB flash (Chrome / Edge, Web Serial) |
+
+Download `config.tar` → place at SD root `/config.tar` (card reader or device
+Wi‑Fi **SD File Manager**) → import on device. Tag `v*` → GitHub Release bins →
+Pages syncs them for the installer. See [`docs/site/`](docs/site/) and
 [`docs/flasher/DEPLOY.md`](docs/flasher/DEPLOY.md).
 
 ## Build & test

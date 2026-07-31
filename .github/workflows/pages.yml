@@ -1,4 +1,4 @@
-name: Deploy flasher
+name: Deploy site
 
 on:
   push:
@@ -40,23 +40,38 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
-      - name: Prepare installer (bins on same origin — avoids CORS)
+      - name: Assemble site (hub + config-builder + flasher)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           mkdir -p _site
-          cp -a docs/flasher/. _site/
-          mkdir -p _site/bins
           touch _site/.nojekyll
+
+          # Hub (tabs home)
+          cp docs/site/index.html docs/site/hub.css _site/
+
+          # Config builder (runtime only — no tests/docs)
+          mkdir -p _site/config/src _site/config/fixtures
+          cp tools/config-builder/index.html _site/config/
+          cp tools/config-builder/src/*.js _site/config/src/
+          cp tools/config-builder/fixtures/example.model.json _site/config/fixtures/
+
+          # Firmware installer
+          mkdir -p _site/firmware
+          cp -a docs/flasher/. _site/firmware/
+          rm -f _site/firmware/.gitignore
+          mkdir -p _site/firmware/bins
+
+          # Same-origin bins for the flasher (avoids GitHub Releases CORS)
           downloaded=0
           for tag in $(gh release list --repo "${{ github.repository }}" --limit 12 \
             --json tagName -q '.[].tagName'); do
-            # Full ESP32-P4 flash needs bootloader + partitions + app (PIO layout).
             if gh release download "$tag" --repo "${{ github.repository }}" \
               -p 'rfid-attendance-*-firmware.bin' \
               -p 'rfid-attendance-*-bootloader.bin' \
               -p 'rfid-attendance-*-partitions.bin' \
-              -D _site/bins --clobber; then
+              -D _site/firmware/bins --clobber; then
               downloaded=$((downloaded + 1))
               echo "OK: $tag"
               # Face-detection models, fetched separately and allowed to fail:
@@ -71,10 +86,22 @@ jobs:
             fi
           done
           echo "Downloaded ${downloaded} firmware bin(s)"
-          ls -la _site/bins/ || echo "No release bins yet"
+          ls -la _site/firmware/bins/ || echo "No release bins yet"
           if [ "$downloaded" -eq 0 ]; then
             echo "::warning::No firmware bins copied yet — installer UI will show empty until a v* Release exists"
           fi
+
+          # Compatibility redirect for bookmarks that used /install.html
+          printf '%s\n' \
+            '<!DOCTYPE html><meta charset="utf-8" />' \
+            '<title>Redirecting…</title>' \
+            '<meta http-equiv="refresh" content="0; url=firmware/" />' \
+            '<link rel="canonical" href="firmware/" />' \
+            '<p><a href="firmware/">Firmware installer</a></p>' \
+            > _site/install.html
+
+          echo "Site tree:"
+          find _site -maxdepth 3 -type f | head -60
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
