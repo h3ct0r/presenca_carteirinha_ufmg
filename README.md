@@ -10,7 +10,7 @@
 [![Build: PlatformIO](https://img.shields.io/badge/Build-PlatformIO-FF7F00?logo=platformio&logoColor=white)](https://platformio.org)
 
 <a href="https://youtube.com/shorts/oyJePKWmUqI?feature=share" target="_blank">
-   <img src="https://raw.githubusercontent.com/h3ct0r/presenca_carteirinha_ufmg/refs/heads/main/assets/carteirinha_v0.1.jpg" alt="Watch the demo video" width="380" />
+   <img src="https://raw.githubusercontent.com/verlab/presenca_carteirinha_ufmg/refs/heads/main/assets/carteirinha_v0.1.jpg" alt="Watch the demo video" width="380" />
 </a>
 
 <sub>▶ Click to watch the demo</sub>
@@ -53,7 +53,7 @@ are in [`docs/hardware/`](docs/hardware/).
 ## Firmware update (USB)
 
 Web installer (Chrome / Edge, Web Serial):
-**[h3ct0r.github.io/presenca_carteirinha_ufmg](https://h3ct0r.github.io/presenca_carteirinha_ufmg/)**
+**[verlab.github.io/presenca_carteirinha_ufmg](https://verlab.github.io/presenca_carteirinha_ufmg/)**
 
 Tag `v*` → GitHub Release with `rfid-attendance-<tag>-firmware.bin` → Pages
 syncs the bins for same-origin download. See

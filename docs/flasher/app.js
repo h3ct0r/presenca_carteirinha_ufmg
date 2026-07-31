@@ -11,7 +11,7 @@ function detectRepo() {
     const segs = location.pathname.split("/").filter(Boolean);
     if (segs[0]) return `${m[1]}/${segs[0]}`;
   }
-  return "h3ct0r/presenca_carteirinha_ufmg";
+  return "verlab/presenca_carteirinha_ufmg";
 }
 
 const REPO = detectRepo();
