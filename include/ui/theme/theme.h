@@ -75,6 +75,15 @@ lv_obj_t* ui_make_label(lv_obj_t* parent, const char* text, uint32_t color,
 lv_obj_t* ui_make_button(lv_obj_t* parent, const char* text, lv_style_t* style,
                          lv_event_cb_t cb, void* user_data);
 
+// Bounds a label holding variable-length text (student/class names, emails) so
+// it wraps inside its parent instead of running past the frame. A label is
+// content-sized by default, so a 47-character name grows the label until it is
+// clipped by the card — or, in a row, until it pushes the trailing icon off
+// screen. The width rule follows the parent's layout: a column child fills the
+// width, a row child takes only what its siblings leave. Fixed UI strings that
+// already fit don't need it.
+void ui_label_fit(lv_obj_t* label);
+
 // Adds the standard press feedback (darken + dim on LV_STATE_PRESSED) AND the
 // click beep to any clickable object. ui_make_button() already calls this; use
 // it for other actionable items (cards, chips, rows) so feedback stays

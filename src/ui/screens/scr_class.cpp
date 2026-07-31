@@ -218,7 +218,11 @@ static void show_presence_feedback(const student_t* st, const char* turma, uint3
     }
 
     if (st) {
-        ui_make_label(card, st->name, THEME_TEXT, &lv_font_montserrat_20);
+        // Full width to wrap, so the text needs centering of its own — the
+        // card's flex centering only places the (now full-width) label.
+        lv_obj_t* namel = ui_make_label(card, st->name, THEME_TEXT, &lv_font_montserrat_20);
+        ui_label_fit(namel);
+        lv_obj_set_style_text_align(namel, LV_TEXT_ALIGN_CENTER, 0);
         char idline[40];
         snprintf(idline, sizeof(idline), "ID %s", st->id);
         ui_make_label(card, idline, THEME_MUTED, &lv_font_montserrat_14);
@@ -528,14 +532,18 @@ static void update_roll_call(void) {
 
         lv_obj_t* col = lv_obj_create(chip);
         lv_obj_remove_style_all(col);
-        lv_obj_set_size(col, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+        lv_obj_set_height(col, LV_SIZE_CONTENT);
+        // Takes the width the trailing icon leaves, so a long name wraps inside
+        // the chip instead of pushing the icon off the edge.
+        lv_obj_set_flex_grow(col, 1);
         lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_style_pad_row(col, 2, 0);
         // 16, not the 14 used elsewhere: the roll call is read at arm's length
         // while the professor works down the class.
-        ui_make_label(col, st->name, THEME_TEXT, &lv_font_montserrat_16);
-        ui_make_label(col, sub[0] ? sub : st->id, here ? THEME_SUCCESS : THEME_MUTED,
-                      &lv_font_montserrat_16);
+        ui_label_fit(ui_make_label(col, st->name, THEME_TEXT, &lv_font_montserrat_16));
+        ui_label_fit(ui_make_label(col, sub[0] ? sub : st->id,
+                                   here ? THEME_SUCCESS : THEME_MUTED,
+                                   &lv_font_montserrat_16));
 
         ui_make_label(chip, trail_icon, trail_color, &lv_font_montserrat_20);
     }
@@ -774,11 +782,11 @@ static void update_results(void) {
 
         // Matches the roll-call chips (16): both are student rows picked out at
         // a glance, so they read at the same size.
-        ui_make_label(row, st->name, THEME_TEXT, &lv_font_montserrat_16);
+        ui_label_fit(ui_make_label(row, st->name, THEME_TEXT, &lv_font_montserrat_16));
         char sub[72];
         snprintf(sub, sizeof(sub), "%s%s", st->id, st->rfid_uid[0] ? "   card registered" : "");
-        ui_make_label(row, sub, st->rfid_uid[0] ? THEME_SUCCESS : THEME_MUTED,
-                      &lv_font_montserrat_16);
+        ui_label_fit(ui_make_label(row, sub, st->rfid_uid[0] ? THEME_SUCCESS : THEME_MUTED,
+                                   &lv_font_montserrat_16));
         shown++;
     }
 
@@ -1008,7 +1016,9 @@ static void build_enroll_wait(void) {
     ui_make_label(card, "Tap the student's card", THEME_PRIMARY, &lv_font_montserrat_20);
     char who[80];
     snprintf(who, sizeof(who), "%s  (%s)", name, id);
-    ui_make_label(card, who, THEME_TEXT, &lv_font_montserrat_14);
+    lv_obj_t* whol = ui_make_label(card, who, THEME_TEXT, &lv_font_montserrat_14);
+    ui_label_fit(whol);
+    lv_obj_set_style_text_align(whol, LV_TEXT_ALIGN_CENTER, 0);  // card centers its children
     ui_make_label(card, "Hold the RFID card near the reader", THEME_MUTED,
                   &lv_font_montserrat_14);
 

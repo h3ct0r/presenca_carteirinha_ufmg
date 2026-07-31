@@ -292,7 +292,9 @@ void face_verify_open(const char* student_id, const char* student_name, const ch
     // Avatar + name, side by side, for context on whose attendance this is.
     lv_obj_t* who = lv_obj_create(body);
     lv_obj_remove_style_all(who);
-    lv_obj_set_size(who, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    // Full width, not content: the name below takes what the avatar leaves, and
+    // a content-sized row would have nothing to divide.
+    lv_obj_set_size(who, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_remove_flag(who, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(who, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(who, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
@@ -303,6 +305,7 @@ void face_verify_open(const char* student_id, const char* student_name, const ch
     lv_label_set_text(namel, student_name && student_name[0] ? student_name : "");
     lv_obj_set_style_text_font(namel, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(namel, lv_color_hex(THEME_DARK_TEXT), 0);
+    ui_label_fit(namel);
 
     // Countdown ring with the remaining seconds in its center.
     const int RING = 132;

@@ -818,8 +818,11 @@ static lv_obj_t* create(void) {
     lv_obj_set_flex_flow(profile, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(profile, 4, 0);
     s_name = ui_make_label(profile, "", THEME_TEXT, &lv_font_montserrat_20);
+    ui_label_fit(s_name);
     s_email = ui_make_label(profile, "", THEME_MUTED, &lv_font_montserrat_14);
+    ui_label_fit(s_email);
     s_card = ui_make_label(profile, "", THEME_MUTED, &lv_font_montserrat_14);
+    ui_label_fit(s_card);
 
     // SD-card usage first, then settings (camera preview), password, then debug
     // tools. Settings sits above password so the "Camera preview" button comes

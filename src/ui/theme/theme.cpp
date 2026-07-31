@@ -132,6 +132,36 @@ lv_obj_t* ui_make_label(lv_obj_t* parent, const char* text, uint32_t color,
     return label;
 }
 
+void ui_label_fit(lv_obj_t* label) {
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+
+    // The layout check has to come first: lv_obj_get_style_flex_flow() reports
+    // LV_FLEX_FLOW_ROW (0x00) for a parent that isn't flex at all, which would
+    // otherwise make every label in a plain container a grow item.
+    lv_obj_t* parent = lv_obj_get_parent(label);
+    bool row = false;
+    if (parent && lv_obj_get_style_layout(parent, LV_PART_MAIN) == LV_LAYOUT_FLEX) {
+        switch (lv_obj_get_style_flex_flow(parent, LV_PART_MAIN)) {
+            case LV_FLEX_FLOW_ROW:
+            case LV_FLEX_FLOW_ROW_WRAP:
+            case LV_FLEX_FLOW_ROW_REVERSE:
+            case LV_FLEX_FLOW_ROW_WRAP_REVERSE:
+                row = true;
+                break;
+            default:
+                break;
+        }
+    }
+
+    // A grow item's width is decided by the layout, so LVGL stops measuring the
+    // text to size it — exactly the bound wrapping needs.
+    if (row) {
+        lv_obj_set_flex_grow(label, 1);
+    } else {
+        lv_obj_set_width(label, LV_PCT(100));
+    }
+}
+
 lv_obj_t* ui_make_button(lv_obj_t* parent, const char* text, lv_style_t* style,
                          lv_event_cb_t cb, void* user_data) {
     lv_obj_t* btn = lv_button_create(parent);

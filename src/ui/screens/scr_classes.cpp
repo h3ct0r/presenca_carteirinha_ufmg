@@ -71,11 +71,14 @@ static void add_class_card(lv_obj_t* body, const class_rec_t* cls) {
     lv_obj_set_style_pad_row(col, 2, 0);
     lv_obj_remove_flag(col, LV_OBJ_FLAG_CLICKABLE);
 
-    ui_make_label(col, cls->name, THEME_TEXT, &lv_font_montserrat_14);
+    // The column grows into the space the gear leaves, but the labels inside it
+    // are content-sized until bounded — that is what let a long class name run
+    // under the gear.
+    ui_label_fit(ui_make_label(col, cls->name, THEME_TEXT, &lv_font_montserrat_14));
     char detail[112];
     snprintf(detail, sizeof(detail), "%s  |  %s  |  %d students", cls->code, cls->schedule,
              cls->roster_count);
-    ui_make_label(col, detail, THEME_MUTED, &lv_font_montserrat_14);
+    ui_label_fit(ui_make_label(col, detail, THEME_MUTED, &lv_font_montserrat_14));
 
     // Gear button → statistics & per-class settings. It's clickable, so a tap on
     // it targets the gear (not the card's open handler underneath).
