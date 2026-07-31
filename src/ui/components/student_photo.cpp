@@ -4,6 +4,7 @@
 #include <stdio.h>
 
 #include "app/photo_fit.h"
+#include "services/roster_service.h"
 #include "esp32-hal-log.h"
 #include "storage/sd_card.h"
 
@@ -59,6 +60,16 @@ bool student_photo_src(const char* student_id, char* out, size_t cap) {
 
     snprintf(out, cap, "S:/students/photos/%s.jpg", student_id);  // LVGL drive-letter form
     return true;
+}
+
+int student_photo_count_for_class(const class_rec_t* cls) {
+    if (!cls) return 0;
+    int n = 0;
+    for (int j = 0; j < cls->roster_count; j++) {
+        const student_t* st = roster_student_at(cls->roster[j]);
+        if (st && student_photo_exists(st->id)) n++;
+    }
+    return n;
 }
 
 lv_obj_t* student_photo_image(lv_obj_t* parent, const char* student_id, int max_px) {

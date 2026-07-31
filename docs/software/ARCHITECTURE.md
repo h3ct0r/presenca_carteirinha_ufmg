@@ -11,7 +11,7 @@ Strict layering, events flow up. Only `ui/` includes `lvgl.h`.
 ```
 src/ui/        LVGL screens, components, theme
 src/app/       pure logic, no hardware: event_bus, auth, session, uid, ustar,
-               battery_curve, photo_fit, card_gate
+               battery_curve, photo_fit, card_gate, class_stats
 src/services/  own hardware + SD, run FreeRTOS tasks: config, roster, rfid,
                battery, export, wifi_ap, file_server, face_detection, import
 src/storage/   SD modules: sd_card (mount), attendance_store, photo_store,
@@ -30,15 +30,24 @@ Services post `app_event_t` to a single FreeRTOS queue (`app/event_bus`);
 `main.cpp`'s `loop()` drains it on the LVGL thread through `app_dispatch()` →
 `ui_handle_event()` → `lv_timer_handler()`.
 
-**All SD writes happen on the LVGL thread.** No lock guards the card, so a
-service task that writes to SD races the UI. When a service needs to persist
+**SD writes belong on the LVGL thread.** No application lock guards the card, so
+a service task that writes to SD races the UI. When a service needs to persist
 something, it posts an event and the drain path writes it — that is why the
 battery drain log is written in `app_dispatch()` and not in the battery task
 that produces the sample.
 
-The HTTP file server is pumped from an LVGL timer for the same reason, which is
-also why a large transfer briefly freezes the UI (see [BACKLOG.md](BACKLOG.md),
-item C3).
+Three places knowingly break that rule and touch the card from their own task:
+`photo_store`'s writer task, the `config`/`roster` retry loops, and the HTTP
+file server. What keeps them safe is FatFs itself — the ESP-IDF build sets
+`FF_FS_REENTRANT`, so the volume is locked for the duration of each operation
+and concurrent access cannot corrupt the filesystem. What it does *not* buy is
+logical consistency: a file rewritten from one task while another reads it can
+be seen half-written. That is the reason the rule stands for everything else.
+
+The file server is the deliberate exception (`services/file_server`): it is a
+synchronous `WebServer`, so serving it from an LVGL timer froze the UI for the
+length of every transfer. It runs on its own `fileserv` task instead, and the
+UI stays parked on the WiFi screen while the AP is up.
 
 ## Screens
 
@@ -103,6 +112,16 @@ Rendered alphabetically, filtered by a search box, and capped at `ROLL_MAX_ROWS`
 chips with a "Showing N of M" header — a chip costs ~5 LVGL objects and a large
 class would otherwise exhaust the pool. Taps rebuild only the chip container via
 `update_roll_call()`, not the whole view.
+
+### Cost of listing past sessions
+
+The session picker, the history view and the statistics screen each want a
+present-count for every recorded date, and each count is a whole-file fold of
+that day's JSONL. `attendance_present_for()` therefore **memoises** per
+(class, date); writes through `attendance_store` drop the affected day, and
+`attendance_history_cache_clear()` exists for the one case that bypasses the
+module — the debug WiFi file editor. Without it, a class with 24 sessions cost
+24 blocking SD reads on every rebuild of any of those three views.
 
 ## Reactive state and card capture
 

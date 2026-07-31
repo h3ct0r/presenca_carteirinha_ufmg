@@ -84,6 +84,68 @@ static void tapin_add(const char* id, long long us) {
     s_tapin_us[i] = us;
 }
 
+// --- history count cache ----------------------------------------------------
+//
+// attendance_present_for() folds an entire JSONL, and the class screens ask for
+// every past date at once: the session picker lists them, the history view lists
+// them again, and the statistics screen averages them. Without memoising, one
+// class with 24 sessions costs 24 file reads per screen build, on the LVGL
+// thread, over and over.
+//
+// One class is cached at a time (the screens only ever show one). Entries are
+// dropped by the writes below, so a count can never go stale from anything this
+// module does. It CAN go stale if the file is edited behind our back — only the
+// debug WiFi file editor does that, and it calls attendance_history_cache_clear().
+static constexpr int CACHE_MAX = 24;  // matches the class screen's MAX_DATES
+static char s_cache_dir[24] = "";
+static char s_cache_date[CACHE_MAX][12];
+static int s_cache_count[CACHE_MAX];
+static int s_cache_n = 0;
+
+static bool cache_is(const char* dir) { return s_cache_dir[0] && strcmp(s_cache_dir, dir) == 0; }
+
+static void cache_flush(void) {
+    s_cache_dir[0] = '\0';
+    s_cache_n = 0;
+}
+
+static bool cache_get(const char* dir, const char* date, int* out) {
+    if (!cache_is(dir)) return false;
+    for (int i = 0; i < s_cache_n; i++) {
+        if (strcmp(s_cache_date[i], date) == 0) {
+            *out = s_cache_count[i];
+            return true;
+        }
+    }
+    return false;
+}
+
+static void cache_put(const char* dir, const char* date, int count) {
+    if (!cache_is(dir)) {  // a different class: start its cache from scratch
+        cache_flush();
+        snprintf(s_cache_dir, sizeof(s_cache_dir), "%s", dir);
+    }
+    if (s_cache_n >= CACHE_MAX) return;  // the screens never ask for more
+    snprintf(s_cache_date[s_cache_n], 12, "%s", date);
+    s_cache_count[s_cache_n] = count;
+    s_cache_n++;
+}
+
+// One date changed on disk; the next read re-folds it.
+static void cache_drop(const char* dir, const char* date) {
+    if (!cache_is(dir)) return;
+    for (int i = 0; i < s_cache_n; i++) {
+        if (strcmp(s_cache_date[i], date) == 0) {
+            int last = --s_cache_n;  // swap-remove
+            snprintf(s_cache_date[i], 12, "%s", s_cache_date[last]);
+            s_cache_count[i] = s_cache_count[last];
+            return;
+        }
+    }
+}
+
+void attendance_history_cache_clear(void) { cache_flush(); }
+
 // --- generic present-only fold (history counts) -----------------------------
 
 static void set_apply(char set[][ID_LEN], int* count, const char* id, bool present) {
@@ -187,6 +249,8 @@ static bool append_record(const char* id, bool present, int minutes, bool with_m
     }
     size_t w = f.write((const uint8_t*)line, len);
     f.close();
+    // The day's fold just changed; drop any memoised count for it.
+    cache_drop(s_dir, s_date);
     return w == (size_t)len;
 }
 
@@ -339,16 +403,21 @@ int attendance_list_dates(const char* class_dir, char dates[][12], int max) {
 }
 
 int attendance_present_for(const char* class_dir, const char* date) {
+    int cached = 0;
+    if (cache_get(class_dir, date, &cached)) return cached;
+
     static char tmp[MAX_PRESENT][ID_LEN];  // read-only fold, avoids big stack
     int count = 0;
     char path[80];
     att_path(class_dir, date, path, sizeof(path));
     fold_file(path, tmp, &count);
+    cache_put(class_dir, date, count);
     return count;
 }
 
 int attendance_clear(const char* class_dir, int* out_failed) {
     attendance_close();  // never leave a session open on files we're deleting
+    if (cache_is(class_dir)) cache_flush();
     // List the dates first (static buffer, not stack), then delete — removing
     // files while iterating the directory would be unsafe.
     static char dates[512][12];

@@ -6,12 +6,28 @@
 #include <WebServer.h>
 
 #include "esp32-hal-log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
 #include "storage/sd_tree.h"
 
 static const char* TAG = "fileserver";
 
+// Big enough for WebServer's request parsing plus our handlers (ArduinoJson
+// keeps its document on the heap, so this is mostly call depth + Strings).
+static constexpr uint32_t TASK_STACK = 8192;
+// Same priority as the other service tasks (photo writer, roster, config).
+static constexpr UBaseType_t TASK_PRIO = 2;
+// How long end() waits for an in-flight request to finish. A stalled client or
+// a multi-megabyte transfer can outlast it; the task then winds down on its own.
+static constexpr uint32_t TEARDOWN_WAIT_MS = 2000;
+
 static WebServer s_server(80);
 static bool s_running = false;
+static volatile bool s_stop = false;          // stop request, read by the task
+static volatile bool s_task_alive = false;    // cleared by the task as it exits
+static SemaphoreHandle_t s_exited = nullptr;  // given by the task once it is done
+static bool s_routes_registered = false;      // on() appends, so register once
 static File s_upload;
 static bool s_upload_ok = false;  // false makes /api/upload answer 500
 
@@ -352,31 +368,82 @@ static void handle_upload_data(void) {
     }
 }
 
+// The task owns the socket for its whole life, including the teardown: end()
+// only raises s_stop, so nothing outside ever touches s_server concurrently.
+// handleClient() serves at most one request per pass and delays 1 ms itself
+// when idle; the extra tick keeps the task from monopolising a core while a
+// client is connected but slow.
+static void server_task(void*) {
+    while (!s_stop) {
+        s_server.handleClient();
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
+    s_server.stop();
+    // The stack figure is the point of logging here: TASK_STACK is an estimate
+    // until a real transfer has run on the device.
+    ESP_LOGI(TAG, "file server stopped (stack headroom %u B)",
+             (unsigned)(uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t)));
+    s_task_alive = false;
+    xSemaphoreGive(s_exited);  // nothing below this touches shared state
+    vTaskDelete(nullptr);
+}
+
+// Waits for a previous task to finish winding down. True when none is left.
+static bool await_task_exit(uint32_t timeout_ms) {
+    if (!s_task_alive) return true;
+    return xSemaphoreTake(s_exited, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+}
+
 void file_server_begin(void) {
     if (s_running) return;
-    s_server.on("/", HTTP_GET, handle_index);
-    s_server.on("/api/list", HTTP_GET, handle_list);
-    s_server.on("/api/read", HTTP_GET, handle_read);
-    s_server.on("/api/download", HTTP_GET, handle_download);
-    s_server.on("/api/save", HTTP_POST, handle_save);
-    s_server.on("/api/delete", HTTP_POST, handle_delete);
-    s_server.on("/api/rename", HTTP_POST, handle_rename);
-    s_server.on("/api/upload", HTTP_POST, handle_upload_done, handle_upload_data);
-    s_server.onNotFound([]() { s_server.send(404, "text/plain", "not found"); });
+    if (!s_exited) s_exited = xSemaphoreCreateBinary();
+    if (!s_exited) {
+        ESP_LOGE(TAG, "could not create the exit semaphore");
+        return;
+    }
+    // A restart right after a stop can still find the old task serving its last
+    // request; it must be gone before this one binds the port again.
+    if (!await_task_exit(TEARDOWN_WAIT_MS)) {
+        ESP_LOGE(TAG, "previous server task still running, not restarting");
+        return;
+    }
+    // on() appends to the handler chain, so re-registering on every restart
+    // would grow it without bound.
+    if (!s_routes_registered) {
+        s_server.on("/", HTTP_GET, handle_index);
+        s_server.on("/api/list", HTTP_GET, handle_list);
+        s_server.on("/api/read", HTTP_GET, handle_read);
+        s_server.on("/api/download", HTTP_GET, handle_download);
+        s_server.on("/api/save", HTTP_POST, handle_save);
+        s_server.on("/api/delete", HTTP_POST, handle_delete);
+        s_server.on("/api/rename", HTTP_POST, handle_rename);
+        s_server.on("/api/upload", HTTP_POST, handle_upload_done, handle_upload_data);
+        s_server.onNotFound([]() { s_server.send(404, "text/plain", "not found"); });
+        s_routes_registered = true;
+    }
     s_server.begin();
+    s_stop = false;
+    xSemaphoreTake(s_exited, 0);  // drop a give left by a stop that timed out
+    s_task_alive = true;
+    if (xTaskCreate(server_task, "fileserv", TASK_STACK, nullptr, TASK_PRIO, nullptr) != pdPASS) {
+        s_task_alive = false;
+        s_server.stop();
+        ESP_LOGE(TAG, "could not start the server task");
+        return;
+    }
     s_running = true;
-    ESP_LOGI(TAG, "file server started on :80");
+    ESP_LOGI(TAG, "file server started on :80 (own task)");
 }
 
 void file_server_end(void) {
     if (!s_running) return;
-    s_server.stop();
     s_running = false;
-    ESP_LOGI(TAG, "file server stopped");
-}
-
-void file_server_handle(void) {
-    if (s_running) s_server.handleClient();
+    s_stop = true;
+    // Bounded so stopping the AP can't freeze the UI behind a slow transfer;
+    // the task still closes the socket itself once its request completes.
+    if (!await_task_exit(TEARDOWN_WAIT_MS)) {
+        ESP_LOGW(TAG, "server task still finishing a request, winding down in the background");
+    }
 }
 
 bool file_server_running(void) { return s_running; }

@@ -211,7 +211,7 @@ static roster_status_t load_one_class(const char* root, const char* dname) {
     c->face_verify_seconds = (int16_t)fvs;
     // Optional timed (double-tap) attendance.
     c->timed_attendance = doc["timed_attendance"] | false;
-    c->min_attendance_min = (int16_t)(doc["min_attendance_min"] | 45);
+    c->min_attendance_min = (int16_t)(doc["min_attendance_min"] | MIN_ATTENDANCE_MIN_DEFAULT);
 
     JsonArray roster = doc["roster"].as<JsonArray>();
     if (roster.isNull()) {

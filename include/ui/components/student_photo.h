@@ -3,6 +3,8 @@
 #include <lvgl.h>
 #include <stddef.h>
 
+#include "app/roster.h"
+
 // Fills `out` with the LVGL image-source path for a student's avatar
 // ("S:/students/photos/<id>.jpg") and returns true when that file exists on the
 // SD card; returns false (and empties `out`) otherwise, so the caller shows a
@@ -16,6 +18,10 @@ bool student_photo_src(const char* student_id, char* out, size_t cap);
 // student_photo_src() when only a count is needed (no path string built for the
 // caller). Does SD I/O — avoid calling it in a tight per-scan loop; count once.
 bool student_photo_exists(const char* student_id);
+
+// How many students in this class have an avatar on the card. One SD lookup per
+// student, so call it once per screen entry — never inside a rebuild.
+int student_photo_count_for_class(const class_rec_t* cls);
 
 // The box every full-size avatar is fitted into (check-in overlay, kiosk
 // result). The face-verify modal passes its own, smaller box.

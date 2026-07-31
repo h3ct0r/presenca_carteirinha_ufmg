@@ -16,11 +16,6 @@ unnoticed because the sample rosters are ASCII-only. The fix and a ready-to-run
 `lv_font_conv` command are in the "Known gap" callout of
 [CUSTOM_FONT_GENERATION.md](CUSTOM_FONT_GENERATION.md).
 
-**C3 — the file server blocks the UI thread.** `file_server_handle()` is pumped
-from a 5 ms LVGL timer, so a large upload or download freezes the UI for its
-duration. Acceptable for a debug tool; if it starts to bite, move it to its own
-task behind an SD mutex.
-
 **Q4 — `battery_curve.cpp`'s comment is wrong.** It says "linear from 4.2 V (100%)
 to 3.2 V (0%) … every 5% (each 50 mV)"; the table actually runs 4.0 V → 2.7 V in
 65 mV steps. The ADC divider and the 2.7 V cutoff are also unverified against a

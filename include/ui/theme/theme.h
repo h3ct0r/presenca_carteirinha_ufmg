@@ -28,6 +28,9 @@ constexpr uint32_t THEME_WARNING = 0xE8890C;       // amber — info/alert accen
 constexpr uint32_t THEME_WARNING_SOFT = 0xFFEFD6;  // light orange callout fill
 constexpr uint32_t THEME_ON_PRIMARY = 0xFFFFFF;
 constexpr uint32_t THEME_HEADER_SUBTITLE = 0xB8C0DC;
+// The dim behind a modal overlay. Every full-screen overlay uses this with a
+// partial bg_opa, so they all darken the screen by the same amount.
+constexpr uint32_t THEME_SCRIM = 0x000000;
 
 // Dark (kiosk) palette.
 constexpr uint32_t THEME_DARK_BG = 0x111827;
@@ -42,6 +45,12 @@ constexpr uint32_t THEME_DARK_WARN = 0xF87171;
 // content-sized height, for comfortable touch targets). Every button made
 // with ui_make_button() gets this height; screens should not override it.
 constexpr int UI_BUTTON_HEIGHT = 72;
+
+// Bottom padding a scrolling body reserves while the shared on-screen keyboard
+// is up, so a focused field can scroll clear of it, and the padding it uses
+// otherwise. Screens with a text field toggle between the two.
+constexpr int KEYBOARD_PAD = 320;
+constexpr int UI_PAD = 12;
 
 // Shared styles, initialized once by theme_init(). Add to widgets with
 // lv_obj_add_style(); never re-create these per screen.

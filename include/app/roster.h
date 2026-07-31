@@ -19,6 +19,9 @@ constexpr int ROSTER_MAX_CLASS_TEACHERS = 8;
 constexpr int FACE_VERIFY_SECONDS_MIN = 3;
 constexpr int FACE_VERIFY_SECONDS_MAX = 60;
 constexpr int FACE_VERIFY_SECONDS_DEFAULT = 15;
+// Timed attendance: minutes a student must wait before the confirming tap
+// counts. class.json's optional "min_attendance_min".
+constexpr int MIN_ATTENDANCE_MIN_DEFAULT = 45;
 // NOTE: s_students[ROSTER_MAX_STUDENTS] is a static array — at 600 that is
 // 600 * sizeof(student_t) (~92 B) ≈ 54 KB of internal RAM (~+27 KB vs 300).
 // Fine on the P4's SRAM budget, but re-check free heap on device.

@@ -7,6 +7,7 @@
 #include <strings.h>
 
 #include "app/auth.h"
+#include "app/class_stats.h"
 #include "app/uid.h"
 #include "audio/beeper.h"
 #include "esp_timer.h"
@@ -95,6 +96,10 @@ static lv_timer_t* s_fb_timer = nullptr;
 // lookup per student.
 static int s_photo_count = 0;
 
+// EVERY static pointing into s_content, dropped together before it is cleaned.
+// Half of these used to be cleared and half not, which is exactly how a stale
+// pointer survives a refactor.
+static void forget_view_widgets(void);
 static void rebuild_content(void);
 static void update_header(void);
 static void apply_keyboard_pad(void);
@@ -130,18 +135,6 @@ static void back_cb(lv_event_t*) {
 
 // --- Session view: date picker + roll call ----------------------------------
 
-// Counts roster students whose avatar file exists on the card. One SD lookup
-// per student, so it is called once on class entry, not on every rebuild.
-static int count_students_with_photos(void) {
-    if (!s_cls) return 0;
-    int n = 0;
-    for (int j = 0; j < s_cls->roster_count; j++) {
-        const student_t* st = roster_student_at(s_cls->roster[j]);
-        if (st && student_photo_exists(st->id)) n++;
-    }
-    return n;
-}
-
 // This student's turma in the current class (by registry index), or "".
 static const char* class_turma_for_student(int student_idx) {
     if (!s_cls) return "";
@@ -149,46 +142,6 @@ static const char* class_turma_for_student(int student_idx) {
         if (s_cls->roster[j] == student_idx) return s_cls->roster_turma[j];
     }
     return "";
-}
-
-// Builds a "TE1: 12   TE2: 8   (none): 3" breakdown of the class by turma into
-// `out` (ASCII only — the Montserrat glyph set is limited). Untagged students
-// group under "(none)". Returns true if at least one student carries a turma tag
-// (so the caller can hide the stat otherwise).
-static bool format_turma_stats(char* out, size_t cap) {
-    out[0] = '\0';
-    if (!s_cls) return false;
-    struct {
-        const char* name;
-        int count;
-    } groups[ROSTER_MAX_CLASS_STUDENTS];
-    int ng = 0;
-    bool any = false;
-    for (int j = 0; j < s_cls->roster_count; j++) {
-        const char* t = s_cls->roster_turma[j][0] ? s_cls->roster_turma[j] : "(none)";
-        if (s_cls->roster_turma[j][0]) any = true;
-        int g = -1;
-        for (int k = 0; k < ng; k++) {
-            if (strcmp(groups[k].name, t) == 0) {
-                g = k;
-                break;
-            }
-        }
-        if (g < 0) {
-            g = ng++;
-            groups[g].name = t;
-            groups[g].count = 0;
-        }
-        groups[g].count++;
-    }
-    size_t len = 0;
-    for (int k = 0; k < ng && len < cap; k++) {
-        int w = snprintf(out + len, cap - len, "%s%s: %d", k ? "    " : "", groups[k].name,
-                         groups[k].count);
-        if (w < 0 || (size_t)w >= cap - len) break;
-        len += (size_t)w;
-    }
-    return any;
 }
 
 static int roster_student_by_uid(const char* uid_hex) {
@@ -242,7 +195,7 @@ static void show_presence_feedback(const student_t* st, const char* turma, uint3
     lv_obj_remove_style_all(s_fb_overlay);
     lv_obj_add_flag(s_fb_overlay, LV_OBJ_FLAG_IGNORE_LAYOUT);
     lv_obj_set_size(s_fb_overlay, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(s_fb_overlay, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_color(s_fb_overlay, lv_color_hex(THEME_SCRIM), 0);
     lv_obj_set_style_bg_opa(s_fb_overlay, LV_OPA_40, 0);
     lv_obj_add_flag(s_fb_overlay, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(s_fb_overlay, LV_OBJ_FLAG_SCROLLABLE);
@@ -412,7 +365,7 @@ static void build_session_open(void) {
     ui_make_label(summary, photo_txt, THEME_MUTED, &lv_font_montserrat_14);
 
     char turma_txt[160];
-    if (format_turma_stats(turma_txt, sizeof(turma_txt))) {
+    if (class_turma_breakdown(s_cls, turma_txt, sizeof(turma_txt))) {
         char line[192];
         snprintf(line, sizeof(line), LV_SYMBOL_LIST "  Turmas:  %s", turma_txt);
         lv_obj_t* tl = ui_make_label(summary, line, THEME_MUTED, &lv_font_montserrat_14);
@@ -789,6 +742,7 @@ static void add_manual_cb(lv_event_t*) {
 // Rebuilds the autocomplete list from the current query + toggle. Only the
 // students enrolled in this class (class.json's roster) are searched.
 static void update_results(void) {
+    if (!s_results) return;
     lv_obj_clean(s_results);
     const char* q = s_search_ta ? lv_textarea_get_text(s_search_ta) : "";
 
@@ -1108,6 +1062,7 @@ static void enroll_goto(enroll_state_t st) {
     // while it still holds that pointer leaves a dangling ->ta that crashes the
     // next keyboard_hide()/keypress (use-after-free).
     keyboard_hide();
+    forget_view_widgets();
     lv_obj_clean(s_content);
     lv_obj_set_height(s_content, LV_SIZE_CONTENT);  // SEARCH overrides; see build_enroll_search
     update_header();       // the subtitle names the enroll step
@@ -1145,12 +1100,12 @@ static void build_hub(void) {
     lv_obj_t* session = ui_make_button(s_content, LV_SYMBOL_LIST "  Session",
                                        &theme_style_btn_primary, session_btn_cb, nullptr);
     lv_obj_set_width(session, LV_PCT(100));
-    lv_obj_set_height(session, 72);
+    lv_obj_set_height(session, UI_BUTTON_HEIGHT);
 
     lv_obj_t* history = ui_make_button(s_content, LV_SYMBOL_LOOP "  History",
                                        &theme_style_btn_outline, history_btn_cb, nullptr);
     lv_obj_set_width(history, LV_PCT(100));
-    lv_obj_set_height(history, 72);
+    lv_obj_set_height(history, UI_BUTTON_HEIGHT);
 }
 
 // Kiosk mode (unattended student check-in) — reachable from the open session.
@@ -1163,6 +1118,18 @@ static void kiosk_cb(lv_event_t*) {
 }
 
 // --- View glue ---------------------------------------------------------------
+
+static void forget_view_widgets(void) {
+    s_roll_search_ta = nullptr;
+    s_roll_list = nullptr;
+    s_roll_count = nullptr;
+    s_roll_bar = nullptr;
+    s_search_ta = nullptr;
+    s_results = nullptr;
+    s_manual_id_ta = nullptr;
+    s_manual_name_ta = nullptr;
+    s_manual_turma_ta = nullptr;
+}
 
 // Shows the green header "session open" chip while a session is open for this
 // class. Called on every rebuild, so it tracks open/close within the screen.
@@ -1182,7 +1149,7 @@ static void apply_keyboard_pad(void) {
     if (!s_sh.body) return;
     // Enroll and the open session both carry a search box the keyboard serves.
     bool reserve = (s_view == VIEW_ENROLL || s_view == VIEW_SESSION) && keyboard_is_visible();
-    lv_obj_set_style_pad_bottom(s_sh.body, reserve ? 320 : 12, 0);
+    lv_obj_set_style_pad_bottom(s_sh.body, reserve ? KEYBOARD_PAD : UI_PAD, 0);
 }
 
 static void kb_visibility_cb(bool) { apply_keyboard_pad(); }
@@ -1216,11 +1183,7 @@ static void rebuild_content(void) {
     close_presence_feedback();
     update_session_badge();
 
-    // Whatever the previous view was, its widgets go away with this clean.
-    s_roll_search_ta = nullptr;
-    s_roll_list = nullptr;
-    s_roll_count = nullptr;
-    s_roll_bar = nullptr;
+    forget_view_widgets();
     lv_obj_clean(s_content);
     // Views size themselves to their content and let sh.body scroll. The enroll
     // SEARCH view overrides this to fill the body instead, so its search bar can
@@ -1273,7 +1236,7 @@ static lv_obj_t* create(void) {
     lv_obj_add_flag(s_session_badge, LV_OBJ_FLAG_HIDDEN);
     lv_obj_t* badge_lbl = lv_label_create(s_session_badge);
     lv_label_set_text(badge_lbl, LV_SYMBOL_PLAY "  SESSION");
-    lv_obj_set_style_text_color(badge_lbl, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(badge_lbl, lv_color_hex(THEME_ON_PRIMARY), 0);
     lv_obj_set_style_text_font(badge_lbl, &lv_font_montserrat_14, 0);
 
     // No header actions or tab bar anymore: the body is a small view stack
@@ -1303,7 +1266,7 @@ static void on_show(void* arg) {
     } else if (arg) {
         s_view = VIEW_HUB;
     }
-    s_photo_count = count_students_with_photos();  // once per entry, not per scan
+    s_photo_count = student_photo_count_for_class(s_cls);  // once per entry, not per scan
     keyboard_set_visibility_cb(kb_visibility_cb);   // reclaim the keyboard's space when it hides
     rebuild_content();                              // sets the header + padding
 }

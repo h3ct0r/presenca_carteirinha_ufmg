@@ -194,9 +194,11 @@ Step 1 is genuinely small and independently useful.
   change), **or** keep teachers device-managed and let the tool pre-fill only
   students/classes (simpler, avoids the contract change entirely).
 - **`/api/read` path denylist** — worth doing independently of this feature.
-- **Sync `WebServer` blocking** — it is pumped from an LVGL timer every 5 ms;
-  multi-MB uploads on that thread are a hardware-only unknown, like most of this
-  project.
+- **Sync `WebServer` blocking** — no longer on the LVGL thread: it runs on its
+  own `fileserv` task, so a multi-MB apply no longer stalls the UI. What it
+  costs is concurrency with the rest of the firmware's SD access (see
+  [ARCHITECTURE.md](ARCHITECTURE.md) §Threading), which a staging-then-apply
+  contract has to account for.
 - **Merge or separate pages** — the file manager and the builder would be two
   embedded web apps; decide whether they share nav.
 - **Does this belong before hardware validation?** Honest counterargument: this

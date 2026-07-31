@@ -7,11 +7,17 @@
 // the UI sends only after a confirm). Full access, on purpose — this is a
 // debug tool. The tree walking lives in storage/sd_tree.h.
 //
-// The server is synchronous: file_server_handle() must be pumped frequently
-// from the LVGL thread, which keeps ALL SD I/O on that one thread (no locking
-// against roster/attendance/config). Do not call these from another task.
+// The server is synchronous, so it runs on its own FreeRTOS task ("fileserv")
+// instead of being pumped from the LVGL thread — a large upload or download
+// would otherwise freeze the UI for the whole transfer. Its SD access is
+// therefore concurrent with the rest of the firmware, and relies on the same
+// FatFs volume lock (FF_FS_REENTRANT) that photo_store's writer task and the
+// roster/config retry tasks already do: no corruption, but a file edited over
+// the web while a screen reads it can still be seen half-written. Acceptable
+// for a debug tool used deliberately, with the UI parked on the WiFi screen.
+//
+// begin()/end() are for the LVGL thread only; the task itself is internal.
 
-void file_server_begin(void);   // bind :80 and register routes
-void file_server_end(void);     // stop listening
-void file_server_handle(void);  // process pending requests; call often
+void file_server_begin(void);  // bind :80, register routes, start the task
+void file_server_end(void);    // ask the task to stop and wait briefly for it
 bool file_server_running(void);

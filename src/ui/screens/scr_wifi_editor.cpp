@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include "services/file_server.h"
+#include "storage/attendance_store.h"
 #include "services/wifi_ap.h"
 #include "ui/components/shell.h"
 #include "ui/theme/theme.h"
@@ -14,23 +15,21 @@ static lv_obj_t* s_pass_val = nullptr;
 static lv_obj_t* s_btn = nullptr;
 static lv_obj_t* s_btn_label = nullptr;
 static lv_obj_t* s_status = nullptr;
-static lv_timer_t* s_poll = nullptr;  // pumps the HTTP server on the LVGL thread
 
-// The sync web server must be serviced often; do it from an LVGL timer so all
-// its SD I/O stays on this (the only SD-touching) thread.
-static void poll_cb(lv_timer_t*) { file_server_handle(); }
-
-// Starts/stops the file server + its poll timer to match the AP state.
+// Starts/stops the file server to match the AP state. The server runs on its
+// own task (see file_server.h), so nothing has to be pumped from here.
 static void sync_file_server(bool running) {
     if (running) {
         if (!file_server_running()) file_server_begin();
-        if (!s_poll) s_poll = lv_timer_create(poll_cb, 5, nullptr);
     } else {
-        if (s_poll) {
-            lv_timer_delete(s_poll);
-            s_poll = nullptr;
+        if (file_server_running()) {
+            file_server_end();
+            // Someone may have edited or deleted attendance logs over the web
+            // while this was up. Their memoised present-counts are the one thing
+            // in the firmware that a change outside attendance_store can make
+            // stale, so drop them.
+            attendance_history_cache_clear();
         }
-        if (file_server_running()) file_server_end();
     }
 }
 

@@ -10,7 +10,10 @@
 #include "mock_sd.h"
 #include "storage/attendance_store.h"
 
-void setUp(void) {}
+// mocksd_reset() swaps the whole card out from under the module, which no real
+// device does; start every test with a cold history cache so one test's counts
+// can never answer another's.
+void setUp(void) { attendance_history_cache_clear(); }
 void tearDown(void) { attendance_close(); }
 
 static const char* DIR = "CS101-M1";
@@ -276,6 +279,107 @@ static void test_timed_present_survives_reopen(void) {
     TEST_ASSERT_EQUAL_INT(50, s.minutes);
 }
 
+// --- history count cache ----------------------------------------------------
+//
+// attendance_present_for() memoises, so these tests mutate the file behind its
+// back to prove whether an answer came from the cache or from disk.
+
+static void test_present_for_is_memoised(void) {
+    mocksd_reset();
+    mocksd_add_file("/classes/CS101-M1/attendance/2026-07-20.jsonl",
+                    "{\"id\":\"a\",\"present\":true}\n");
+    TEST_ASSERT_EQUAL_INT(1, attendance_present_for(DIR, "2026-07-20"));
+
+    // Rewrite the file with two present students. A cached answer still says 1.
+    mocksd_add_file("/classes/CS101-M1/attendance/2026-07-20.jsonl",
+                    "{\"id\":\"a\",\"present\":true}\n{\"id\":\"b\",\"present\":true}\n");
+    TEST_ASSERT_EQUAL_INT(1, attendance_present_for(DIR, "2026-07-20"));
+
+    // Clearing the cache re-reads it.
+    attendance_history_cache_clear();
+    TEST_ASSERT_EQUAL_INT(2, attendance_present_for(DIR, "2026-07-20"));
+}
+
+// A tap through this module must invalidate that day, or the history view would
+// keep showing the pre-tap count.
+static void test_marking_present_invalidates_that_date(void) {
+    mocksd_reset();
+    attendance_open(DIR, "2026-07-20");
+    TEST_ASSERT_EQUAL_INT(0, attendance_present_for(DIR, "2026-07-20"));  // caches 0
+    attendance_set("2023-0142", true);
+    TEST_ASSERT_EQUAL_INT(1, attendance_present_for(DIR, "2026-07-20"));
+    attendance_set("2023-0187", true);
+    TEST_ASSERT_EQUAL_INT(2, attendance_present_for(DIR, "2026-07-20"));
+    attendance_set("2023-0142", false);
+    TEST_ASSERT_EQUAL_INT(1, attendance_present_for(DIR, "2026-07-20"));
+}
+
+static void test_timed_tap_invalidates_that_date(void) {
+    mocksd_reset();
+    attendance_open(DIR, "2026-07-20");
+    TEST_ASSERT_EQUAL_INT(0, attendance_present_for(DIR, "2026-07-20"));  // caches 0
+    attendance_tap("2023-0142", 0, 45);                 // arrival: writes nothing
+    TEST_ASSERT_EQUAL_INT(0, attendance_present_for(DIR, "2026-07-20"));
+    attendance_tap("2023-0142", 50 * MIN_US, 45);       // confirms: appends
+    TEST_ASSERT_EQUAL_INT(1, attendance_present_for(DIR, "2026-07-20"));
+}
+
+// Only the written date is dropped; other days stay cached.
+static void test_other_dates_stay_cached(void) {
+    mocksd_reset();
+    mocksd_add_file("/classes/CS101-M1/attendance/2026-07-19.jsonl",
+                    "{\"id\":\"a\",\"present\":true}\n");
+    attendance_open(DIR, "2026-07-20");
+    TEST_ASSERT_EQUAL_INT(1, attendance_present_for(DIR, "2026-07-19"));
+
+    // Change the OTHER day on disk, then write to the open one.
+    mocksd_add_file("/classes/CS101-M1/attendance/2026-07-19.jsonl", "");
+    attendance_set("2023-0142", true);
+
+    // 07-19 is still served from cache; 07-20 was re-read.
+    TEST_ASSERT_EQUAL_INT(1, attendance_present_for(DIR, "2026-07-19"));
+    TEST_ASSERT_EQUAL_INT(1, attendance_present_for(DIR, "2026-07-20"));
+}
+
+// The cache holds one class; asking about another must not return its counts.
+static void test_switching_class_does_not_leak_counts(void) {
+    mocksd_reset();
+    mocksd_add_file("/classes/CS101-M1/attendance/2026-07-20.jsonl",
+                    "{\"id\":\"a\",\"present\":true}\n");
+    mocksd_add_file("/classes/MA110-F1/attendance/2026-07-20.jsonl",
+                    "{\"id\":\"a\",\"present\":true}\n{\"id\":\"b\",\"present\":true}\n");
+    TEST_ASSERT_EQUAL_INT(1, attendance_present_for(DIR, "2026-07-20"));
+    TEST_ASSERT_EQUAL_INT(2, attendance_present_for("MA110-F1", "2026-07-20"));
+    TEST_ASSERT_EQUAL_INT(1, attendance_present_for(DIR, "2026-07-20"));
+}
+
+static void test_clear_drops_the_cache(void) {
+    mocksd_reset();
+    mocksd_add_file("/classes/CS101-M1/attendance/2026-07-20.jsonl",
+                    "{\"id\":\"a\",\"present\":true}\n");
+    TEST_ASSERT_EQUAL_INT(1, attendance_present_for(DIR, "2026-07-20"));
+    attendance_clear(DIR, nullptr);
+    TEST_ASSERT_EQUAL_INT(0, attendance_present_for(DIR, "2026-07-20"));
+}
+
+// More dates than the cache holds must still answer correctly — the extras are
+// simply re-read every time.
+static void test_more_dates_than_the_cache_holds(void) {
+    mocksd_reset();
+    char path[80], date[12];
+    for (int i = 0; i < 30; i++) {
+        snprintf(date, sizeof(date), "2026-06-%02d", i + 1);
+        snprintf(path, sizeof(path), "/classes/CS101-M1/attendance/%s.jsonl", date);
+        mocksd_add_file(path, "{\"id\":\"a\",\"present\":true}\n");
+    }
+    for (int pass = 0; pass < 2; pass++) {
+        for (int i = 0; i < 30; i++) {
+            snprintf(date, sizeof(date), "2026-06-%02d", i + 1);
+            TEST_ASSERT_EQUAL_INT(1, attendance_present_for(DIR, date));
+        }
+    }
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_fresh_session_is_empty);
@@ -293,5 +397,12 @@ int main(int, char**) {
     RUN_TEST(test_timed_no_confirm_is_absent);
     RUN_TEST(test_manual_override_clears_in_progress);
     RUN_TEST(test_timed_present_survives_reopen);
+    RUN_TEST(test_present_for_is_memoised);
+    RUN_TEST(test_marking_present_invalidates_that_date);
+    RUN_TEST(test_timed_tap_invalidates_that_date);
+    RUN_TEST(test_other_dates_stay_cached);
+    RUN_TEST(test_switching_class_does_not_leak_counts);
+    RUN_TEST(test_clear_drops_the_cache);
+    RUN_TEST(test_more_dates_than_the_cache_holds);
     return UNITY_END();
 }

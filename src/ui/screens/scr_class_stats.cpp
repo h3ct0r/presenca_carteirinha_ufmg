@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "app/class_stats.h"
 #include "app/roster.h"
 #include "services/roster_service.h"
 #include "storage/attendance_store.h"
@@ -26,13 +27,28 @@ static lv_obj_t* s_fv_ta = nullptr;
 static lv_obj_t* s_timed_sw = nullptr;
 static lv_obj_t* s_min_ta = nullptr;
 static uint32_t s_sel_color = 0;
-static lv_obj_t* s_swatches[8] = {};
 
 // Preset class colors (the swatch row). The active one gets a light border.
-static const uint32_t PALETTE[8] = {0x272766, 0xD64545, 0x1F9D55, 0xE8890C,
-                                    0x3B6FE0, 0x8E44AD, 0x16A085, 0x555555};
+static const uint32_t PALETTE[] = {0x272766, 0xD64545, 0x1F9D55, 0xE8890C,
+                                   0x3B6FE0, 0x8E44AD, 0x16A085, 0x555555};
+static constexpr int PALETTE_N = (int)(sizeof(PALETTE) / sizeof(PALETTE[0]));
+
+// Past sessions averaged for the attendance rate. Matches the class screen's cap.
+static constexpr int MAX_DATES = 24;
+
+static lv_obj_t* s_swatches[PALETTE_N] = {};
 
 static void back_cb(lv_event_t*) { scr_mgr_show(SCREEN_CLASSES, nullptr); }
+
+// The shared keyboard floats over the body, so reserve its height as bottom
+// padding — but only while it is up, or the settings list ends in dead space.
+// Same approach as the class screen's apply_keyboard_pad().
+static void apply_keyboard_pad(void) {
+    if (!s_sh.body) return;
+    lv_obj_set_style_pad_bottom(s_sh.body, keyboard_is_visible() ? KEYBOARD_PAD : UI_PAD, 0);
+}
+
+static void kb_visibility_cb(bool) { apply_keyboard_pad(); }
 
 // --- statistics -------------------------------------------------------------
 
@@ -43,19 +59,16 @@ static void build_stats(lv_obj_t* parent) {
     ui_make_label(card, "Statistics", THEME_PRIMARY, &lv_font_montserrat_20);
 
     int total = s_cls->roster_count;
-    int with_photo = 0;
-    for (int j = 0; j < total; j++) {
-        const student_t* st = roster_student_at(s_cls->roster[j]);
-        if (st && student_photo_exists(st->id)) with_photo++;
-    }
+    int with_photo = student_photo_count_for_class(s_cls);
 
     char line[96];
     snprintf(line, sizeof(line), "%d students   %d with photo", total, with_photo);
     ui_make_label(card, line, THEME_TEXT, &lv_font_montserrat_14);
 
     // Attendance rate: mean of each recorded session's present percentage.
-    char dates[24][12];
-    int nd = attendance_list_dates(s_cls->dir, dates, 24);
+    // attendance_present_for() memoises, so the repeat visit costs no SD reads.
+    char dates[MAX_DATES][12];
+    int nd = attendance_list_dates(s_cls->dir, dates, MAX_DATES);
     if (nd > 0 && total > 0) {
         long pct_sum = 0;
         for (int i = 0; i < nd; i++) {
@@ -68,38 +81,8 @@ static void build_stats(lv_obj_t* parent) {
     }
     ui_make_label(card, line, THEME_MUTED, &lv_font_montserrat_14);
 
-    // Turma breakdown (ASCII; the Montserrat glyph set is limited).
-    struct {
-        const char* name;
-        int count;
-    } groups[ROSTER_MAX_CLASS_STUDENTS];
-    int ng = 0;
-    bool any = false;
-    for (int j = 0; j < total; j++) {
-        const char* t = s_cls->roster_turma[j][0] ? s_cls->roster_turma[j] : "(none)";
-        if (s_cls->roster_turma[j][0]) any = true;
-        int g = -1;
-        for (int k = 0; k < ng; k++)
-            if (strcmp(groups[k].name, t) == 0) {
-                g = k;
-                break;
-            }
-        if (g < 0) {
-            g = ng++;
-            groups[g].name = t;
-            groups[g].count = 0;
-        }
-        groups[g].count++;
-    }
-    if (any) {
-        char turma[160];
-        size_t len = 0;
-        for (int k = 0; k < ng && len < sizeof(turma); k++) {
-            int w = snprintf(turma + len, sizeof(turma) - len, "%s%s: %d", k ? "    " : "",
-                             groups[k].name, groups[k].count);
-            if (w < 0 || (size_t)w >= sizeof(turma) - len) break;
-            len += (size_t)w;
-        }
+    char turma[160];
+    if (class_turma_breakdown(s_cls, turma, sizeof(turma))) {
         lv_obj_t* tl = ui_make_label(card, turma, THEME_MUTED, &lv_font_montserrat_14);
         lv_label_set_long_mode(tl, LV_LABEL_LONG_WRAP);
         lv_obj_set_width(tl, LV_PCT(100));
@@ -109,7 +92,7 @@ static void build_stats(lv_obj_t* parent) {
 // --- settings ---------------------------------------------------------------
 
 static void highlight_swatches(void) {
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < PALETTE_N; i++) {
         bool on = (PALETTE[i] == s_sel_color);
         lv_obj_set_style_border_width(s_swatches[i], on ? 3 : 0, 0);
         lv_obj_set_style_border_color(s_swatches[i], lv_color_hex(THEME_TEXT), 0);
@@ -123,14 +106,19 @@ static void swatch_cb(lv_event_t* e) {
 
 static void save_cb(lv_event_t*) {
     keyboard_hide();
-    const char* name = s_name_ta ? lv_textarea_get_text(s_name_ta) : "";
-    const char* sched = s_sched_ta ? lv_textarea_get_text(s_sched_ta) : "";
+    // The six widgets are built and destroyed together, so they are either all
+    // live or all gone; check once rather than guarding some and not others.
+    if (!s_name_ta || !s_sched_ta || !s_capture_sw || !s_fv_ta || !s_timed_sw || !s_min_ta) {
+        return;
+    }
+    const char* name = lv_textarea_get_text(s_name_ta);
+    const char* sched = lv_textarea_get_text(s_sched_ta);
     bool capture = lv_obj_has_state(s_capture_sw, LV_STATE_CHECKED);
     int fv = atoi(lv_textarea_get_text(s_fv_ta));
     if (fv <= 0) fv = FACE_VERIFY_SECONDS_DEFAULT;
     bool timed = lv_obj_has_state(s_timed_sw, LV_STATE_CHECKED);
     int min_min = atoi(lv_textarea_get_text(s_min_ta));
-    if (min_min < 1) min_min = 45;
+    if (min_min < 1) min_min = MIN_ATTENDANCE_MIN_DEFAULT;
     roster_result_t r = roster_class_update_settings(s_cls->code, name, sched, s_sel_color, capture,
                                                      fv, timed, min_min);
     ui_toast_show(r.message, r.ok);
@@ -159,7 +147,7 @@ static void build_settings(lv_obj_t* parent) {
     lv_obj_set_style_pad_column(row, 8, 0);
     lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
     s_sel_color = s_cls->color;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < PALETTE_N; i++) {
         lv_obj_t* sw = lv_obj_create(row);
         lv_obj_remove_flag(sw, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_size(sw, 32, 32);
@@ -198,7 +186,8 @@ static void build_settings(lv_obj_t* parent) {
     lv_obj_set_flex_align(trow, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
     lv_obj_remove_flag(trow, LV_OBJ_FLAG_SCROLLABLE);
-    ui_make_label(trow, "Timed attendance (tap in / out)", THEME_TEXT, &lv_font_montserrat_14);
+    ui_make_label(trow, "Timed attendance (tap to arrive, tap to confirm)", THEME_TEXT,
+                  &lv_font_montserrat_14);
     s_timed_sw = lv_switch_create(trow);
     if (s_cls->timed_attendance) lv_obj_add_state(s_timed_sw, LV_STATE_CHECKED);
 
@@ -219,12 +208,6 @@ static lv_obj_t* create(void) {
     s_sh = shell_create("", "Statistics & settings", false);
     shell_set_back(&s_sh, back_cb);
 
-    // sh.body is the vertical scroll container. Give it a keyboard-height bottom
-    // pad so a focused field can scroll clear of the 300 px on-screen keyboard
-    // (SCROLL_ON_FOCUS keeps the field inside the content area, which this pad
-    // now ends above the keyboard) and so the last fields are reachable.
-    lv_obj_set_style_pad_bottom(s_sh.body, 320, 0);
-
     s_content = lv_obj_create(s_sh.body);
     lv_obj_remove_style_all(s_content);
     lv_obj_set_size(s_content, LV_PCT(100), LV_SIZE_CONTENT);
@@ -237,15 +220,20 @@ static lv_obj_t* create(void) {
 
 static void on_show(void* arg) {
     if (arg) s_cls = (const class_rec_t*)arg;
+    keyboard_set_visibility_cb(kb_visibility_cb);
     keyboard_hide();  // release before cleaning the keyboard textareas (UAF guard)
     lv_obj_clean(s_content);
     if (!s_cls) return;
     lv_label_set_text(s_sh.title, s_cls->name);
+    apply_keyboard_pad();
     build_stats(s_content);
     build_settings(s_content);
 }
 
-static void on_hide(void) { keyboard_hide(); }
+static void on_hide(void) {
+    keyboard_set_visibility_cb(nullptr);  // never fire against a torn-down layout
+    keyboard_hide();
+}
 
 const screen_t scr_class_stats = {
     .create = create,

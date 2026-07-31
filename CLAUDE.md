@@ -58,8 +58,10 @@ src/lcd/  src/touch/  src/rfid/  src/audio/     device drivers
 
 - **Only `ui/` includes `lvgl.h`.** Services post `app_event_t` to one FreeRTOS
   queue (`app/event_bus`); `main.cpp` `loop()` drains it on the LVGL thread.
-- **All SD writes happen on the LVGL thread** — nothing locks the card. A service
+- **SD writes belong on the LVGL thread** — nothing locks the card. A service
   that needs to persist something posts an event and the drain path writes it.
+  The named exceptions (photo writer, config/roster retries, the file server's
+  own task) and what makes them safe are in ARCHITECTURE.md §Threading.
 - Screens: `ui/screen_manager` + `screen_t {create, on_show, on_hide}`.
   `create` runs once/lazily and **before** `s_current` is set (so
   `scr_mgr_current()` is the *previous* screen during create).

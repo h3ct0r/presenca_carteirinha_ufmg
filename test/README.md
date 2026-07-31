@@ -21,7 +21,7 @@ native-only).
 
 ## Suites
 
-16 suites, 181 cases. This table is the only place those numbers are recorded —
+17 suites, 197 cases. This table is the only place those numbers are recorded —
 other docs link here rather than restating them.
 
 | Suite | Cases | Covers |
@@ -29,11 +29,12 @@ other docs link here rather than restating them.
 | `native/test_roster` | 31 | `students.json` / `class.json` validation and the exact on-screen error messages; enroll; clear-uids |
 | `native/test_auth_config` | 23 | `config.json` parsing, UID→teacher lookup, password write, statuses |
 | `native/test_sd_tree` | 18 | recursive delete, in-place rename, whole-card wipe sparing `config.json` |
-| `native/test_attendance` | 15 | session JSONL fold, date listing, timed (arrival + confirm) taps |
+| `native/test_attendance` | 22 | session JSONL fold, date listing, timed (arrival + confirm) taps |
 | `native/test_ustar` | 14 | tar reading and the import path whitelist |
 | `native/test_core` | 11 | `uid_normalize`, login session, battery voltage→percent curve |
 | `native/test_photo_fit` | 11 | aspect-preserving avatar scale/size arithmetic |
 | `native/test_card_gate` | 16 | RFID tap decisions: confirm-before-accept, multi-card detection |
+| `native/test_class_stats` | 9 | turma breakdown shared by the class and stats screens |
 | `native/test_export` | 6 | CSV export: FREQ tallying, overwrite, session snapshot/restore |
 | `native/test_import` | 6 | `config.tar` staging, validation, apply and rollback |
 | `native/test_photo` | 6 | photo capture pipeline: JPEG write, BMP fallback, file numbering |

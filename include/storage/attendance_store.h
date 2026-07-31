@@ -84,7 +84,16 @@ int attendance_list_dates(const char* class_dir, char dates[][12], int max);
 
 // Present count for a specific past date without disturbing the open session
 // (for the history summary). 0 if the file is missing.
+//
+// Memoised per (class_dir, date) — the class screens ask for every past date on
+// each build, and each answer costs a whole-file fold. Writes through this
+// module drop the affected entry, so the count is always current with respect to
+// anything the device does itself.
 int attendance_present_for(const char* class_dir, const char* date);
+
+// Drops every memoised count. Only needed when a session file changed WITHOUT
+// going through this module — in practice, the debug WiFi file editor.
+void attendance_history_cache_clear(void);
 
 // DEBUG: deletes every session log for a class (all YYYY-MM-DD.jsonl files) and
 // closes any open session. Returns the number of files removed. When `out_failed`
