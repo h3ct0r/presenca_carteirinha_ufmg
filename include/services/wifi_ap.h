@@ -17,10 +17,18 @@ void wifi_ap_credentials(char* ssid, size_t ssid_cap, char* pass, size_t pass_ca
 // Starts the soft-AP with the generated credentials. Returns true on success.
 bool wifi_ap_start(void);
 
-// Tears the soft-AP down.
+// Tears the soft-AP down. Only the visible network goes away: the WiFi stack
+// and the P4<->C6 link stay initialized on purpose (see the .cpp), so the
+// internal RAM they hold is NOT returned. Nothing reclaims it before a reboot.
 void wifi_ap_stop(void);
 
 bool wifi_ap_is_running(void);
+
+// True once the AP has been started in this boot, even after wifi_ap_stop().
+// Consumers that need the internal heap the WiFi stack permanently took (the
+// face-detection model load, which reads from SD through a DMA-capable buffer)
+// use this to degrade instead of failing at an unrecoverable point.
+bool wifi_ap_was_started(void);
 
 // The AP gateway IP as a string ("192.168.4.1"), or "" when not running.
 void wifi_ap_ip(char* out, size_t cap);

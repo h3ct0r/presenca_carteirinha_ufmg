@@ -93,6 +93,37 @@ Working on hardware, including detection.
     right and what `luma` reads (healthy ≈ 60–160; ~0 or ~255 means the exposure
     or pipeline is broken), which points at CSI/ISP/AE rather than detection.
   - Image fine but still `[none]` — look at model input size and normalization.
+- **Using the debug WiFi AP disables face detection until the next restart.**
+  Loading a model reads it off the SD card, and `sdmmc` needs a DMA-capable
+  *internal* buffer for that. The WiFi stack takes a large, permanent bite out of
+  that pool: `wifi_ap_stop()` only drops the visible network and deliberately
+  keeps the stack and the P4↔C6 link alive (see `wifi_ap.cpp`), so **nothing
+  reclaims the RAM before a reboot**. Observed failure, with 46,976 B internal
+  free:
+
+  ```
+  E sdmmc_cmd: sdmmc_read_sectors: not enough mem, err=0x101
+  E FbsLoader: Failed to open /sdcard/models/human_face_detect_mnp_s8_v1.espdl.
+  E dl::Model: Fail to load model
+  Guru Meditation Error: Core 0 panic'ed (Load access fault)
+  ```
+
+  esp-dl logs the failure and then uses the null model anyway
+  (`dl::Model::minimize()` → `FbsModel::clear_map()`), which is the panic. So the
+  service refuses to load a model when `wifi_ap_was_started()` or when internal
+  free is under `MIN_INTERNAL_FREE`, and reports "restart the device to use face
+  detection" instead. `face_detection_start()` logs the internal pool at every
+  start and around the load, which is how the number above was obtained.
+- **The model is loaded eagerly** (`HumanFaceDetect(..., lazy_load = false)`).
+  esp-dl's default defers the whole load to the first frame that contains a face,
+  which put the crash above minutes after the camera opened and made it look
+  unrelated. Loading at start keeps the failure next to the guards that check for
+  it.
+- **A capture-enabled class needs the model.** With no model the preview still
+  runs, so `face_detection_running()` is true while nothing will ever be detected.
+  Kiosk therefore also checks `face_detection_model_unavailable()` and shows
+  "Face check-in unavailable" per student, plus a toast on entry — otherwise every
+  verification runs its full countdown and rejects the student in silence.
 - **Always-on once opened.** The camera screen starts the detection task and does
   not stop it on exit, so streaming and inference keep running. `face_detection_stop()`
   exists and the kiosk does pause/resume around verification; the camera screen

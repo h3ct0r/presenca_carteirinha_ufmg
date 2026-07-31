@@ -11,7 +11,10 @@
 // is not persisted anywhere.
 extern const screen_t scr_wifi_editor;
 
-// Stops the AP and the file server, wherever the UI happens to be. The idle
-// gate calls it so signing out can never leave the unauthenticated file
-// manager on air. No-op when nothing is running. LVGL thread.
-void scr_wifi_editor_stop_ap(void);
+// Stops the AP and the file server, wherever the UI happens to be, and returns
+// true if something was actually running (so the caller can say why it went).
+// Two callers: the idle gate, so signing out can never leave the
+// unauthenticated file manager on air, and the camera screens — the WiFi stack
+// and esp-dl compete for the same internal SIMD-capable RAM, and esp-dl faults
+// instead of failing when it runs out. LVGL thread.
+bool scr_wifi_editor_stop_ap(void);

@@ -61,7 +61,13 @@ the card can change under any screen. Two rules keep that honest:
   holds a `class_rec_t*` into, so reloading under an open class screen would
   retarget it;
 - returning to the idle gate calls `scr_wifi_editor_stop_ap()`, so signing out
-  cannot leave an unauthenticated file manager on air.
+  cannot leave an unauthenticated file manager on air;
+- using the AP costs the face model for the rest of the boot. Stopping it frees
+  nothing — `wifi_ap_stop()` keeps the stack up on purpose — and the model's SD
+  read needs the internal DMA memory that stack is holding. `wifi_ap_was_started()`
+  is the sticky flag that lets the camera service degrade to preview instead of
+  panicking inside esp-dl (see [FACE_DETECTION.md](FACE_DETECTION.md) §Status /
+  caveats).
 
 ## Screens
 

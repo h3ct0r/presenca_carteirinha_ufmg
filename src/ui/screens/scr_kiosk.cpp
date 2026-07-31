@@ -13,6 +13,7 @@
 #include "esp_timer.h"
 #include "services/face_detection_service.h"
 #include "services/roster_service.h"
+#include "services/wifi_ap.h"
 #include "storage/attendance_store.h"
 #include "ui/components/face_verify.h"
 #include "ui/components/keyboard.h"
@@ -266,11 +267,16 @@ static bool check_in(const student_t* st) {
         // this feature fails in the field: photo check-in is a PER-CLASS flag and
         // an imported config.tar resets it to false (CONFIG_IMPORT.md §3.3).
         ESP_LOGI(TAG, "check-in %s: capture enabled, opening face verify", st->id);
-        if (!face_detection_running()) {
+        // No camera, or a camera that will never detect a face (no model). The
+        // second case has to be caught here too: verification would otherwise
+        // run its full countdown and reject every student in silence.
+        if (!face_detection_running() || face_detection_model_unavailable()) {
             beeper_error();
             lv_obj_t* p = make_result(THEME_DANGER);
             kiosk_label(p, LV_SYMBOL_WARNING, &lv_font_montserrat_32);
-            kiosk_label(p, "Camera unavailable", &lv_font_montserrat_32);
+            kiosk_label(p, face_detection_model_unavailable() ? "Face check-in unavailable"
+                                                              : "Camera unavailable",
+                        &lv_font_montserrat_32);
             s_timer = lv_timer_create(result_timer_cb, RESULT_MS, nullptr);
             return false;
         }
@@ -533,7 +539,16 @@ static void on_show(void* arg) {
     keyboard_hide();  // the shared keyboard from other screens; kiosk uses its own
     dismiss_result();
     close_exit_modal();
-    if (s_cls && class_capture_enabled(s_cls)) face_detection_start();  // warm for verify
+    if (s_cls && class_capture_enabled(s_cls)) {
+        face_detection_start();  // warm for verify
+        // The face model cannot load once the debug WiFi AP has run in this boot
+        // — it takes the internal RAM the model's SD read needs and never gives
+        // it back (wifi_ap.h). Say so on the way in, not once per rejected
+        // student: every verification would simply time out.
+        if (wifi_ap_was_started()) {
+            ui_toast_show("Face check-in needs a restart: the WiFi editor was used", false);
+        }
+    }
     ui_set_card_capture(on_kiosk_card);                                 // students tap to check in
 }
 

@@ -96,6 +96,8 @@ tests against the mocks in `lib/hw_mocks/`). See [`test/README.md`](test/README.
   Moodle export to on-screen.
 
 **How-to**
+- [Decoding a Guru Meditation panic](docs/software/DEBUGGING_PANICS.md) — turning a
+  RISC-V register dump into `file.cpp:line` with `riscv32-esp-elf-addr2line`.
 - [Downloading student photos from Moodle](docs/software/MOODLE_PHOTOS.md)
 - [Generating the custom fonts](docs/software/CUSTOM_FONT_GENERATION.md)
 - [Sample SD card](docs/software/sd_card_example/) — a complete card to copy.

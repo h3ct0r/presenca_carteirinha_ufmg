@@ -33,6 +33,14 @@ bool face_detection_start(void);
 // True once the camera pipeline is streaming (and not paused).
 bool face_detection_running(void);
 
+// True once the detection task has decided the face model will NOT be loaded
+// this session — missing/truncated files, or not enough internal RAM (the
+// debug WiFi AP takes it permanently, see wifi_ap.h). The preview still runs,
+// but nothing will ever detect a face, so anything that gates on a face must
+// say so rather than time out on every student. False while it is still
+// loading, so a check right after face_detection_start() cannot misfire.
+bool face_detection_model_unavailable(void);
+
 // Pauses capture: idles the detection task and turns the sensor stream off,
 // keeping the pipeline initialized so face_detection_start() resumes instantly
 // (no risky deinit / re-bring-up). Safe to call when not running.

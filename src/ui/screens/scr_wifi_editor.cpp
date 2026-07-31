@@ -178,8 +178,8 @@ static void on_show(void*) {
     refresh_state();
 }
 
-void scr_wifi_editor_stop_ap(void) {
-    if (!wifi_ap_is_running() && !file_server_running()) return;
+bool scr_wifi_editor_stop_ap(void) {
+    if (!wifi_ap_is_running() && !file_server_running()) return false;
     wifi_ap_stop();
     if (s_sh.root) {
         refresh_state();  // also stops the server and repaints button/status/nav
@@ -189,6 +189,7 @@ void scr_wifi_editor_stop_ap(void) {
         sync_file_server(false);
         ui_state_set_wifi_ap(false);
     }
+    return true;
 }
 
 const screen_t scr_wifi_editor = {

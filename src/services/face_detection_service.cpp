@@ -13,6 +13,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "services/wifi_ap.h"
 #include "storage/photo_store.h"
 
 // Face inference is optional: it needs the ESP-DL framework (dl::*), which is a
@@ -24,6 +25,20 @@
 #endif
 
 static const char* TAG = "face_svc";
+
+// Loading a model reads it off the SD card, and sdmmc needs a DMA-capable
+// INTERNAL buffer to do that — the one pool the WiFi stack permanently eats
+// into. At 46,976 B free it failed with ESP_ERR_NO_MEM, esp-dl logged "Fail to
+// load model" and then used the null model anyway (dl::Model::minimize() ->
+// FbsModel::clear_map()), which panics the device. So this is the number to
+// watch; PSRAM is never the constraint here.
+static void log_heap(const char* when) {
+    ESP_LOGI(TAG, "%s: internal %u B free (largest %u), DMA %u B, PSRAM %u B", when,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+}
 
 #define CAM_W ov02c10_camera::WIDTH
 #define CAM_H ov02c10_camera::HEIGHT
@@ -57,6 +72,9 @@ static bool s_running = false;
 // stream off, and start resumes it. Avoids the risky deinit/re-bring-up path.
 static volatile bool s_paused = false;
 static volatile bool s_capture_req = false;
+// Set by the detection task once it knows the model is not coming. Stays false
+// while loading, so callers can't mistake "still loading" for "never".
+static volatile bool s_model_unavailable = false;
 
 static void set_status(const char* s) {
     if (!s_st.lock) return;
@@ -191,14 +209,44 @@ static void detection_task(void*) {
     // NOTE: a genuinely corrupt but full-size model still faults inside esp-dl —
     // that is an esp-dl limitation we can't guard from here.
     static constexpr size_t MIN_MODEL_BYTES = 1024;  // any real model is far larger
-    bool models_ok = have_msr && have_mnp && sz_msr >= MIN_MODEL_BYTES && sz_mnp >= MIN_MODEL_BYTES;
+    bool files_ok = have_msr && have_mnp && sz_msr >= MIN_MODEL_BYTES && sz_mnp >= MIN_MODEL_BYTES;
+
+    // The other way the load fails is running out of DMA-capable internal RAM
+    // for the SD read, which ends in the same unguardable esp-dl fault. Using
+    // the debug WiFi AP is what causes it in practice: the stack it leaves
+    // behind is never freed, not even by wifi_ap_stop() (see wifi_ap.h), so
+    // once the AP has been up in this boot only a restart brings the memory
+    // back. Refuse to load rather than panic.
+    size_t internal_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    bool wifi_used = wifi_ap_was_started();
+    // Calibrated from the observed failure: the SD read died at 46,976 B free.
+    // Raise this if a load ever fails with more than that available.
+    static constexpr size_t MIN_INTERNAL_FREE = 56 * 1024;
+    bool memory_ok = !wifi_used && internal_free >= MIN_INTERNAL_FREE;
+
     HumanFaceDetect* detect = nullptr;
-    if (models_ok) {
+    if (files_ok && memory_ok) {
         set_status("loading model...");
-        detect = new HumanFaceDetect();
+        log_heap("before model load");
+        // lazy_load = false: esp-dl otherwise defers the whole load to the first
+        // frame with a face in it, so an out-of-memory panic would land minutes
+        // later and look unrelated to opening the camera. Load it here, where
+        // the guards above have just run.
+        detect = new HumanFaceDetect(
+            static_cast<HumanFaceDetect::model_type_t>(CONFIG_DEFAULT_HUMAN_FACE_DETECT_MODEL),
+            false);
         detect->set_score_thr(0.3f, 0);   // stage 0 (MSR): proposals
         detect->set_score_thr(0.45f, 1);  // stage 1 (MNP): final accept
+        log_heap("after model load");
         set_status("model ready");
+    } else if (files_ok && wifi_used) {
+        set_status("restart the device to use face detection (WiFi was used)");
+        ESP_LOGW(TAG, "skipping model load: the WiFi AP ran this boot, %u B internal free",
+                 (unsigned)internal_free);
+    } else if (files_ok) {
+        set_status("not enough memory for the model - preview only");
+        ESP_LOGW(TAG, "skipping model load: %u B internal free, need %u",
+                 (unsigned)internal_free, (unsigned)MIN_INTERNAL_FREE);
     } else if (have_msr && have_mnp) {
         set_status("model file empty/truncated - preview only");
         ESP_LOGW(TAG, "model file too small (msr=%uB mnp=%uB); preview only", (unsigned)sz_msr,
@@ -207,6 +255,7 @@ static void detection_task(void*) {
         set_status("no model on SD (put .espdl in /models) - preview only");
         ESP_LOGW(TAG, "model files missing on SD (%s / %s); preview only", MODEL_MSR, MODEL_MNP);
     }
+    s_model_unavailable = (detect == nullptr);
 
     xSemaphoreTake(s_st.lock, portMAX_DELAY);
     snprintf(s_st.model_info, sizeof(s_st.model_info),
@@ -217,6 +266,7 @@ static void detection_task(void*) {
     xSemaphoreGive(s_st.lock);
 #else
     set_status("preview (detection disabled)");
+    s_model_unavailable = true;
     xSemaphoreTake(s_st.lock, portMAX_DELAY);
     snprintf(s_st.model_info, sizeof(s_st.model_info), "detection not built in (USE_FACE_DETECT off)");
     xSemaphoreGive(s_st.lock);
@@ -273,6 +323,7 @@ static void detection_task(void*) {
 }
 
 bool face_detection_start(void) {
+    log_heap("camera start");
     if (s_running) {  // already up: resume from a pause if needed
         if (s_paused) {
             s_sensor.stream(true);
@@ -318,6 +369,8 @@ bool face_detection_start(void) {
 }
 
 bool face_detection_running(void) { return s_running && !s_paused; }
+
+bool face_detection_model_unavailable(void) { return s_model_unavailable; }
 
 void face_detection_stop(void) {
     if (!s_running || s_paused) return;

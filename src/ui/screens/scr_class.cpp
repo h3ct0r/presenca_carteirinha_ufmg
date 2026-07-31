@@ -63,7 +63,7 @@ static lv_calendar_date_t s_highlight;  // must outlive the calendar
 // reported). Each row costs 3 LVGL objects from the fixed LVGL pool, so this
 // bounds the worst case regardless of class size; the header tells the user to
 // narrow the search when it bites.
-static constexpr int ENROLL_MAX_ROWS = 25;
+static constexpr int ENROLL_MAX_ROWS = 15;
 static enroll_state_t s_enroll_state = ENROLL_SEARCH;
 static bool s_unregistered_only = true;  // toggle: only students without a card
 static lv_obj_t* s_search_ta = nullptr;
@@ -81,7 +81,7 @@ static char s_new_turma[16];  // optional class-group tag (class.json only)
 // is counted, but at most ROLL_MAX_ROWS chips are built. A chip costs 5 objects
 // from the fixed LVGL pool, and the whole list used to be rebuilt on
 // every card tap and every name tap — which is what made a big class crawl.
-static constexpr int ROLL_MAX_ROWS = 25;
+static constexpr int ROLL_MAX_ROWS = 10;
 static lv_obj_t* s_roll_search_ta = nullptr;
 static lv_obj_t* s_roll_list = nullptr;   // holds only the chips; rebuilt alone
 static lv_obj_t* s_roll_count = nullptr;  // "N/M present" in the summary header
@@ -541,7 +541,7 @@ static void update_roll_call(void) {
     if (!truncated && !q[0]) return;  // full list, no query: the summary says it all
     char head[96];
     if (truncated) {
-        snprintf(head, sizeof(head), "Showing %d of %d — search to narrow the list", shown,
+        snprintf(head, sizeof(head), "Showing %d of %d - search to narrow the list", shown,
                  matched);
     } else {
         snprintf(head, sizeof(head), "%d match%s", matched, matched == 1 ? "" : "es");
@@ -551,12 +551,6 @@ static void update_roll_call(void) {
     lv_label_set_long_mode(count, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(count, LV_PCT(100));
     lv_obj_move_to_index(count, 0);
-
-    // repeat the truncated message at the bottom as well
-    if (truncated) {
-        snprintf(head, sizeof(head), "Showing %d of %d — search to narrow the list", shown,
-                 matched);
-    }
 }
 
 static void cal_changed_cb(lv_event_t* e) {
@@ -794,7 +788,7 @@ static void update_results(void) {
         char head[96];
         bool truncated = matched > shown;
         if (truncated) {
-            snprintf(head, sizeof(head), "Showing %d of %d — keep typing to narrow the search",
+            snprintf(head, sizeof(head), "Showing %d of %d - keep typing to narrow the search",
                      shown, matched);
         } else if (q[0]) {
             snprintf(head, sizeof(head), "%d match%s", matched, matched == 1 ? "" : "es");

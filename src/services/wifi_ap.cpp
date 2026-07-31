@@ -12,6 +12,7 @@ static const char* TAG = "wifi_ap";
 static char s_ssid[33] = "";
 static char s_pass[16] = "";
 static bool s_running = false;
+static bool s_was_started = false;  // sticky: the stack is never torn down
 
 // Generates the SSID/password once per boot so they stay stable while the
 // screen is open (and across revisits).
@@ -41,6 +42,7 @@ bool wifi_ap_start(void) {
     }
     s_running = ok;
     if (ok) {
+        s_was_started = true;
         ESP_LOGI(TAG, "soft-AP up: %s ip=%s", s_ssid, WiFi.softAPIP().toString().c_str());
     } else {
         ESP_LOGE(TAG, "soft-AP failed to start (C6 companion available?)");
@@ -59,6 +61,8 @@ void wifi_ap_stop(void) {
 }
 
 bool wifi_ap_is_running(void) { return s_running; }
+
+bool wifi_ap_was_started(void) { return s_was_started; }
 
 void wifi_ap_ip(char* out, size_t cap) {
     if (!cap) return;
