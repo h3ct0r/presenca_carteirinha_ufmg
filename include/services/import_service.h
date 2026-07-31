@@ -3,8 +3,8 @@
 #include <stddef.h>
 
 // Offline config import: applies a config.tar (produced by the config-builder)
-// to the SD card. See docs/software/CONFIG_IMPORT_PLAN.md (step 4) and
-// docs/software/CONFIG_IMPORT.md §4-§5 for the tar contract and flow.
+// to the SD card. See docs/software/CONFIG_IMPORT.md §4-§5 for the tar contract
+// and the import flow.
 //
 // The pipeline is: read the staged tar -> structural + §4 whitelist check ->
 // back up the current authored config (backup_store) -> unpack to a staging
@@ -37,5 +37,5 @@ import_result_t import_service_run(const char* tar_path);
 // tree. Does NOT create a new backup (that would clobber the snapshot being
 // restored). Returns {ok,message}; fails if no snapshot exists. Note: like any
 // import this is an overlay — a class the import *added* is not removed by a
-// revert (see CONFIG_IMPORT_PLAN.md). LVGL/import thread.
+// revert. LVGL/import thread.
 import_result_t import_service_revert(void);

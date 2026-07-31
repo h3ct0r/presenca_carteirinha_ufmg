@@ -55,17 +55,20 @@ tools/config-builder/
   SPEC.md              # this file
   README.md            # short human usage (write during M1)
   index.html           # the app shell; inlines styles; imports the ES modules
+  DEPLOY.md            # dev server + nginx notes
+  index.html           # the app shell; inlines styles; imports the ES modules
+  hooks/               # schema-drift guard run from the repo's tooling
   src/
     validate.js        # pure: validate a config model → [errors]; NO DOM
     tarball.js         # pure: files[] → Uint8Array (ustar); NO DOM
+    untar.js           # pure: ustar reader (Moodle photo tars); NO DOM
     uid.js             # pure: uid_normalize() port of src/app/uid.cpp
-    model.js           # pure: build the 3 JSON docs from the UI model
+    model.js           # pure: build the JSON docs from the UI model
     diario.js          # pure: parse UFMG Diário CSV → model merge; NO DOM
+    photomatch.js      # pure: photo filename → student id matching; NO DOM
+    persist.js         # pure: localStorage autosave encode/decode; NO DOM
     app.js             # DOM glue: forms ⇄ model, wires validate + download + import
-  test/
-    validate.test.js   # node --test
-    tarball.test.js    # node --test (assert ustar headers, checksums, EOF blocks)
-    uid.test.js        # node --test (must agree with firmware normalization)
+  test/               # one *.test.js per pure module, plus schema-sync
   fixtures/
     example.model.json # a known-good authored model (mirrors docs/software/sd_card_example)
 ```
@@ -178,9 +181,10 @@ tar was actually imported by real firmware.
   work. Remaining polish: keep input focus on re-render of the edited section
   (today only the export panel refreshes live; structural add/remove re-renders
   the whole page), per-field inline error highlighting.
-- **M4 — polish:** CSV paste for students ✅ (in the Students section); color
-  picker ✅; **Diário de Classe import** ✅ (see below). Remaining: empty states,
-  print/QR of the AP upload steps (optional), localStorage autosave (§11).
+- **M4 — polish:** CSV paste for students ✅; color picker ✅; **Diário de Classe
+  import** ✅; **Moodle photo ingestion** ✅; **localStorage autosave** ✅
+  (`src/persist.js`); **per-class check-in settings** ✅. Remaining (optional):
+  empty states, print/QR of the AP upload steps.
 
 ### Diário de Classe importer (`src/diario.js`)
 Imports the UFMG semicolon CSV export. `parseDiario(text)` reads the header
@@ -201,9 +205,16 @@ student can differ per class. See `docs/software/CONFIG_IMPORT.md` §3.3 and its
 The firmware reads only `id` from a roster entry and preserves `turma` on rewrite
 (no `roster.h` struct change needed). Validated in `validate.js` (`ROSTER_TURMA`).
 
-**Tests:** `node --test` → 89 cases (uid 6, tarball 7, untar 7, validate 24,
-diario 13, photomatch 10, plus the schema-sync guard).
-Green.
+**Per-class check-in settings** (2026-07-30): each class carries a **check-in
+mode** — single tap, double tap, or photo check-in — plus `min_attendance_min`
+(default 45) and `face_verify_seconds` (default 15). All four are emitted on
+every class, so an import states them rather than leaving the device defaults.
+The device treats double-tap and photo check-in as independent flags and can
+combine them; this picker cannot. See `docs/software/CONFIG_IMPORT.md` §3.3.
+
+**Tests:** `node --test`, green — the count lives in [`README.md`](README.md).
+`schema-sync.test.js` parses the firmware headers and fails if `validate.js`'s
+limits drift from them.
 
 ## 10. Definition of done (v1)
 
@@ -212,10 +223,11 @@ pointed errors, and downloads a `config.tar` that a human can upload via the
 device file manager. All pure modules unit-tested green. No CDN, no build, no
 network. `docs/software/CONFIG_IMPORT.md` and this tool agree.
 
-## 11. Open questions (resolve with the user before/while building)
+## 11. Open questions
 
-- **Upload path:** which drop path/trigger does the device watch (contract §6
-  v1), or do we build `POST /api/import` (v2)? Affects M4 only.
-- **Model persistence:** localStorage autosave in addition to download/load JSON?
 - **Existing-device merge preview:** should the tool ingest a device-exported
   current config to diff against? (Nice, not v1.)
+
+Resolved: the upload path is `/config.tar` at the SD root, reachable by copying
+the file or by the device's `POST /api/upload` — no `POST /api/import` was
+needed (contract §6). localStorage autosave shipped (`src/persist.js`).

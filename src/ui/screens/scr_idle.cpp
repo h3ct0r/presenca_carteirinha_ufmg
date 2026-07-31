@@ -40,11 +40,9 @@ static lv_obj_t* s_pw_ta = nullptr;
 static lv_obj_t* s_import_btn = nullptr;    // "Import config from SD" (in the error panel)
 static lv_obj_t* s_import_modal = nullptr;  // confirm overlay
 
-// define the new custom monserrat as default
-// this font was created by fontawesome and has extra characters
-// 0xf023 lock
-// 0xf09c unlock
-// 0xe595 users-viewfinder
+// Montserrat with FontAwesome glyphs merged in (see docs/software/
+// CUSTOM_FONT_GENERATION.md): U+F023 lock, U+F09C unlock,
+// U+E595 users-viewfinder.
 LV_FONT_DECLARE(font_montserrat_custom_14);
 LV_FONT_DECLARE(font_montserrat_custom_20);
 
@@ -470,14 +468,6 @@ static lv_obj_t* create(void) {
     // rendered frame already shows the right panel.
     lv_subject_add_observer(&ui_subj_config_status, update_gate_cb, nullptr);
     lv_subject_add_observer(&ui_subj_roster_status, update_gate_cb, nullptr);
-
-    // TODO: Remove after testing all new fonts
-    // Test new font code
-    // static lv_obj_t* s_test_alert = nullptr;
-    // s_test_alert = lv_label_create(s_root);
-    // lv_obj_set_style_text_font(s_test_alert, &font_montserrat_custom_20, 0);
-    // lv_label_set_text(s_test_alert, LV_SYMBOL_LOCK " Screen Locked");
-    // lv_obj_align(s_test_alert, LV_ALIGN_BOTTOM_MID, 0, -30);
 
     return s_root;
 }

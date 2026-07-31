@@ -15,7 +15,8 @@ code that touches LVGL).
 | Screen | `ui/screens/scr_camera.{h,cpp}` | Renders the preview + boxes + status, snapshot button. Drives the service via `on_show`/`on_hide`. |
 | Model (optional) | `lib/human_face_detect/` | ESP-DL `human_face_detect` (MSR+MNP S8 V1), P4 `.espdl` models |
 
-Reached from the **Admin panel → Attendance photos → Camera preview**.
+Reached from **Admin → Camera → Camera preview**. The same service backs the
+face-verified kiosk check-in described in [FACE_CHECKIN.md](FACE_CHECKIN.md).
 
 ## Data flow
 
@@ -33,9 +34,10 @@ OV02C10 ──CSI──▶ ISP ──▶ csi_pipeline_get_frame()  (full-res RGB
    scr_camera refresh timer (LVGL thread) ── face_detection_snapshot() ──▶ lv_image + box overlays
 ```
 
-The service exposes only a copy-out snapshot API (`face_detection_snapshot`,
-`face_detection_status`, `face_detection_request_capture`), so the UI never
-reaches into camera buffers and all LVGL calls stay on the LVGL thread.
+The service exposes a copy-out API only — `face_detection_start/stop/running`,
+`face_detection_snapshot`, `face_detection_status`, `face_detection_model_info`
+and `face_detection_request_capture` — so the UI never reaches into camera
+buffers and every LVGL call stays on the LVGL thread.
 
 ## Real detection is enabled
 
@@ -65,7 +67,7 @@ flash:
 /models/human_face_detect_mnp_s8_v1.espdl
 ```
 
-Copy them from `docs/sd_card_example/models/` (originals in
+Copy them from [`sd_card_example/models/`](sd_card_example/models/) (originals in
 `lib/human_face_detect/models/p4/`). The file names are hard-coded in
 `human_face_detect.cpp`, so keep them exact. The detection task loads the model
 on startup (after the SD is mounted); if the files are missing, the status line
@@ -78,14 +80,24 @@ shows the load error and no boxes appear.
 
 ## Status / caveats
 
-- **Build-verified only.** The camera pipeline, service, and screen compile and
-  link against the P4 Arduino libs (esp_driver_cam / isp / ppa / ldo are all
-  present), but none of it has run on hardware.
-- **Always-on once opened.** The detection task starts on first entry to the
-  camera screen and keeps running (streaming + inference). A visibility-driven
-  pause/resume is a sensible follow-up for battery use.
+Working on hardware, including detection.
+
+- **Pixel format is auto-discovered.** `run_detection()` tries RGB565-LE,
+  RGB565-BE, then a manual RGB565→RGB888 conversion. Dropping the 888 path in a
+  refactor once caused inference to return **0 faces** while everything else
+  looked healthy, which took a long time to find — keep all three.
+- **Debugging a detection regression.** Open the camera screen, stand in front of
+  it, and read the status line (`frame N  faces K [fmt]  infer Xms  luma L`):
+  - `faces ≥1 [888]`/`[LE]`/`[BE]` — working; that is the format in use.
+  - `faces 0 [none]` — not a format problem. Check whether the preview looks
+    right and what `luma` reads (healthy ≈ 60–160; ~0 or ~255 means the exposure
+    or pipeline is broken), which points at CSI/ISP/AE rather than detection.
+  - Image fine but still `[none]` — look at model input size and normalization.
+- **Always-on once opened.** The camera screen starts the detection task and does
+  not stop it on exit, so streaming and inference keep running. `face_detection_stop()`
+  exists and the kiosk does pause/resume around verification; the camera screen
+  could do the same to save battery.
 - **Snapshots** go to `/photos/IMG_nnnn.jpg` via `photo_store` (P4 hardware JPEG
-  encoder, ~300-500 KB at 1080p; uncompressed `.bmp` only if the JPEG engine is
-  unavailable). Wiring per-student capture at check-in (honoring
-  `config_photo_capture_enabled()`, saving `/students/photos/<id>.jpg`) is the
-  next step for the attendance-photo feature.
+  encoder, ~300–500 KB at 1080p; uncompressed `.bmp` only if the JPEG engine is
+  unavailable). These are the manual "Take picture" snapshots and are distinct
+  from check-in evidence photos — see [SD_CARD.md](SD_CARD.md).

@@ -74,6 +74,11 @@ const COUNTS = {
   MAX_CLASSES: constInt(rosterH, 'ROSTER_MAX_CLASSES'),
   MAX_CLASS_ROSTER: constInt(rosterH, 'ROSTER_MAX_CLASS_STUDENTS'),
   MAX_CLASS_TEACHERS: constInt(rosterH, 'ROSTER_MAX_CLASS_TEACHERS'),
+  // The per-class face-verify countdown the builder now authors (contract §3.3).
+  // roster.h owns these three; the device clamps to them on load.
+  FACE_VERIFY_SECONDS_MIN: constInt(rosterH, 'FACE_VERIFY_SECONDS_MIN'),
+  FACE_VERIFY_SECONDS_MAX: constInt(rosterH, 'FACE_VERIFY_SECONDS_MAX'),
+  FACE_VERIFY_SECONDS_DEFAULT: constInt(rosterH, 'FACE_VERIFY_SECONDS_DEFAULT'),
 };
 
 // A class can't reference more professors than the device can hold, so the two
@@ -100,9 +105,15 @@ for (const [key, cap] of Object.entries(COUNTS)) {
 }
 
 test('every firmware-derived LIMIT is covered by this drift guard', () => {
-  // ROSTER_TURMA has no firmware buffer (the device ignores the roster-entry
-  // turma tag), so it is intentionally tool-only and excluded here.
-  const covered = new Set([...Object.keys(LENGTHS), ...Object.keys(COUNTS), 'ROSTER_TURMA']);
+  // Tool-only limits, with no firmware constant to drift against:
+  //   ROSTER_TURMA        — the device ignores the roster-entry turma tag.
+  //   MIN_ATTENDANCE_MIN  — the device clamps below 1 with a bare literal.
+  //   MIN_ATTENDANCE_MAX  — [builder-stricter]; the device has no upper bound.
+  //   MIN_ATTENDANCE_DEFAULT — a literal default in roster_service.cpp.
+  // If any of these ever gets a named constant in a header, move it into COUNTS.
+  const toolOnly = ['ROSTER_TURMA', 'MIN_ATTENDANCE_MIN', 'MIN_ATTENDANCE_MAX',
+    'MIN_ATTENDANCE_DEFAULT'];
+  const covered = new Set([...Object.keys(LENGTHS), ...Object.keys(COUNTS), ...toolOnly]);
   const uncovered = Object.keys(LIMITS).filter((k) => !covered.has(k));
   assert.deepEqual(uncovered, [], `LIMITS has keys not checked against firmware: ${uncovered}`);
 });

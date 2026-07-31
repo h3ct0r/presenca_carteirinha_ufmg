@@ -25,8 +25,9 @@ static char s_present[MAX_PRESENT][ID_LEN];
 static int s_present_min[MAX_PRESENT];
 static int s_present_count = 0;
 
-// Timed mode: students who tapped in and haven't tapped out. RAM only — a
-// reboot voids in-progress measurements (no RTC; monotonic clock resets).
+// Timed mode: students who tapped on arrival and have not yet confirmed (the
+// "tapin" naming predates the rework — there is no tap-out). RAM only, so a
+// reboot voids in-progress arrivals (no RTC; the monotonic clock resets).
 static char s_tapin_id[MAX_PRESENT][ID_LEN];
 static long long s_tapin_us[MAX_PRESENT];
 static int s_tapin_count = 0;

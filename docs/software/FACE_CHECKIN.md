@@ -6,11 +6,10 @@ within a countdown window**, and the captured frame is saved on the SD card
 **grouped by student** so a reviewer can later flip through a student's check-in
 photos and confirm the same person tapped every time.
 
-Status: **Stages 1–4 implemented** (Stage 5 = docs, this file) and **verified on
-hardware** — storage/config are native-tested, and the camera lifecycle + verify
-modal have been manually exercised on device and work as expected. See the
-changelog at the end (its entries record what was verified at the time each
-change landed).
+Status: **shipped and verified on hardware.** The storage and settings logic is
+native-tested; the camera lifecycle and verify modal are device-only and were
+exercised by hand. The changelog records what was verified when each change
+landed.
 
 ## Goal (from the request)
 
@@ -26,7 +25,7 @@ change landed).
 ## Decisions
 
 - **Kiosk-only.** Face-verified capture runs **only in kiosk mode**. A tap on the
-  main class Session roll call registers attendance directly (no camera). Rationale:
+  class roll call registers attendance directly (no camera). Rationale:
   kiosk is the unattended self-check-in flow where identity verification matters;
   the roll call is professor-driven.
 - **Activation** is the per-class `class.json` `capture_photos` bool
@@ -62,92 +61,38 @@ A new tree, keyed by student id, distinct from the reference avatar
   device has no wall clock, so multiple taps the same day/class disambiguate with
   a 2-digit `<NN>` counter (next unused index in the folder).
 - `<CLASS_CODE>` records which class the tap belonged to.
-- ~100×100–VGA JPEG via the P4 hardware encoder (same path as `photo_store`),
-  small enough that a class's worth of check-ins stays modest on the card.
+- The saved frame is the 480×270 preview the detector ran on, JPEG-encoded by the
+  P4 hardware encoder (same path as `photo_store`) — small enough that a class's
+  worth of check-ins stays modest on the card.
 
 Preserved by the config importer (like `/photos/**`) — never overwritten by an
 import.
 
-## Camera lifecycle (the hardware-risky part)
+## Camera lifecycle
 
 The camera (`face_detection_service`: OV02C10 → CSI → ISP → PPA + detection task)
-is heavy and was previously crash-prone (see the `csi_pipeline` bring-up fixes).
-Two options:
+is heavy and was crash-prone during bring-up, so it is **warmed for the whole
+capture-enabled session** rather than started per tap: entering a kiosk for a
+capture-enabled class starts it, each tap then verifies without paying CSI
+bring-up latency, and leaving stops it. Starting per tap was considered and
+rejected for that latency.
 
-- **(A, chosen) Warm during a capture-enabled session.** Start the camera when
-  entering the session/kiosk view *if* capture is enabled; keep it running so
-  each tap verifies instantly; stop on exit. Needs a new `face_detection_stop()`.
-- (B) Start per tap. Simpler lifecycle but adds CSI bring-up latency (the risky
-  path) to every tap. Rejected.
+Running the camera through a whole class was the main unknown (power, heat,
+PSRAM, and the detection task sharing cores with LVGL); it has since been
+exercised on device. Bring-up failure fails *soft* — verification is disabled and
+the tap is allowed.
 
-**Risk:** running the camera through a whole class is the biggest unknown
-(power/heat/PSRAM, and the detection task sharing cores with LVGL). This must be
-validated on hardware; the code will fail *soft* (a bring-up failure disables
-verification and — decision needed — either blocks or allows the tap; see Open
-questions).
+## Other decisions
 
-## Verify UI
-
-A full-screen modal reusing `scr_camera`'s preview + box rendering:
-
-- Title "Show your face to the camera".
-- Live RGB565 preview (`face_detection_snapshot`) with the detected **bounding
-  box** drawn over it (green when a face is in frame).
-- A **countdown** (N…0) ring/number.
-- On detect: freeze the frame, "Verified ✓", save the photo, register the tap.
-- On timeout: "No face detected", reject the tap.
-- The student's reference avatar / name shown for context.
-
-## Staged plan
-
-Each stage ends green on `pio run -e esp32p4` and `pio test -e native`.
-
-1. **Global setting — face-verify timeout.** `config.json` `face_verify_seconds`
-   (default 15) + `config_face_verify_seconds()` getter + `config_set_face_verify_seconds()`
-   setter (atomic rewrite); an Admin device-settings numeric field. *Native
-   tests: default/parse/clamp/persist.*
-2. **Check-in photo storage (`checkin_store`).** Pure path/counter builder for
-   `/students/checkins/<id>/<date>_<code>_<NN>.jpg` (native-tested) + a save that
-   hardware-encodes an RGB565 frame to that path (device-only; generalizes
-   `photo_store`'s encoder to a target path).
-3. **Camera capture-to-path + lifecycle.** `face_detection_request_capture_to(path)`
-   and `face_detection_stop()`; session/kiosk start/stop the camera when capture
-   is enabled. *Device-only, hardware-risky.*
-4. **Verify modal + check-in integration.** A pure verify state machine
-   (`elapsed`, `face_seen` → prompt/detected/success/timeout — native-tested) +
-   the LVGL modal (preview/box/countdown), wired into `on_session_card` and the
-   kiosk `check_in` so a capture-enabled tap must verify before it registers,
-   saving the photo on success. *Modal is device-only.*
-5. **Docs + review aid.** Finalize this doc; describe reviewing
-   `/students/checkins/<id>/` (an on-device or desktop viewer is out of scope).
-
-## Native-testable vs device-only
-
-- **Native-testable:** the `face_verify_seconds` config, the check-in path +
-  counter logic, and the verify state machine (elapsed/face → outcome).
-- **Device-only:** the JPEG encode, the camera lifecycle, and the verify modal /
-  preview rendering. These can't be covered by the native suite, so they are
-  checked by hand on hardware before the feature is called done. An agent should
-  still report its own work as build-verified and flag these for the on-device
-  pass.
-
-## Resolved decisions (2026-07-28)
-
-- **Camera bring-up failure:** raise a **prominent alert** to the professor
-  (banner on the session/kiosk view) with an inline **"Disable photo capture"**
-  action, so they can check the device and turn capture off. While capture is on
-  but the camera is down, a tap cannot be verified — it is held/rejected with a
-  message pointing at the alert, until the professor disables capture (after
-  which taps register normally).
-- **Camera lifecycle:** warm during a capture-enabled session — start on entering
-  the session/kiosk view when capture is enabled, keep it running for instant
-  verification, and stop on exit (adds `face_detection_stop()`). Hardware risk to
-  validate on device.
 - **Manual override:** the professor's manual name-tap (force present) **bypasses
   face-verify** and saves no photo — it is an explicit staff action, consistent
   with how it already bypasses timed mode.
 - **Retries:** on timeout the student simply taps again (no in-modal retry
   button).
+- **Camera bring-up failure** was specified to raise a banner on the session view
+  with an inline "Disable photo capture" action. **That banner was never built** —
+  today a bring-up failure just disables verification silently and taps register
+  normally.
 
 ## Changelog
 
@@ -164,7 +109,7 @@ Each stage ends green on `pio run -e esp32p4` and `pio test -e native`.
   sheet is a child of the overlay with `LV_OBJ_FLAG_IGNORE_LAYOUT` — the overlay
   is a flex column, so without it the sheet would be laid out as another child;
   its animation is explicitly deleted in `take_down()` so it can never tick on a
-  freed object. Build-verified + native 127/127, and **verified on hardware
+  freed object. Build- and native-test-verified, and **verified on hardware
   (2026-07-29).**
 - **2026-07-28** — **Verify overlay UI polish.** Reworked the `face_verify`
   overlay layout for a more professional kiosk look on the 480×800 portrait
@@ -176,7 +121,7 @@ Each stage ends green on `pio run -e esp32p4` and `pio test -e native`.
   pill** that turns green with a ✓ on detect; and a **student avatar + name**
   context row (reuses `student_photo`, placeholder when no reference photo). Face
   boxes still render 1:1 in preview pixels; tick/detect/timeout logic unchanged.
-  Build-verified (`pio run -e esp32p4`) + native 118/118; **not run on hardware.**
+  Build- and native-test-verified; **not run on hardware.**
 - **2026-07-28** — **Stages 1–4 implemented.** Config `face_verify_seconds`
   (default 15, clamp 3–60) + Admin preset dropdown (Stage 1). `checkin_store`
   path/counter `/students/checkins/<id>/<date>_<code>_<NN>.jpg` and

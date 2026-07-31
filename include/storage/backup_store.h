@@ -2,7 +2,7 @@
 
 // A one-slot snapshot of the device's *authored* config surface, taken right
 // before a config-import overwrites it so the operator can revert. See
-// docs/software/CONFIG_IMPORT_PLAN.md (design piece 2).
+// docs/software/CONFIG_IMPORT.md §5 and docs/software/SD_CARD.md.
 //
 // It copies ONLY the three authored file kinds — /config.json,
 // /students/students.json, and every /classes/<CODE>/class.json — into

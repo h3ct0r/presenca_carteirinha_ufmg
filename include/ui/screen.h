@@ -9,12 +9,12 @@ typedef enum : uint8_t {
     SCREEN_IDLE,
     // Staff area (light look, ported from the legacy project).
     SCREEN_CLASSES,      // class list
-    SCREEN_CLASS,        // one class: roll call / history / enroll tabs
+    SCREEN_CLASS,        // one class: hub -> session / history / enroll
     SCREEN_CLASS_STATS,  // one class: statistics + per-class settings
     SCREEN_ADMIN,        // admin panel: profile, SD usage, password, debug
     SCREEN_KIOSK,         // unattended student self check-in
     SCREEN_EXPORT,        // per-class CSV attendance export
-    SCREEN_WIFI_EDITOR,   // debug WiFi soft-AP + (future) file editor
+    SCREEN_WIFI_EDITOR,   // debug WiFi soft-AP + web file manager
     SCREEN_CAMERA,        // camera preview + face detection
     SCREEN_ABOUT,         // project info, credits, version, repo QR
     SCREEN_COUNT,

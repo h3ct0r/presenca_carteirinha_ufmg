@@ -4,13 +4,16 @@ Offline, browser-only tool to author the RFID attendance device's configuration
 (teachers, students, classes) and export it as a `config.tar` the device can
 import. Runs on a laptop — **not** on the ESP32.
 
+- **Sample inputs to try it with:** [`docs/software/build_tool_example/`](../../docs/software/build_tool_example/)
 - **Rules & conventions:** [`CLAUDE.md`](CLAUDE.md)
 - **Build plan / handoff:** [`SPEC.md`](SPEC.md)
 - **Output format (the contract):** [`../../docs/software/CONFIG_IMPORT.md`](../../docs/software/CONFIG_IMPORT.md)
 - **Deploying it (dev server + nginx):** [`DEPLOY.md`](DEPLOY.md)
 
-Status: **M1 + M2 done** (tar/uid/model core, full validation, and a working
-authoring page); M3/M4 polish ongoing. See `SPEC.md` §9 for milestones.
+Status: **complete and in use** — tar/uid/model core, full validation, the
+authoring page, Diário CSV import, Moodle photo ingestion, per-class check-in
+settings, and localStorage autosave. See [`SPEC.md`](SPEC.md) §9 for the
+milestone record and what is deliberately left out.
 
 ## Quick use
 1. Open `index.html` in a browser (no install, no internet). It starts **empty**
@@ -32,7 +35,15 @@ authoring page); M3/M4 polish ongoing. See `SPEC.md` §9 for milestones.
    matches each photo to a student by name, re-keys it to matrícula, re-encodes
    it to a baseline 100×100 JPEG, and bundles it into `config.tar`. Confirm any
    "needs review"/unmatched photos in the picker. Photos are **not** saved in the
-   model JSON — re-import the tar each session (see `STUDENT_PHOTOS.md`).
+   model JSON — re-import the tar each session (see
+   [`STUDENT_PHOTOS.md`](../../docs/software/STUDENT_PHOTOS.md)).
+3b. Each class carries a **Check-in mode** — *single tap*, *double tap*
+   (students tap on arrival and again once the threshold has passed, default
+   **45 min**), or *photo check-in* (the kiosk verifies a face and saves a photo,
+   default **15 s** to capture). These are written into every `class.json`, so
+   **importing a tar overwrites whatever was set in the device's ⚙ class
+   settings**. The device can combine double-tap with photo check-in; this
+   picker cannot — set that combination on the device.
 4. Click **Download config.tar** (enabled only when there are no errors).
 5. Connect to the device's WiFi AP and upload the tar via the device's web file
    manager (see the contract for the import flow).
@@ -64,14 +75,17 @@ class card has a checkbox list of the defined teachers, and a class may be
 defined teacher is auto-assigned. `turma` lives on each `class.json` roster
 entry (`{ "id", "turma" }`) — not on the student registry — so one class can span
 turmas and a student can carry a different turma per class. See
-`docs/software/CONFIG_IMPORT.md` §3.3. Roster turmas are editable inline per member.
+[`CONFIG_IMPORT.md`](../../docs/software/CONFIG_IMPORT.md) §3.3. Roster turmas are
+editable inline per member.
 
 ## Develop
 - **Run / host:** it's a static single-page app (no build, no backend). Serve it
   with `python3 -m http.server` for development or nginx for production — see
   [`DEPLOY.md`](DEPLOY.md).
-- **Test:** `node --test` (zero deps) — 115 cases across `uid`, `tarball`,
-  `untar`, `validate`, `diario`, `photomatch`, `persist`. Run after every change (project rule).
+- **Test:** `node --test` (zero deps) — 135 cases across `uid`, `tarball`,
+  `untar`, `validate`, `model.color`, `diario`, `photomatch`, `persist`,
+  `checkin`, and the `schema-sync` drift guard. Run after every change (project
+  rule).
 - **Layout:** pure, DOM-free modules in `src/` (`uid.js`, `tarball.js`,
   `untar.js`, `model.js`, `validate.js`, `diario.js`, `photomatch.js`,
   `persist.js`) are

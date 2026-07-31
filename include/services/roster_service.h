@@ -16,9 +16,12 @@
 //       { "version": 1, "code": "CS101-M1", "name": "...",
 //         "schedule": "...", "teacher_emails": ["a@x.edu", "b@x.edu"],
 //         "color": "272766",
-//         "roster": [ { "id": "2023-0142" }, ... ] }
-//       (a legacy scalar "teacher_email" is still read when the array is absent)
-//   /classes/<code>/attendance/YYYY-MM-DD.jsonl  per-session logs (later)
+//         "roster": [ { "id": "2023-0142", "turma": "M1" }, ... ] }
+//       (turma is optional; a legacy scalar "teacher_email" is still read when
+//        the array is absent. Optional per-class check-in settings are also
+//        accepted — see docs/software/CONFIG_IMPORT.md 3.3)
+//   /classes/<code>/attendance/YYYY-MM-DD.jsonl  per-session logs, written by
+//       storage/attendance_store
 //
 // Validation is strict and the failure reason is kept as a human-readable
 // message (roster_get_error) naming the file and problem, so the idle screen

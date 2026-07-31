@@ -1,5 +1,6 @@
 #pragma once
 
+#include <lvgl.h>
 #include <stddef.h>
 
 // Fills `out` with the LVGL image-source path for a student's avatar
@@ -15,3 +16,17 @@ bool student_photo_src(const char* student_id, char* out, size_t cap);
 // student_photo_src() when only a count is needed (no path string built for the
 // caller). Does SD I/O — avoid calling it in a tight per-scan loop; count once.
 bool student_photo_exists(const char* student_id);
+
+// The box every full-size avatar is fitted into (check-in overlay, kiosk
+// result). The face-verify modal passes its own, smaller box.
+constexpr int AVATAR_MAX_PX = 250;
+
+// Creates an lv_image showing the student's avatar, scaled to fit
+// `max_px` x `max_px` with the aspect ratio preserved. Authored avatars are
+// smaller than that, so this normally ENLARGES them; anything bigger is shrunk
+// to fit. The widget is sized to the drawn pixels, so flex layouts and
+// clip_corner see the real footprint.
+//
+// Returns NULL when the student has no usable photo (missing, unreadable, or
+// an unparseable JPEG header) — the caller draws its own placeholder.
+lv_obj_t* student_photo_image(lv_obj_t* parent, const char* student_id, int max_px);

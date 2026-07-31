@@ -4,11 +4,8 @@
 
 #include "app/battery_curve.h"
 #include "app/event_bus.h"
-#include "esp32-hal-log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-
-static const char* TAG = "battery";
 
 // GPIO53 = ADC2_CHANNEL4 on the ESP32-P4 (datasheet Table 2-7). ADC2 is
 // freely usable here: the P4 has no native radio, so the classic ADC2-vs-WiFi
@@ -40,8 +37,6 @@ static void battery_task(void*) {
         ev.power.mv = (uint16_t)vbat_mv;
         event_bus_post(&ev);
 
-        // ESP_LOGI(TAG, "node=%umV vbat=%umV pct=%u", (unsigned)node_mv, (unsigned)vbat_mv,
-        //          ev.power.pct);
         vTaskDelay(pdMS_TO_TICKS(SAMPLE_PERIOD_MS));
     }
 }

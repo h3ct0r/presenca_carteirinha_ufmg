@@ -1,4 +1,8 @@
-# Exporting Moodle Student Photos to a Tar Archive
+# Exporting Moodle student photos to a tar archive
+
+Step 1 of the avatar pipeline. The `.tar` this produces is fed to the
+config-builder, which matches each photo to a student and bundles it into
+`config.tar` — see [STUDENT_PHOTOS.md](STUDENT_PHOTOS.md).
 
 By default, Moodle's native export tools only extract text data (like names and emails) and do not support downloading student profile pictures. 
 

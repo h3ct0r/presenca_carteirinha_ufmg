@@ -1,26 +1,31 @@
-# SD card layout
+# Sample SD card
 
-Copy this folder's contents to the root of a FAT32 SD card. The device
-validates the layout at boot and shows the exact problem on screen if a file
-is missing or malformed.
+A minimal working card. Copy this folder's contents to the root of a FAT32 SD
+card. The device validates the layout at boot and shows the exact problem on
+screen if a file is missing or malformed.
 
 ```
 /config.json                    teachers allowed to unlock, each with their own password
 /students/
     students.json               global student registry (one entry per student)
-    photos/                     avatars, named <university id>.jpg (~240x240)
+    photos/                     avatars, named <university id>.jpg (optional)
 /classes/
     <CLASS-CODE>/
         class.json              class metadata + roster (university ids)
-        attendance/             per-session logs, created by the device
-            YYYY-MM-DD.jsonl    append-only, one line per presence change:
-                                {"id":"2023-0142","present":true}
 /models/                        ESP-DL face-detection models (only needed if the
     human_face_detect_msr_s8_v1.espdl   camera / face detection feature is used)
     human_face_detect_mnp_s8_v1.espdl
 ```
 
-Attendance is written by the device (Session tab): pick a date, open the
+These are the files you author. The device creates everything else itself —
+attendance logs, check-in photos, CSV exports, backups — and an import never
+touches them. The complete card layout is in [SD_CARD.md](../SD_CARD.md).
+
+Rather than editing this tree by hand, most users author a `config.tar` with
+[`tools/config-builder/`](../../../tools/config-builder/) and import it; see
+[CONFIG_IMPORT.md](../CONFIG_IMPORT.md).
+
+Attendance is written by the device: open a class, pick a date, open the
 session, then tap cards or names to mark students present. Each change is one
 appended JSONL line — the current state is the fold of the file (last line
 per student wins), which is safe against the device being switched off
@@ -48,4 +53,8 @@ Notes:
   the config-builder's *Diário de Classe* CSV import. It lives on the roster
   entry (not the global student registry), so one class can hold students from
   different turmas and a student can carry a different turma per class (Maria is
-  `M1` in CS101 and `F1` in MA110). See `docs/software/CONFIG_IMPORT.md` §3.3.
+  `M1` in CS101 and `F1` in MA110). See [CONFIG_IMPORT.md](../CONFIG_IMPORT.md) §3.3.
+- `class.json` also accepts optional per-class check-in settings
+  (`capture_photos`, `face_verify_seconds`, `timed_attendance`,
+  `min_attendance_min`). They are omitted here, so this sample uses the defaults:
+  single-tap check-in, no photo verification.

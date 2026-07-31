@@ -42,7 +42,33 @@ export const LIMITS = {
   CLASS_SCHEDULE: 39,
   CLASS_TEACHER_EMAIL: 63,
   ROSTER_TURMA: 15,
+  // Per-class attendance settings (contract §3.3). The face-verify bounds come
+  // from include/app/roster.h; the minutes bounds are the contract's.
+  FACE_VERIFY_SECONDS_MIN: 3,
+  FACE_VERIFY_SECONDS_MAX: 60,
+  FACE_VERIFY_SECONDS_DEFAULT: 15,
+  MIN_ATTENDANCE_MIN: 1,
+  MIN_ATTENDANCE_MAX: 600,  // [builder-stricter] the device has no upper bound
+  MIN_ATTENDANCE_DEFAULT: 45,
 };
+
+// The check-in mode the UI offers, as the pair of device booleans it means.
+// The device treats the two independently (a class may be timed AND photo), but
+// the builder authors one mode per class — see CONFIG_IMPORT.md §3.3.
+export const CHECKIN_MODES = {
+  single: { timed_attendance: false, capture_photos: false },
+  double: { timed_attendance: true, capture_photos: false },
+  photo: { timed_attendance: false, capture_photos: true },
+};
+
+// Which mode a class's booleans represent. A class carrying both flags (set on
+// the device, then loaded here) reports 'photo' — reflect that in the UI rather
+// than pretending it is plain single-tap.
+export function checkinMode(cls) {
+  if (cls?.capture_photos) return 'photo';
+  if (cls?.timed_attendance) return 'double';
+  return 'single';
+}
 
 const HEX6 = /^[0-9a-fA-F]{6}$/;
 const DIGITS = /^[0-9]+$/;
@@ -181,6 +207,20 @@ function validateStudents(students, teachers, add) {
   });
 }
 
+// Checks one optional integer class setting. `undefined`/`null`/'' means "not
+// authored" — the device applies its default, so that is not an error. Anything
+// else must be a whole number inside [min, max].
+function checkInt(value, field, label, min, max, i, who, add) {
+  if (value === undefined || value === null || value === '') return;
+  const n = Number(value);
+  if (!Number.isInteger(n)) {
+    add('class', i, field, `${who}: ${label} must be a whole number`);
+    return;
+  }
+  if (n < min || n > max)
+    add('class', i, field, `${who}: ${label} must be between ${min} and ${max} (got ${n})`);
+}
+
 function validateClasses(classes, students, teachers, add) {
   if (classes.length > LIMITS.MAX_CLASSES)
     add('config', -1, 'classes', `more than ${LIMITS.MAX_CLASSES} classes`);
@@ -243,6 +283,13 @@ function validateClasses(classes, students, teachers, add) {
 
     if (color && !HEX6.test(color))
       add('class', i, 'color', `${who}: color must be 6 hex digits (no leading '#')`);
+
+    // Per-class attendance settings (contract §3.3). Absent is fine — the
+    // device falls back to its defaults — but a present value must be usable.
+    checkInt(c.face_verify_seconds, 'face_verify_seconds', 'photo countdown',
+      LIMITS.FACE_VERIFY_SECONDS_MIN, LIMITS.FACE_VERIFY_SECONDS_MAX, i, who, add);
+    checkInt(c.min_attendance_min, 'min_attendance_min', 'double-tap threshold',
+      LIMITS.MIN_ATTENDANCE_MIN, LIMITS.MIN_ATTENDANCE_MAX, i, who, add);
 
     const roster = Array.isArray(c.roster) ? c.roster : [];
     if (roster.length > LIMITS.MAX_CLASS_ROSTER)

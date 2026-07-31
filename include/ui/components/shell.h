@@ -4,10 +4,10 @@
 
 #include "ui/screen.h"  // screen_id_t
 
-// The staff screens' common chrome (the legacy create_shell(), rebuilt with
-// flex instead of absolute pixel positions): gradient header with title and
-// subtitle, scrollable body, optional Classes/Account footer nav. The whole
-// column is padded below the global status bar overlay.
+// The staff screens' common chrome: gradient header with title and subtitle,
+// scrollable body, and an optional footer nav (Classes / Export / WiFi File
+// Editor / Admin). The whole column is padded below the global status bar
+// overlay.
 typedef struct {
     lv_obj_t* root;      // pass to the screen manager
     lv_obj_t* header;    // the top bar row (for shell_set_back)

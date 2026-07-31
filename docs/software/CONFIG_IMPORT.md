@@ -5,8 +5,8 @@ is referenced by **both** halves of the feature, which are developed separately:
 
 1. **`tools/config-builder/`** — an off-device, browser-only tool that a user
    runs on a laptop to author a config tree and **produce a `.tar`**.
-2. **The device import endpoint** (firmware, `src/services/…`, not yet built) —
-   receives the `.tar`, stages it, validates it, and applies it to the SD card.
+2. **The device importer** (`src/services/import_service.cpp`) — receives the
+   `.tar`, stages it, validates it, and applies it to the SD card. See §5.
 
 Neither side may drift from this file. **This document is the sync point.** If a
 schema or rule changes, change it here first, then update both sides.
@@ -37,8 +37,10 @@ That is the **entire** allowed set. See §4 for why nothing else is permitted.
 Student avatars (`students/photos/<id>.jpg`) are optional and additive — a tar
 without them is still valid; see [`STUDENT_PHOTOS.md`](STUDENT_PHOTOS.md).
 
-Reference sample tree: [`docs/sd_card_example/`](sd_card_example/). Authoring a
-tar is literally "edit that tree, then archive these three kinds of file."
+Reference sample tree: [`sd_card_example/`](sd_card_example/). Authoring a tar is
+literally "edit that tree, then archive these four kinds of file." The full card
+layout, including everything the device writes itself, is in
+[SD_CARD.md](SD_CARD.md).
 
 ## 2. Merge, don't replace — the safety-critical rule
 
@@ -58,8 +60,7 @@ The device **produces** data that was never authored on a laptop and must
 | `/backup/**` | device (pre-wipe snapshot) | **preserve** |
 | `/models/**` | provisioning (large) | **preserve** |
 
-An import is an **overlay of the three authored files**, not a filesystem
-replace. Replacing the tree would erase attendance — the whole point of the
+An import is an **overlay of the authored files**, not a filesystem replace. Replacing the tree would erase attendance — the whole point of the
 device. The device importer enforces this via the path whitelist in §4; the
 config-builder must **never emit** a tar entry outside the authored set.
 
@@ -111,7 +112,7 @@ Rules (mirror `roster_service.cpp`):
   **unique** across the file (`duplicate id`). May contain dashes.
 - `name` — ≤ 47 chars, non-empty. May contain Portuguese accented characters
   (stored UTF-8). *Device note: the LVGL fonts must include the glyphs to render
-  them — see `docs/software/CUSTOM_FONT_GENERATION.md`.*
+  them — see [CUSTOM_FONT_GENERATION.md](CUSTOM_FONT_GENERATION.md).*
 - `rfid_uid` — `null` (unbound; the common authored state — cards are bound on
   the device at first tap) or a string ≤ 23 chars. If a string, its **normalized**
   form must be unique across students **and** must not equal any teacher's
@@ -150,11 +151,25 @@ Rules (mirror `roster_service.cpp`):
 }
 ```
 The four attendance fields (`capture_photos`, `face_verify_seconds`,
-`timed_attendance`, `min_attendance_min`) are **optional, per-class, and edited
-on the device** (in the class ⚙ settings). Photo check-in is a class-only
-option — there is **no** device-wide capture flag. The config-builder does not
-emit them, so an imported class.json omitting them resets the device to the
-defaults above (like any authored field the importer overwrites).
+`timed_attendance`, `min_attendance_min`) are **optional, per-class**, editable
+on the device (in the class ⚙ settings) **and authorable in the
+config-builder** (since 2026-07-30 — before that the builder omitted them and an
+import reset every class to the defaults above). Photo check-in is a class-only
+option — there is **no** device-wide capture flag. As with any authored field,
+an imported `class.json` **overwrites** whatever the device had, so a tar built
+without touching these settings still resets them to the builder's values.
+- `face_verify_seconds`: integer **3..60**, default 15
+  (`FACE_VERIFY_SECONDS_MIN/MAX/DEFAULT` in `include/app/roster.h`). The device
+  clamps out-of-range values; the builder rejects them.
+- `min_attendance_min`: integer **≥ 1**, default 45. The device clamps below 1
+  and has no upper bound; the builder additionally rejects anything over **600**
+  (10 h) as a typo — a class that long is not a real threshold
+  [builder-stricter].
+- `timed_attendance` and `capture_photos` are independent booleans on the
+  device: a class may be double-tap *and* photo check-in. The config-builder's
+  UI models them as a **single three-way choice** (single tap / double tap /
+  photo check-in) and therefore never emits both as true; set that combination
+  in the device's ⚙ settings if you need it.
 Rules (mirror `roster_service.cpp`):
 - **≤ 12 classes** total (`ROSTER_MAX_CLASSES`).
 - `teacher_emails` is an **array of 1..8** professor emails
@@ -178,8 +193,9 @@ Rules (mirror `roster_service.cpp`):
   **optional per-student class-group** tag (≤ 15 chars, e.g. `"TE1"`; the Diário
   header's `TURMA`). Because it lives on the roster entry, one class may hold
   students from **different turmas**, and the same student can carry a different
-  turma in another class. The device reads only `id` from a roster entry and
-  **preserves** any `turma` untouched on rewrite (it is not yet used at runtime).
+  turma in another class. The device loads it into `class_rec_t.roster_turma`,
+  shows it on the check-in overlay and in the session summary breakdown, and
+  **preserves** it untouched when it rewrites a `class.json`.
 - **A student appears at most once per class** — one turma per student per class.
   The same `id` listed twice in a roster (even with different `turma` values) is
   rejected (`student … listed twice`); the device enforces this at load and the
@@ -189,9 +205,9 @@ Rules (mirror `roster_service.cpp`):
 
 ## 4. Tar format + path security
 
-- **Format:** POSIX `ustar`, 512-byte blocks, **uncompressed**. (Config is small
-  JSON; gzip buys nothing and would force a decompressor onto the device. Revisit
-  only if photos are ever bundled — currently they are not.)
+- **Format:** POSIX `ustar`, 512-byte blocks, **uncompressed**. Gzip was
+  considered and rejected: it would force a decompressor onto the device, and the
+  bulk of a tar with avatars is already-compressed JPEG that would barely shrink.
 - **Entry names:** relative, forward slashes, **no leading `/`**, **no `..`**, no
   drive/absolute prefixes. Directory entries are optional (the device may `mkdir`
   on demand); if emitted, they end in `/`.
@@ -218,7 +234,7 @@ Implemented in [`src/services/import_service.cpp`](../../src/services/import_ser
 (`import_service_run`). Guarantees, in order:
 
 1. **Read** the staged tar (`/config.tar`) into a size-capped heap buffer
-   (≤ 16 MB, from PSRAM — never the 128 KB LVGL heap).
+   (≤ 16 MB, from PSRAM — never the LVGL heap).
 2. **Structural + §4 check:** parse the ustar and enforce the name whitelist on
    every entry ([`src/app/ustar.cpp`](../../src/app/ustar.cpp)). A disallowed
    path (`..`, absolute, non-whitelisted) aborts here — before anything is
@@ -276,6 +292,17 @@ Either way the write path is **auth-gated + AP-only** (the AP already has a
 per-boot WPA2 password). An unauthenticated "replace my config" endpoint is
 worse than the current file editor — do not ship one.
 
+### New-device runbook
+
+1. On a laptop, format the SD card FAT32.
+2. Copy `/models/*.espdl` onto the card — only if the camera or photo check-in
+   is used ([FACE_DETECTION.md](FACE_DETECTION.md)).
+3. Drop the `config.tar` produced by the config-builder at the card root.
+4. Insert the card and boot. The idle screen detects the tar and offers
+   **"Import config from SD"** — no login needed, since there is no config yet.
+5. Tap it and confirm. The device backs up any prior config, validates, applies,
+   and reloads.
+
 ## 7. Versioning
 
 - `students.json` and `class.json` carry `"version": 1`. If a schema changes
@@ -284,6 +311,17 @@ worse than the current file editor — do not ship one.
 - The tar itself is unversioned; the file schemas version themselves.
 
 ### Changelog
+- **2026-07-30** — **the config-builder now authors the per-class attendance
+  settings** (§3.3). It emits all four fields on every class: check-in mode as a
+  three-way choice (single tap / double tap / photo check-in) mapping to
+  `timed_attendance` + `capture_photos`, plus `min_attendance_min` (default 45)
+  and `face_verify_seconds` (default 15). Ranges are validated on the laptop
+  (3..60 seconds from `roster.h`; 1..600 minutes, the upper bound
+  builder-stricter). **Behaviour change:** these fields used to be omitted, so
+  an import left them at the device defaults; now a tar states them, and
+  importing overwrites whatever was set in the class ⚙ settings. The builder
+  cannot express double-tap *and* photo check-in together — that combination
+  stays device-only.
 - **2026-07-29** — **a broken class folder no longer blanks the whole class
   list.** Because an import is an **overlay** (§2), importing a config whose
   classes have different codes leaves the previous `/classes/<OLD>/` folders on

@@ -26,8 +26,9 @@ the contract. No device connection, no backend, no internet.
   checks (roster ids exist in students.json; unique/normalized UIDs; unique
   digits-only passwords) are mandatory, not just per-field checks.
 - **Never emit a path outside the authored whitelist** (`config.json`,
-  `students/students.json`, `classes/<CODE>/class.json`). No `attendance/`, no
-  `..`, no leading `/`. The device rejects them; don't produce them.
+  `students/students.json`, `classes/<CODE>/class.json`,
+  `students/photos/<id>.jpg`). No `attendance/`, no `..`, no leading `/`. The
+  device rejects them; don't produce them.
 - **UID normalization must match the firmware** (`../../src/app/uid.cpp`:
   uppercase hex, separators stripped) or the builder's uniqueness check disagrees
   with the device.

@@ -6,7 +6,9 @@ This guide explains how to generate a custom LVGL font that merges standard Engl
 
 To avoid silent conversion errors, you must use clean, desktop-grade font files. 
 * **Text Font:** Download a standard `.ttf` like Montserrat from Google Fonts.
-* **Symbol Font:** Download the **Desktop Free** version of FontAwesome (version 5 or 6). 
+* **Symbol Font:** the **Desktop Free** FontAwesome TTF. This repo vendors
+  `docs/software/Font Awesome 7 Free-Solid-900.ttf`, which is what the shipped
+  fonts and the `lv_font_conv` command in the callout below were built from. 
   * *Important:* Extract the `.otf` or `.ttf` file. Do **not** use `.woff` or web-optimized files.
   * *Important:* Rename the symbol font file to something simple without spaces (e.g., `fa-solid.otf`).
 

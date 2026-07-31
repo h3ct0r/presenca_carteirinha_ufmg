@@ -20,11 +20,10 @@
 #include "ui/theme/theme.h"
 #include "ui/ui.h"
 
-// FontAwesome glyphs merged into the custom Montserrat font (see
-// src/ui/assets/): lock, unlock, and users-viewfinder (kiosk). Used as UTF-8.
+// FontAwesome glyph merged into the custom Montserrat font (see
+// src/ui/assets/), used as UTF-8.
 LV_FONT_DECLARE(font_montserrat_custom_20);
-#define GLYPH_KIOSK "\xEE\x96\x95"    // U+E595 fa-users-viewfinder
-#define GLYPH_ID_CARD "\xEF\x8B\x82"  // U+F2C2 fa-users-id-card
+#define GLYPH_KIOSK "\xEE\x96\x95"  // U+E595 fa-users-viewfinder
 
 // The class screen is a small view stack: a hub (Session / History), the open
 // session (roll call + Kiosk / Enroll), history, and the enroll sub-flow.
@@ -37,6 +36,11 @@ typedef enum { ENROLL_SEARCH,
                ENROLL_WAIT } enroll_state_t;
 
 static constexpr int MAX_DATES = 24;  // recent/history dates listed
+
+// Height cap on the "Recent sessions" box in the open-a-session view. A date
+// row is a card (~42 px) plus an 8 px gap, so this shows about five at a time —
+// the number the list used to be truncated to — and scrolls the rest.
+static constexpr int RECENT_LIST_MAX_H = 240;
 
 static shell_t s_sh;
 static lv_obj_t* s_content = nullptr;  // rebuilt on view switch
@@ -54,7 +58,7 @@ static lv_calendar_date_t s_highlight;  // must outlive the calendar
 
 // Enroll sub-flow state.
 // Cap on rows DRAWN in the enroll search (matches are still counted in full and
-// reported). Each row costs 3 LVGL objects from the fixed 128 KB pool, so this
+// reported). Each row costs 3 LVGL objects from the fixed LVGL pool, so this
 // bounds the worst case regardless of class size; the header tells the user to
 // narrow the search when it bites.
 static constexpr int ENROLL_MAX_ROWS = 25;
@@ -70,6 +74,16 @@ static bool s_sel_is_new = false;  // selecting a manually-entered new student
 static char s_new_id[20];
 static char s_new_name[48];
 static char s_new_turma[16];  // optional class-group tag (class.json only)
+
+// Roll-call search (open-session view), shaped like the enroll one: every match
+// is counted, but at most ROLL_MAX_ROWS chips are built. A chip costs 5 objects
+// from the fixed LVGL pool, and the whole list used to be rebuilt on
+// every card tap and every name tap — which is what made a big class crawl.
+static constexpr int ROLL_MAX_ROWS = 25;
+static lv_obj_t* s_roll_search_ta = nullptr;
+static lv_obj_t* s_roll_list = nullptr;   // holds only the chips; rebuilt alone
+static lv_obj_t* s_roll_count = nullptr;  // "N/M present" in the summary header
+static lv_obj_t* s_roll_bar = nullptr;    // present-progress bar
 
 // Transient "presence registered" feedback overlay (photo + name + status),
 // shown on each session card tap and auto-dismissed.
@@ -89,6 +103,8 @@ static void update_results(void);
 static void on_enroll_card(const char* uid_hex);
 static void build_session(void);
 static void build_session_open(void);
+static void update_roll_call(void);
+static bool istr_has(const char* hay, const char* needle);
 static void on_session_card(const char* uid_hex);
 static void build_hub(void);
 static void go_view(view_id_t v);
@@ -112,9 +128,8 @@ static void back_cb(lv_event_t*) {
     }
 }
 
-// --- Session tab: date picker + roll call -----------------------------------
+// --- Session view: date picker + roll call ----------------------------------
 
-// registry index of the roster student whose card matches, or -1.
 // Counts roster students whose avatar file exists on the card. One SD lookup
 // per student, so it is called once on class entry, not on every rebuild.
 static int count_students_with_photos(void) {
@@ -191,12 +206,6 @@ static int roster_student_by_uid(const char* uid_hex) {
     return -1;
 }
 
-static void rebuild_session_open(void) {
-    lv_obj_clean(s_content);
-    build_session_open();
-}
-
-// A card tap during an open session marks that student present.
 // Tears down the transient presence-feedback overlay and frees the photo it
 // decoded. Safe to call when nothing is showing.
 static void close_presence_feedback(void) {
@@ -249,12 +258,9 @@ static void show_presence_feedback(const student_t* st, const char* turma, uint3
     lv_obj_set_style_border_color(card, lv_color_hex(color), 0);
     lv_obj_set_style_border_width(card, 3, 0);
 
-    // Photo when one exists on the card; a neutral placeholder avatar otherwise.
-    char photo_src[80];
-    if (st && student_photo_src(st->id, photo_src, sizeof(photo_src))) {
-        lv_obj_t* img = lv_image_create(card);
-        lv_image_set_src(img, photo_src);  // LVGL + TJPGD decode from the 'S' drive
-    } else {
+    // Photo when one exists on the card, fitted to AVATAR_MAX_PX with its
+    // aspect ratio kept; a neutral placeholder avatar otherwise.
+    if (!st || !student_photo_image(card, st->id, AVATAR_MAX_PX)) {
         const int SZ = 120;
         lv_obj_t* ph = lv_obj_create(card);
         lv_obj_remove_flag(ph, LV_OBJ_FLAG_SCROLLABLE);
@@ -341,10 +347,11 @@ static void on_session_card(const char* uid_hex) {
         show_presence_feedback(nullptr, nullptr, THEME_DANGER, LV_SYMBOL_CLOSE,
                                "Card not recognized");
     } else {
-        // Face-verified capture is kiosk-only; a session-tab tap registers directly.
+        // Face-verified capture is kiosk-only; a roll-call tap registers directly.
         register_recognized(idx);
     }
-    rebuild_session_open();  // refresh + re-arm the card capture
+    update_roll_call();                      // only the chips changed
+    ui_set_card_capture(on_session_card);    // the capture is one-shot; re-arm it
 }
 
 static void roll_toggle_cb(lv_event_t* e) {
@@ -352,8 +359,10 @@ static void roll_toggle_cb(lv_event_t* e) {
     const student_t* st = roster_student_at(idx);
     if (!st) return;
     attendance_set(st->id, !attendance_is_present(st->id));
-    rebuild_session_open();
+    update_roll_call();
 }
+
+static void roll_search_changed_cb(lv_event_t*) { update_roll_call(); }
 
 static void close_session_cb(lv_event_t*) {
     attendance_close();
@@ -385,9 +394,12 @@ static void build_session_open(void) {
     ui_make_label(head, attendance_date(), THEME_PRIMARY, &lv_font_montserrat_20);
     char count_txt[32];
     snprintf(count_txt, sizeof(count_txt), "%d/%d present", present, total);
-    ui_make_label(head, count_txt, THEME_SUCCESS, &lv_font_montserrat_14);
+    // Kept: update_roll_call() retargets these two on every tap instead of
+    // rebuilding the card they sit in.
+    s_roll_count = ui_make_label(head, count_txt, THEME_SUCCESS, &lv_font_montserrat_14);
 
-    lv_obj_t* bar = lv_bar_create(summary);
+    s_roll_bar = lv_bar_create(summary);
+    lv_obj_t* bar = s_roll_bar;
     lv_obj_set_size(bar, LV_PCT(100), 8);
     lv_bar_set_range(bar, 0, total > 0 ? total : 1);
     lv_bar_set_value(bar, present, LV_ANIM_OFF);
@@ -450,15 +462,65 @@ static void build_session_open(void) {
     ui_make_label(banner, LV_SYMBOL_WARNING, THEME_WARNING, &lv_font_montserrat_20);
     ui_make_label(banner, "Class open: Tap a card, or tap a name to log it.", THEME_TEXT, &lv_font_montserrat_14);
 
+    // The search box: filtering is what keeps this view responsive on a large
+    // class, since only the matches are drawn.
+    if (total > 0) {
+        lv_obj_t* search = ui_make_card(s_content);
+        lv_obj_set_flex_flow(search, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(search, 8, 0);
+        s_roll_search_ta = keyboard_make_textarea(search, "Search by name or ID", 47,
+                                                  LV_KEYBOARD_MODE_TEXT_LOWER);
+        lv_obj_add_event_cb(s_roll_search_ta, roll_search_changed_cb, LV_EVENT_VALUE_CHANGED,
+                            nullptr);
+    }
+
+    // Chips live in their own container so a tap can rebuild the list alone,
+    // leaving the summary, the buttons and the search box (and the keyboard's
+    // textarea) untouched.
+    s_roll_list = lv_obj_create(s_content);
+    lv_obj_remove_style_all(s_roll_list);
+    lv_obj_set_width(s_roll_list, LV_PCT(100));
+    lv_obj_set_height(s_roll_list, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(s_roll_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(s_roll_list, 10, 0);  // matches s_content's row gap
+    lv_obj_remove_flag(s_roll_list, LV_OBJ_FLAG_SCROLLABLE);  // sh.body scrolls
+
+    update_roll_call();
+    ui_set_card_capture(on_session_card);
+}
+
+// Rebuilds ONLY the roll-call chips and the two summary widgets that track the
+// present count. Called on every tap in place of the old whole-view rebuild.
+static void update_roll_call(void) {
+    if (!s_roll_list) return;
+    lv_obj_clean(s_roll_list);
+
+    const int total = s_cls->roster_count;
+    const int present = attendance_present_count();
+    if (s_roll_count) {
+        char count_txt[32];
+        snprintf(count_txt, sizeof(count_txt), "%d/%d present", present, total);
+        lv_label_set_text(s_roll_count, count_txt);
+    }
+    if (s_roll_bar) lv_bar_set_value(s_roll_bar, present, LV_ANIM_OFF);
+
+    const char* q = s_roll_search_ta ? lv_textarea_get_text(s_roll_search_ta) : "";
+
     // Render the roll call alphabetically by name, not roster/registry order.
     int order[ROSTER_MAX_CLASS_STUDENTS];
     for (int j = 0; j < total; j++) order[j] = s_cls->roster[j];
     qsort(order, total, sizeof(order[0]), roster_name_cmp);
 
+    int matched = 0;  // all matches
+    int shown = 0;    // chips actually built
     for (int j = 0; j < total; j++) {
         int idx = order[j];
         const student_t* st = roster_student_at(idx);
         if (!st) continue;
+        if (q[0] && !istr_has(st->name, q) && !istr_has(st->id, q)) continue;
+        matched++;
+        if (shown >= ROLL_MAX_ROWS) continue;  // counted, not drawn
+        shown++;
         bool here = attendance_is_present(st->id);
 
         // In timed mode a student may be waiting out the threshold without being
@@ -487,7 +549,7 @@ static void build_session_open(void) {
             }
         }
 
-        lv_obj_t* chip = ui_make_card(s_content);
+        lv_obj_t* chip = ui_make_card(s_roll_list);
         lv_obj_set_style_bg_color(chip, lv_color_hex(bg), 0);
         lv_obj_set_style_border_color(chip, lv_color_hex(edge), 0);
         lv_obj_set_flex_flow(chip, LV_FLEX_FLOW_ROW);
@@ -502,14 +564,41 @@ static void build_session_open(void) {
         lv_obj_set_size(col, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
         lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_style_pad_row(col, 2, 0);
-        ui_make_label(col, st->name, THEME_TEXT, &lv_font_montserrat_14);
+        // 16, not the 14 used elsewhere: the roll call is read at arm's length
+        // while the professor works down the class.
+        ui_make_label(col, st->name, THEME_TEXT, &lv_font_montserrat_16);
         ui_make_label(col, sub[0] ? sub : st->id, here ? THEME_SUCCESS : THEME_MUTED,
-                      &lv_font_montserrat_14);
+                      &lv_font_montserrat_16);
 
         ui_make_label(chip, trail_icon, trail_color, &lv_font_montserrat_20);
     }
 
-    ui_set_card_capture(on_session_card);
+    if (matched == 0 && q[0]) {
+        lv_obj_t* card = ui_make_card(s_roll_list);
+        lv_obj_t* msg = ui_make_label(card, "No matching student in this class", THEME_MUTED,
+                                      &lv_font_montserrat_14);
+        lv_label_set_long_mode(msg, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(msg, LV_PCT(100));
+        return;
+    }
+
+    // Say plainly when the list is cut short — a student missing from the roll
+    // call would otherwise look like they are not enrolled. Built last (that is
+    // where the counts are known) and moved above the chips.
+    bool truncated = matched > shown;
+    if (!truncated && !q[0]) return;  // full list, no query: the summary says it all
+    char head[96];
+    if (truncated) {
+        snprintf(head, sizeof(head), "Showing %d of %d — search to narrow the list", shown,
+                 matched);
+    } else {
+        snprintf(head, sizeof(head), "%d match%s", matched, matched == 1 ? "" : "es");
+    }
+    lv_obj_t* count = ui_make_label(s_roll_list, head, truncated ? THEME_WARNING : THEME_MUTED,
+                                    &lv_font_montserrat_14);
+    lv_label_set_long_mode(count, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(count, LV_PCT(100));
+    lv_obj_move_to_index(count, 0);
 }
 
 static void cal_changed_cb(lv_event_t* e) {
@@ -541,7 +630,7 @@ static void open_date_cb(lv_event_t* e) {
 }
 
 // One tappable "date — N/total present" row. With show_pct, the attendance
-// percentage for that session is appended (used on the History tab).
+// percentage for that session is appended (used on the history view).
 static void add_date_row(lv_obj_t* parent, int i, bool show_pct) {
     int present = attendance_present_for(s_cls->dir, s_dates[i]);
     int total = s_cls->roster_count;
@@ -605,8 +694,27 @@ static void build_session_closed(void) {
         lv_obj_set_size(rc, LV_PCT(100), LV_SIZE_CONTENT);
         lv_obj_set_flex_flow(rc, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_style_pad_row(rc, 8, 0);
+        // The heading stays put; only the dates below it scroll.
         ui_make_label(rc, "Recent sessions", THEME_PRIMARY, &lv_font_montserrat_20);
-        for (int i = 0; i < s_dates_count && i < 5; i++) add_date_row(rc, i, false);
+
+        // Every past session is listed and reachable by scrolling this box,
+        // instead of the list being silently cut to the first five. It sizes to
+        // its rows and stops growing at RECENT_LIST_MAX_H — a short history
+        // takes only the room it needs, a long one scrolls inside the cap
+        // (LVGL clamps LV_SIZE_CONTENT against max_height).
+        lv_obj_t* list = lv_obj_create(rc);
+        lv_obj_remove_style_all(list);
+        lv_obj_set_width(list, LV_PCT(100));
+        lv_obj_set_height(list, LV_SIZE_CONTENT);
+        lv_obj_set_style_max_height(list, RECENT_LIST_MAX_H, 0);
+        lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(list, 8, 0);
+        lv_obj_set_style_pad_right(list, 4, 0);  // keep rows clear of the scrollbar
+        lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_scroll_dir(list, LV_DIR_VER);
+        lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
+
+        for (int i = 0; i < s_dates_count; i++) add_date_row(list, i, false);
     }
 }
 
@@ -623,7 +731,7 @@ static void build_session(void) {
     }
 }
 
-// --- History tab ------------------------------------------------------------
+// --- History view -----------------------------------------------------------
 
 static void build_history(void) {
     s_dates_count = attendance_list_dates(s_cls->dir, s_dates, MAX_DATES);
@@ -634,7 +742,7 @@ static void build_history(void) {
         lv_obj_set_style_pad_row(card, 6, 0);
         ui_make_label(card, "No attendance records yet", THEME_TEXT, &lv_font_montserrat_14);
         lv_obj_t* msg = ui_make_label(
-            card, "Open a session in the Session tab to record attendance.", THEME_MUTED,
+            card, "Open a session to record attendance.", THEME_MUTED,
             &lv_font_montserrat_14);
         lv_label_set_long_mode(msg, LV_LABEL_LONG_WRAP);
         lv_obj_set_width(msg, LV_PCT(100));
@@ -685,7 +793,7 @@ static void update_results(void) {
     const char* q = s_search_ta ? lv_textarea_get_text(s_search_ta) : "";
 
     // Count EVERY match but build at most ENROLL_MAX_ROWS cards: each row is 3
-    // LVGL objects out of the fixed 128 KB pool, and exhausting that pool halts
+    // LVGL objects out of the fixed LVGL pool, and exhausting that pool halts
     // the UI thread silently (LV_ASSERT_HANDLER is `while(1);`). Counting is free
     // — it's just string compares — so the header can still report the true
     // total and tell the user to narrow the search.
@@ -709,11 +817,13 @@ static void update_results(void) {
         lv_obj_add_event_cb(row, select_existing_cb, LV_EVENT_CLICKED, (void*)(intptr_t)idx);
         ui_add_press_feedback(row);
 
-        ui_make_label(row, st->name, THEME_TEXT, &lv_font_montserrat_14);
+        // Matches the roll-call chips (16): both are student rows picked out at
+        // a glance, so they read at the same size.
+        ui_make_label(row, st->name, THEME_TEXT, &lv_font_montserrat_16);
         char sub[72];
         snprintf(sub, sizeof(sub), "%s%s", st->id, st->rfid_uid[0] ? "   card registered" : "");
         ui_make_label(row, sub, st->rfid_uid[0] ? THEME_SUCCESS : THEME_MUTED,
-                      &lv_font_montserrat_14);
+                      &lv_font_montserrat_16);
         shown++;
     }
 
@@ -886,15 +996,33 @@ static void on_enroll_card(const char* uid_hex) {
         beeper_beep();
         // Enrolling always happens during an open session: check the student
         // in right away.
-        char msg[128];
+        bool checked_in = false;
         if (sid && session_open_here()) {
             attendance_set(sid, true);
-            snprintf(msg, sizeof(msg), "%s - checked in", r.message);
-        } else {
-            snprintf(msg, sizeof(msg), "%s", r.message);
+            checked_in = true;
         }
-        ui_toast_show(msg, true);
+
+        // The card was just bound to this student, so the class roster resolves
+        // it — for a student created seconds ago as much as an existing one.
+        int idx = roster_student_by_uid(uid_hex);
+        const student_t* st = idx >= 0 ? roster_student_at(idx) : nullptr;
+
         enroll_goto(ENROLL_SEARCH);  // done; back to the list (also clears capture)
+
+        if (st) {
+            // Same card the check-in path shows, so an enroll confirms the face
+            // on file belongs to the card that was just registered. A student
+            // with no avatar yet gets the placeholder.
+            show_presence_feedback(st, class_turma_for_student(idx), THEME_SUCCESS,
+                                   LV_SYMBOL_OK,
+                                   checked_in ? "Enrolled - checked in" : "Enrolled");
+        } else {
+            // Lookup failed (unreadable UID): fall back to the plain toast
+            // rather than an overlay with no name on it.
+            char msg[128];
+            snprintf(msg, sizeof(msg), "%s%s", r.message, checked_in ? " - checked in" : "");
+            ui_toast_show(msg, true);
+        }
     } else {
         beeper_error();
         ui_toast_show(r.message, false);
@@ -948,7 +1076,7 @@ static void build_enroll(void) {
         ui_make_label(card, "No open session", THEME_PRIMARY, &lv_font_montserrat_20);
         lv_obj_t* m = ui_make_label(
             card,
-            "Open a session in the Session tab first. Enrolled students are checked "
+            "Open a session first. Enrolled students are checked "
             "into it automatically.",
             THEME_MUTED, &lv_font_montserrat_14);
         lv_label_set_long_mode(m, LV_LABEL_LONG_WRAP);
@@ -1047,12 +1175,13 @@ static void update_session_badge(void) {
     }
 }
 
-// The keyboard floats over the body, so the enroll view reserves its height as
-// bottom padding — but only while it is actually up, otherwise that space is
-// dead and the student list is needlessly short.
+// The keyboard floats over the body, so a view with a search box reserves its
+// height as bottom padding — but only while it is actually up, otherwise that
+// space is dead and the list is needlessly short.
 static void apply_keyboard_pad(void) {
     if (!s_sh.body) return;
-    bool reserve = (s_view == VIEW_ENROLL) && keyboard_is_visible();
+    // Enroll and the open session both carry a search box the keyboard serves.
+    bool reserve = (s_view == VIEW_ENROLL || s_view == VIEW_SESSION) && keyboard_is_visible();
     lv_obj_set_style_pad_bottom(s_sh.body, reserve ? 320 : 12, 0);
 }
 
@@ -1087,14 +1216,19 @@ static void rebuild_content(void) {
     close_presence_feedback();
     update_session_badge();
 
+    // Whatever the previous view was, its widgets go away with this clean.
+    s_roll_search_ta = nullptr;
+    s_roll_list = nullptr;
+    s_roll_count = nullptr;
+    s_roll_bar = nullptr;
     lv_obj_clean(s_content);
     // Views size themselves to their content and let sh.body scroll. The enroll
     // SEARCH view overrides this to fill the body instead, so its search bar can
     // stay pinned (see build_enroll_search).
     lv_obj_set_height(s_content, LV_SIZE_CONTENT);
     if (!s_cls) return;
-    // Only the enroll view uses the on-screen keyboard, and only while it is
-    // actually shown — apply_keyboard_pad() reserves its height then, and gives
+    // The enroll and session views both carry a search box; apply_keyboard_pad()
+    // reserves the keyboard's height only while it is actually shown, and gives
     // the space back to the list as soon as it is dismissed.
     update_header();
     apply_keyboard_pad();

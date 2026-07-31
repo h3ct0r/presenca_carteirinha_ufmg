@@ -16,6 +16,21 @@
 
 const DEFAULT_COLOR = '272766';
 
+// Contract §3.3 defaults for the per-class attendance settings. They match the
+// firmware's own fallbacks (roster.h / roster_service.cpp), so a class that
+// never touched these settings emits exactly what the device would have used.
+export const DEFAULT_FACE_VERIFY_SECONDS = 15;
+export const DEFAULT_MIN_ATTENDANCE_MIN = 45;
+
+// A whole number, or `fallback` when the value is blank/absent/not a number.
+// Out-of-range values pass through untouched — validate.js rejects them, so a
+// typo surfaces as an error instead of being silently rewritten.
+function intOr(value, fallback) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.trunc(n) : fallback;
+}
+
 // Palette for auto-assigned class colours. The device paints this behind the
 // class initial in WHITE (`scr_classes.cpp` draws the 40x40 chip with
 // THEME_ON_PRIMARY text), so a light colour would be unreadable — every entry
@@ -99,6 +114,15 @@ export function buildClass(cls) {
     // builder emits only the current contract (CONFIG_IMPORT.md §3.3).
     teacher_emails: classTeacherEmails(cls),
     color: cls.color ? cls.color : DEFAULT_COLOR,
+    // Per-class attendance settings (CONFIG_IMPORT.md §3.3). Always emitted, so
+    // a class states its check-in behaviour instead of inheriting whatever the
+    // device happened to have — an import overwrites these like any other
+    // authored field. The two booleans are independent on the device; this tool
+    // authors one mode at a time (see checkinMode() in validate.js).
+    capture_photos: !!cls.capture_photos,
+    face_verify_seconds: intOr(cls.face_verify_seconds, DEFAULT_FACE_VERIFY_SECONDS),
+    timed_attendance: !!cls.timed_attendance,
+    min_attendance_min: intOr(cls.min_attendance_min, DEFAULT_MIN_ATTENDANCE_MIN),
     // Roster entries are {id, turma?}. A bare id string is tolerated (turma "").
     // turma is the optional per-student class-group tag (see CONFIG_IMPORT §3.3).
     roster: (cls.roster || []).map((r) => {

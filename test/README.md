@@ -21,14 +21,26 @@ native-only).
 
 ## Suites
 
-| Suite                    | Covers                                                                 |
-| ------------------------ | ---------------------------------------------------------------------- |
-| `native/test_core`       | `uid_normalize`, login session, battery voltage→percent curve          |
-| `native/test_event_bus`  | event bus FIFO semantics and full-queue drop policy                    |
-| `native/test_rfid`       | RFID service: fake card taps → `CARD_SCANNED` events, UID clamping     |
-| `native/test_auth_config`| `config.json` parsing (teachers/password), UID→teacher lookup, statuses|
-| `native/test_roster`     | SD data layout validation (`students.json`, `classes/*/class.json`) and the exact on-screen error messages |
-| `native/test_photo`      | photo capture pipeline: JPEG write, BMP fallback, file numbering       |
+15 suites, 164 cases. This table is the only place those numbers are recorded —
+other docs link here rather than restating them.
+
+| Suite | Cases | Covers |
+|---|--:|---|
+| `native/test_roster` | 31 | `students.json` / `class.json` validation and the exact on-screen error messages; enroll; clear-uids |
+| `native/test_auth_config` | 23 | `config.json` parsing, UID→teacher lookup, password write, statuses |
+| `native/test_sd_tree` | 18 | recursive delete, in-place rename, whole-card wipe sparing `config.json` |
+| `native/test_attendance` | 15 | session JSONL fold, date listing, timed (arrival + confirm) taps |
+| `native/test_ustar` | 14 | tar reading and the import path whitelist |
+| `native/test_core` | 11 | `uid_normalize`, login session, battery voltage→percent curve |
+| `native/test_photo_fit` | 11 | aspect-preserving avatar scale/size arithmetic |
+| `native/test_export` | 6 | CSV export: FREQ tallying, overwrite, session snapshot/restore |
+| `native/test_import` | 6 | `config.tar` staging, validation, apply and rollback |
+| `native/test_photo` | 6 | photo capture pipeline: JPEG write, BMP fallback, file numbering |
+| `native/test_battery_log` | 6 | drain-log CSV header and append behaviour |
+| `native/test_checkin` | 5 | check-in photo path and per-day counter |
+| `native/test_backup` | 5 | pre-import snapshot of the authored files |
+| `native/test_rfid` | 4 | fake card taps → `CARD_SCANNED` events, UID clamping |
+| `native/test_event_bus` | 3 | event bus FIFO semantics and full-queue drop policy |
 
 ## How the hardware is mocked
 
@@ -61,8 +73,9 @@ headers at compile time — production sources are compiled **unmodified**:
   files on the mock card) — no reaching into internals.
 - What's deliberately *not* covered natively: LVGL screens/UI, display/touch
   drivers, the PN532/I2C/I2S driver glue, and `main.cpp` wiring. Those need
-  the device; on-target smoke tests can be added later under
-  `test/embedded/` (the `esp32p4` env is already filtered to it).
+  the device. On-target smoke tests could be added under `test/embedded/` —
+  the `esp32p4` env is already filtered to it — but that directory does not
+  exist yet.
 
 ## Adding a test
 
@@ -73,8 +86,3 @@ headers at compile time — production sources are compiled **unmodified**:
 3. New production code: if it touches new hardware APIs, add the smallest
    possible mock header to `lib/hw_mocks/include/` and (if needed) a control
    function in a `mock_*.h`.
-
-## 3D CAD details to check
-
-- RFID can be ofsset a bit to the back, check the screw pilars for this
-- different usb cable connector position to help re-route the long cable? 

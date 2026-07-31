@@ -164,11 +164,14 @@ static void verify_tick(lv_timer_t*) {
 // Small round avatar (reference photo if present, else a placeholder) shown for
 // context so the student sees whose attendance is being verified.
 static void verify_avatar(lv_obj_t* parent, const char* student_id) {
+    // Deliberately small: this is a thumbnail beside the name for context, not
+    // the hero avatar the check-in and kiosk panels show at AVATAR_MAX_PX.
     const int SZ = 64;
-    char src[80];
-    if (student_id && student_id[0] && student_photo_src(student_id, src, sizeof(src))) {
-        lv_obj_t* img = lv_image_create(parent);
-        lv_image_set_src(img, src);
+    // The photo used to be drawn unsized here, so a real avatar came out at its
+    // full source size while the placeholder was SZ — fitting it to the same
+    // box makes the two agree and gives clip_corner a square to round.
+    lv_obj_t* img = student_photo_image(parent, student_id, SZ);
+    if (img) {
         lv_obj_set_style_radius(img, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_clip_corner(img, true, 0);
         return;

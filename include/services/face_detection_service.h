@@ -10,7 +10,7 @@
 //
 // Face inference (ESP-DL human_face_detect) is compiled in only when the build
 // defines USE_FACE_DETECT and the esp-dl framework is available; without it the
-// preview still runs, just with no boxes. See docs for enabling detection.
+// preview still runs, just with no boxes. See docs/software/FACE_DETECTION.md.
 //
 // Layering: this is a service (owns hardware, runs a task). It never touches
 // LVGL — the UI lives in ui/screens/scr_camera.

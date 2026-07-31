@@ -6,23 +6,27 @@
 
 A classroom attendance device. Students register presence by tapping an RFID
 card — or, in kiosk mode, by typing their university id. A portrait touchscreen
-runs the UI (LVGL 9); an SD card holds all data (config, students, classes,
-attendance); a buzzer gives audio feedback.
+runs the UI (LVGL 9); an SD card holds all data; a buzzer gives audio feedback.
 
 **Typical workflow:** a professor taps their card at the idle screen to unlock
 the device → picks a class → opens a dated attendance session → takes roll call
 (tap cards / tap names), enrolls students, or starts an unattended kiosk for
-students to self-check-in. Attendance can later be exported to CSV.
+students to self-check-in. Attendance exports to CSV.
+
+Classes and students are authored on a laptop with
+[`tools/config-builder/`](tools/config-builder/) and imported as a `config.tar`;
+the device never needs a keyboard for data entry.
 
 ## Hardware
 
-Board: **Guition JC4880P443C** (module JC-ESP32P4-M3). Schematics and
-datasheets are in [`docs/`](docs/) (schematic images in `docs/schematic/`).
+Board: **Guition JC4880P443C** (module JC-ESP32P4-M3). Schematics and datasheets
+are in [`docs/hardware/`](docs/hardware/).
 
 - **MCU:** ESP32-P4 (no native WiFi/BT — WiFi runs on an external ESP32-C6).
 - **Display:** ST7701, 480×800 portrait, RGB565 over MIPI-DSI.
 - **Touch:** GT911 over I2C (polled; interrupt line not wired).
 - **RFID:** PN532 over I2C (polled in a task).
+- **Camera:** OV02C10 2MP over MIPI-CSI, with ESP-DL face detection.
 - **Audio:** ES8311 codec → NS4150 amp → speaker (I2S).
 - **Storage:** SD card (SD_MMC on the IOMUX pins).
 - **Power:** IP5306 boost PMIC + TLV62569 buck. **SW3 is the power button** —
@@ -34,61 +38,62 @@ datasheets are in [`docs/`](docs/) (schematic images in `docs/schematic/`).
 ```sh
 pio run -e esp32p4          # build device firmware
 pio test -e native          # run host unit tests
-pio test -e native -f "native/test_roster"   # a single suite
 ```
 
 `platformio.ini` has two environments: `esp32p4` (device) and `native` (host
-tests). The native environment compiles only the hardware-free sources against
-the mocks in `lib/hw_mocks/` (in-memory SD card, fake PN532, fake JPEG encoder,
-pthread-backed FreeRTOS). Add every new hardware-free `.cpp` to that filter.
-
-## Architecture
-
-Strict layers; events flow up. Only `ui/` includes `lvgl.h`. Services own
-hardware + SD and run FreeRTOS tasks, posting `app_event_t` to a single queue
-that the LVGL thread drains.
-
-```
-ui/        LVGL screens / components / theme
-app/       pure logic: event bus, auth, session, uid, roster types, battery curve
-services/  own hardware + SD: config, roster, rfid, battery, export
-storage/   SD modules: sd_card (mount), attendance_store, photo_store
-drivers/   lcd/, touch/, rfid/, audio/
-```
+tests against the mocks in `lib/hw_mocks/`). See [`test/README.md`](test/README.md).
 
 ## Features
 
 - **Idle access gate** — unlock by professor card or numeric password.
-- **Classes** — the professor's class list, from the SD card.
-- **Class** — Session (roll call / date picker), History (past sessions with
-  attendance %), and Enroll (professor-locked) tabs.
+- **Classes** — the professor's class list, read from the SD card.
+- **Class** — a hub opening into a dated roll-call session, past-session history
+  with attendance %, and student enrollment. Per-class settings and statistics
+  live behind the ⚙ button.
+- **Check-in modes**, per class — single tap, double tap (arrival + confirm after
+  a threshold), or photo check-in with face verification.
 - **Kiosk** — unattended student self-check-in; exit is professor-gated.
-- **Admin panel** — profile, class list, and password set/change (written back
-  to `config.json`).
-- **CSV Export** — per-class attendance export to the SD card. See
-  [`docs/software/EXPORT.md`](docs/software/EXPORT.md).
-
-## SD card data
-
-```
-/config.json                 authorized professors (name, email, rfid_uid, numeric password)
-/students/students.json      global student registry (id, name, rfid_uid)
-/classes/<code>/class.json   class metadata + roster (references student ids)
-/classes/<code>/attendance/YYYY-MM-DD.jsonl   append-only per-session logs
-/csv_export/<code>.csv       CSV attendance export (MATRICULA,FREQ)
-```
-
-A sample card layout is in [`docs/software/sd_card_example/`](docs/software/sd_card_example/).
+- **Student avatars** — imported photos shown on every check-in.
+- **CSV export** — per-class attendance to the SD card.
+- **Config import** — apply a `config.tar` with backup and rollback.
+- **WiFi file manager** — a soft-AP serving a browser file manager for the card
+  (list, edit, upload by drag-and-drop, rename, delete). Debug tool, no auth.
+- **Admin** — profile, SD usage, password, professor card binding, camera
+  preview, config import, and destructive debug wipes.
 
 ## Documentation
 
-- [`docs/software/PROJECT_HANDOFF.md`](docs/software/PROJECT_HANDOFF.md) — architecture, screens,
-  data model, gotchas, and the current backlog (start here to continue work).
-- [`docs/software/EXPORT.md`](docs/software/EXPORT.md) — the CSV attendance export feature.
-- [`docs/software/CUSTOM_FONT_GENERATION.md`](docs/software/CUSTOM_FONT_GENERATION.md) — building
-  the custom Montserrat + FontAwesome fonts.
-- [`docs/software/sd_card_example/`](docs/software/sd_card_example/) — sample SD card contents.
-- [`test/README.md`](test/README.md) — the native test setup.
+**Start here**
+- [Architecture](docs/software/ARCHITECTURE.md) — layers, threading, screens, and
+  the LVGL gotchas that have caused real bugs.
+- [SD card layout](docs/software/SD_CARD.md) — every path the device reads or writes.
+- [Backlog](docs/software/BACKLOG.md) — known-open work.
+
+**Features**
+- [Config import](docs/software/CONFIG_IMPORT.md) — the authoritative `config.tar`
+  format, schemas and limits. Firmware and the config-builder both follow it.
+- [CSV export](docs/software/EXPORT.md)
+- [Photo check-in](docs/software/FACE_CHECKIN.md) — face-verified kiosk check-in.
+- [Face detection](docs/software/FACE_DETECTION.md) — the camera + ESP-DL stack.
+- [Student photos](docs/software/STUDENT_PHOTOS.md) — the avatar pipeline, from
+  Moodle export to on-screen.
+
+**How-to**
+- [Downloading student photos from Moodle](docs/software/MOODLE_PHOTOS.md)
+- [Generating the custom fonts](docs/software/CUSTOM_FONT_GENERATION.md)
+- [Sample SD card](docs/software/sd_card_example/) — a complete card to copy.
+
+**Tools**
+- [config-builder](tools/config-builder/README.md) — the offline browser tool that
+  authors `config.tar`. Also has a [spec](tools/config-builder/SPEC.md) and
+  [deployment notes](tools/config-builder/DEPLOY.md).
+- [Serving the builder from the device](docs/software/ONBOARD_CONFIG_BUILDER.md) —
+  designed, not built.
+
+**Contributing**
+- [`CLAUDE.md`](CLAUDE.md) — build/test commands, layer rules, and the conventions
+  agents and contributors follow.
+- [`test/README.md`](test/README.md) — the native test setup and suite list.
 
 ## License
 

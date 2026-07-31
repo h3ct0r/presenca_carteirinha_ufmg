@@ -14,6 +14,7 @@
 #include "storage/attendance_store.h"
 #include "storage/backup_store.h"
 #include "storage/sd_card.h"
+#include "storage/sd_tree.h"
 #include "ui/components/keyboard.h"
 #include "ui/components/shell.h"
 #include "ui/components/toast.h"
@@ -36,9 +37,12 @@ static lv_obj_t* s_rfid = nullptr;      // professor RFID card section
 static lv_obj_t* s_settings = nullptr;  // device settings (photo capture)
 static lv_obj_t* s_debug = nullptr;     // debug tools section
 
-// Debug wipe controls.
+// Debug wipe controls. Both buttons are destructive and hidden until the debug
+// toggle is on; the second one takes the whole card, not just the roster data.
 static lv_obj_t* s_wipe_btn = nullptr;      // destructive button, shown only in debug mode
 static lv_obj_t* s_wipe_confirm = nullptr;  // wipe confirmation overlay
+static lv_obj_t* s_card_wipe_btn = nullptr;      // "erase the whole card"
+static lv_obj_t* s_card_wipe_confirm = nullptr;  // its confirmation overlay
 
 // Password modal.
 static lv_obj_t* s_pw_modal = nullptr;
@@ -460,12 +464,104 @@ static void open_wipe_confirm(void) {
 
 static void wipe_cb(lv_event_t*) { open_wipe_confirm(); }
 
+// --- erase the whole card (everything but /config.json) ----------------------
+
+// The harder wipe: every file and folder at the card root goes except
+// config.json, so the professors and their passwords survive and the device can
+// still be signed into. Rosters, attendance, photos, exports, face models and
+// the import backup are all destroyed.
+static void do_card_wipe(void) {
+    // Nothing may hold a session open on files that are about to vanish.
+    attendance_close();
+
+    sd_tree_stats_t st = {0, 0};
+    char err[80] = "";
+    bool ok = sd_tree_wipe_root("config.json", &st, err, sizeof(err));
+
+    // The roster is gone from the card; drop it from RAM too, or the class list
+    // keeps offering classes whose folders no longer exist.
+    roster_service_reload();
+
+    char msg[160];
+    if (ok) {
+        snprintf(msg, sizeof(msg), "Card erased: %d item(s) deleted, config.json kept",
+                 st.removed);
+    } else {
+        snprintf(msg, sizeof(msg), "Card erase incomplete: %s", err);
+    }
+    ui_toast_show(msg, ok);
+    build_storage();  // usage just dropped
+}
+
+static void close_card_wipe_confirm(void) {
+    if (s_card_wipe_confirm) {
+        lv_obj_delete(s_card_wipe_confirm);
+        s_card_wipe_confirm = nullptr;
+    }
+}
+
+static void card_wipe_cancel_cb(lv_event_t*) { close_card_wipe_confirm(); }
+
+static void card_wipe_confirm_cb(lv_event_t*) {
+    close_card_wipe_confirm();
+    do_card_wipe();
+}
+
+static void open_card_wipe_confirm(void) {
+    if (s_card_wipe_confirm) return;
+
+    s_card_wipe_confirm = lv_obj_create(s_root);
+    lv_obj_remove_style_all(s_card_wipe_confirm);
+    lv_obj_add_flag(s_card_wipe_confirm, LV_OBJ_FLAG_IGNORE_LAYOUT);  // full-screen overlay
+    lv_obj_set_size(s_card_wipe_confirm, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(s_card_wipe_confirm, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(s_card_wipe_confirm, LV_OPA_50, 0);
+    lv_obj_add_flag(s_card_wipe_confirm, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(s_card_wipe_confirm, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* card = ui_make_card(s_card_wipe_confirm);
+    lv_obj_set_width(card, LV_PCT(88));
+    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 80);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(card, 12, 0);
+
+    ui_make_label(card, LV_SYMBOL_WARNING "  Erase the whole SD card?", THEME_DANGER,
+                  &lv_font_montserrat_20);
+    // Spell out what goes and what stays: this is the one action that also
+    // takes the face-detection models, which need re-uploading afterwards.
+    lv_obj_t* hint = ui_make_label(
+        card,
+        "Deletes EVERYTHING on the card except config.json: students, classes, all "
+        "attendance, photos, CSV exports, the face-detection models and the import "
+        "backup.\n\nProfessors and their passwords are kept. This cannot be undone.",
+        THEME_MUTED, &lv_font_montserrat_14);
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(hint, LV_PCT(100));
+
+    lv_obj_t* row = lv_obj_create(card);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(row, 10, 0);
+    lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* cancel = ui_make_button(row, "Cancel", &theme_style_btn_outline,
+                                      card_wipe_cancel_cb, nullptr);
+    lv_obj_set_flex_grow(cancel, 1);
+    lv_obj_t* del = ui_make_button(row, "Erase card", &theme_style_btn_danger,
+                                   card_wipe_confirm_cb, nullptr);
+    lv_obj_set_flex_grow(del, 1);
+}
+
+static void card_wipe_cb(lv_event_t*) { open_card_wipe_confirm(); }
+
 static void debug_toggle_cb(lv_event_t* e) {
     bool on = lv_obj_has_state((lv_obj_t*)lv_event_get_target(e), LV_STATE_CHECKED);
     if (on) {
         lv_obj_remove_flag(s_wipe_btn, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(s_card_wipe_btn, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(s_wipe_btn, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_card_wipe_btn, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -564,6 +660,20 @@ static void build_debug(void) {
         THEME_MUTED, &lv_font_montserrat_14);
     lv_label_set_long_mode(cap, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(cap, LV_PCT(100));
+
+    s_card_wipe_btn = ui_make_button(card, LV_SYMBOL_TRASH "  Erase the whole SD card",
+                                     &theme_style_btn_danger, card_wipe_cb, nullptr);
+    lv_obj_set_width(s_card_wipe_btn, LV_PCT(100));
+    lv_obj_add_flag(s_card_wipe_btn, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t* cap2 = ui_make_label(
+        card,
+        "Deletes every file on the card except config.json — including the students, "
+        "classes, photos, exports and the face-detection models. Professors and their "
+        "passwords survive. Cannot be undone.",
+        THEME_MUTED, &lv_font_montserrat_14);
+    lv_label_set_long_mode(cap2, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(cap2, LV_PCT(100));
 }
 
 // --- config import ----------------------------------------------------------

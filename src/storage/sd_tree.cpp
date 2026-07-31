@@ -5,6 +5,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>  // strcasecmp
 
 #include "esp32-hal-log.h"
 
@@ -130,6 +131,78 @@ bool sd_tree_remove(const char* path, sd_tree_stats_t* out, char* err, size_t er
     if (!ok) set_err(err, err_cap, "deleted %d, failed %d", st->removed, st->failed);
     ESP_LOGI(TAG, "remove %s: %d deleted, %d failed", target, st->removed, st->failed);
     return ok;
+}
+
+// Safety net on the delete loop below, not a limit on the card: an entry that
+// refuses to be deleted would otherwise be handed back by every rescan forever.
+// A device card holds ~6 root entries.
+static constexpr int MAX_ROOT_ENTRIES = 64;
+
+// Full path of the first root entry that is not `keep`, or false when nothing
+// else is left. Closes the directory before returning, for the same reason
+// first_child() does.
+static bool first_root_victim(const char* keep, char* out, size_t cap) {
+    File root = SD_MMC.open("/");
+    if (!root || !root.isDirectory()) {
+        if (root) root.close();
+        return false;
+    }
+    bool got = false;
+    File e;
+    while (!got && (e = root.openNextFile())) {
+        const char* name = e.name();  // basename on this core
+        // FAT is case-insensitive, so CONFIG.JSON *is* config.json.
+        if (!(keep && keep[0] && strcasecmp(name, keep) == 0)) {
+            got = join("/", name, out, cap);
+            if (!got) ESP_LOGE(TAG, "root entry name too long to delete: %s", name);
+        }
+        e.close();
+    }
+    root.close();
+    return got;
+}
+
+bool sd_tree_wipe_root(const char* keep, sd_tree_stats_t* out, char* err, size_t err_cap) {
+    sd_tree_stats_t local = {0, 0};
+    sd_tree_stats_t* st = out ? out : &local;
+    st->removed = 0;
+    st->failed = 0;
+
+    // Probe the root once so "unreadable card" is reported as itself rather
+    // than as the empty-root success the loop below would otherwise return.
+    File root = SD_MMC.open("/");
+    bool readable = root && root.isDirectory();
+    if (root) root.close();
+    if (!readable) {
+        set_err(err, err_cap, "cannot open the card root");
+        return false;
+    }
+
+    // One entry at a time, re-scanning the root for each: deleting entries
+    // while a directory handle is open is unsafe on this core, and this way the
+    // listing needs no buffer (a 4 KB static here was enough to push internal
+    // RAM past a linker region).
+    int guard = 0;
+    for (; guard < MAX_ROOT_ENTRIES; guard++) {
+        char victim[MAX_PATH];
+        if (!first_root_victim(keep, victim, sizeof(victim))) break;  // nothing left
+        if (!remove_tree(victim, 0, st)) {
+            // Stop rather than rescan: the next pass would return this same
+            // undeletable entry and spin.
+            set_err(err, err_cap, "deleted %d, failed on %s", st->removed, victim);
+            ESP_LOGE(TAG, "wipe root stopped at %s (%d deleted)", victim, st->removed);
+            return false;
+        }
+    }
+
+    ESP_LOGI(TAG, "wipe root (keeping %s): %d deleted", keep && keep[0] ? keep : "-",
+             st->removed);
+    if (guard >= MAX_ROOT_ENTRIES) {
+        set_err(err, err_cap, "more than %d root entries — deleted %d, run it again",
+                MAX_ROOT_ENTRIES, st->removed);
+        return false;
+    }
+    return true;
 }
 
 static bool name_is_valid(const char* name, char* err, size_t err_cap) {

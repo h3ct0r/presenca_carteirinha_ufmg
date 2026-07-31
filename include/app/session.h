@@ -4,7 +4,7 @@
 
 // The currently logged-in professor. Set on a successful unlock, cleared on
 // sign-out. Touched only from the LVGL thread (login in the idle screen,
-// logout in the account screen, reads in the UI), so no locking is needed.
+// Sign Out in the admin screen, reads in the UI), so no locking is needed.
 
 // Copies t as the active session; NULL clears it (logged out).
 void session_set(const teacher_t* t);

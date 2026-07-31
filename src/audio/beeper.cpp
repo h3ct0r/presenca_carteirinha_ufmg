@@ -14,7 +14,7 @@
 
 static const char* TAG = "beeper";
 
-// Audio wiring on this board (see docs/schematic 3_ESP32-P4 / 6_CODEC / 1_PWR):
+// Audio wiring on this board (see docs/hardware/schematic/ 3_ESP32-P4 / 6_CODEC / 1_PWR):
 // I2S0 to the ES8311 codec, whose DAC feeds the NS4150 amp behind CN1.
 #define I2S_MCLK GPIO_NUM_13  // CODEC_I2S0_MCLK
 #define I2S_BCLK GPIO_NUM_12  // CODEC_I2S0_SCLK

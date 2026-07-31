@@ -40,10 +40,14 @@ void add_parent_dirs_locked(Store& s, const std::string& path) {
     }
 }
 
+bool is_root(const std::string& path) { return path == "/"; }
+
 // Immediate children (files and dirs) of a directory, unique, full paths.
 std::vector<std::string> children_locked(Store& s, const std::string& dir) {
     std::set<std::string> out;
-    const std::string prefix = dir + "/";
+    // The root is the one directory whose path already ends in '/', so the
+    // usual dir + "/" would build "//" and match nothing.
+    const std::string prefix = is_root(dir) ? "/" : dir + "/";
     auto consider = [&](const std::string& path) {
         if (path.compare(0, prefix.size(), prefix) != 0) return;
         size_t next = path.find('/', prefix.size());
@@ -90,7 +94,7 @@ void mocksd_add_dir(const char* path) {
 bool mocksd_exists(const char* path) {
     Store& s = S();
     std::lock_guard<std::mutex> lk(s.m);
-    return s.files.count(path) || s.dirs.count(path);
+    return s.files.count(path) || s.dirs.count(path) || is_root(path);
 }
 
 size_t mocksd_file_size(const char* path) {
@@ -190,7 +194,11 @@ File MockSDMMC::open(const char* path, const char* mode, bool) {
         add_parent_dirs_locked(s, path);
         return File::make_file(path, "", true);  // File::write appends to the store
     }
-    if (s.dirs.count(path)) return File::make_dir(path, children_locked(s, path));
+    // The card root always exists, even on an empty card — it is never in
+    // s.dirs because nothing creates it.
+    if (s.dirs.count(path) || is_root(path)) {
+        return File::make_dir(path, children_locked(s, path));
+    }
     auto it = s.files.find(path);
     if (it == s.files.end()) return File();
     return File::make_file(path, it->second, false);

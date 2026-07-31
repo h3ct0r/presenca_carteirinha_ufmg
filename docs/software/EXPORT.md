@@ -1,8 +1,7 @@
 # CSV Export
 
 Exports per-class attendance to CSV files on the SD card, one file per class.
-The feature is reachable from the **CSV Export** button in the bottom navigation
-bar (between **Classes** and **Admin**).
+The feature is reachable from the **Export** button in the bottom navigation bar.
 
 ## What it produces
 
@@ -52,35 +51,27 @@ date. A class with no recorded sessions yields `FREQ = 0` for everyone.
 
 ## Using the screen
 
-Each class is shown as a card with:
+Export is a multi-select. Each class assigned to the **logged-in professor** is a
+card whose class name doubles as a checkbox label — tapping the row toggles it —
+showing:
 
-- **Number of students** — enrolled students in the class.
-- **Number of days** — how many session dates have been recorded.
-- **Start → end dates** — the earliest and latest recorded session date (or
-  "No sessions recorded yet" when there is no attendance).
-- An **Export CSV** button.
+- **Number of students** enrolled in the class.
+- **Number of days** of recorded sessions.
+- **Start → end dates**, or "No sessions recorded yet" when there is no
+  attendance.
+- A hint when a previous export file already exists.
 
-Only the classes assigned to the **logged-in professor** are listed.
+A **Select all / Clear all** shortcut sits above the list.
 
 ### Export flow
 
-1. Tap **Export CSV** on a class card.
-2. If no export file exists yet for that class, it is written immediately.
-3. If a file already exists, an **Overwrite / Cancel** dialog appears first.
-   - **Overwrite** replaces the file (it is truncated and rewritten, never
-     appended to).
-   - **Cancel** aborts and leaves the existing file untouched.
-4. On success, the card's status line shows the saved path and file size, e.g.
-
-   ```
-   ✓ /csv_export/CS101-M1.csv (1.37 kB)
-   ```
-
-   On failure, the status line and a toast show the reason (e.g. the SD card
-   could not be written).
-
-Cards that already have an export file also show a hint
-("A previous export exists — Export will ask to overwrite.") before you tap.
+1. Tick one or more classes. The button at the bottom reads **"Export Selected
+   (N)"** and is disabled while nothing is ticked.
+2. Tap it. If any of the selected classes already has an export file, a single
+   **overwrite-all** confirmation appears — one dialog for the batch, not one per
+   file. Overwriting truncates and rewrites; files are never appended to.
+3. Each card's status line then shows the saved path and size, e.g.
+   `✓ /csv_export/CS101-M1.csv (1.37 kB)`, or the failure reason.
 
 ## Behavior notes
 
@@ -145,6 +136,5 @@ pio test -e native -f "native/test_export"
 
 ## Status
 
-Build- and native-test-verified only. The CSV/FREQ logic is covered by unit
-tests against the SD mock, but the on-device SD write, folder creation, file
-size readout, and the screen itself have not been exercised on real hardware.
+Shipped and verified on device. The CSV/FREQ logic is covered by native tests
+against the SD mock.

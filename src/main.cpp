@@ -13,6 +13,10 @@
 #include "services/roster_service.h"
 #include "touch/gt911_touch.h"
 #include "ui/ui.h"
+#ifdef BATTERY_DRAIN_LOG
+#include "esp_timer.h"
+#include "storage/battery_log.h"
+#endif
 
 // The whole UI — including the camera preview, which renders a large 480x270
 // image and drains events on the Arduino loop (LVGL) task — runs on loopTask.
@@ -45,9 +49,20 @@ static void i2c_bus_init() {
     Wire1.begin(TP_I2C_SDA, TP_I2C_SCL, 100000);
 }
 
-// Central event dispatch, always on the LVGL thread. The attendance
-// controller will hook in here before the UI once it lands.
+// Central event dispatch, always on the LVGL thread. This is where anything
+// needing SD access in response to a service event belongs — service tasks must
+// not touch the card themselves (nothing locks it).
 static void app_dispatch(const app_event_t& ev) {
+#ifdef BATTERY_DRAIN_LOG
+    // Debug build only (platformio.ini): record every battery sample for a
+    // drain curve. It logs from HERE rather than from battery_service's task
+    // because that task must not touch the SD card — every other SD write in
+    // the firmware happens on this thread, and there is no lock between them.
+    if (ev.type == APP_EVENT_POWER_STATE) {
+        battery_log_append((uint32_t)(esp_timer_get_time() / 1000000LL), ev.power.mv,
+                           ev.power.pct);
+    }
+#endif
     ui_handle_event(&ev);
 }
 

@@ -139,6 +139,99 @@ static void test_rename_to_same_name_is_noop(void) {
     TEST_ASSERT_TRUE(mocksd_exists("/config.json"));
 }
 
+// --- wipe the card root, sparing one file -----------------------------------
+
+// A card as the device leaves it: authored config + everything it produced.
+static void seed_full_card(void) {
+    seed();
+    mocksd_add_file("/students/students.json", "{}");
+    mocksd_add_file("/students/photos/2023-0142.jpg", "jpegbytes");
+    mocksd_add_file("/students/checkins/2023-0142/2026-07-20_CS101_01.jpg", "jpegbytes");
+    mocksd_add_file("/photos/IMG_0001.jpg", "jpegbytes");
+    mocksd_add_file("/exports/CS101-M1_2026-07-20.csv", "a;b\n");
+    mocksd_add_file("/models/face_detect.espdl", "model");
+    mocksd_add_file("/backup/previous/config.json", "{}");
+}
+
+static void test_wipe_keeps_only_config(void) {
+    seed_full_card();
+    sd_tree_stats_t st = {0, 0};
+    char err[80] = "";
+    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", &st, err, sizeof(err)));
+    TEST_ASSERT_EQUAL_INT(0, st.failed);
+    TEST_ASSERT_TRUE(st.removed > 0);
+
+    TEST_ASSERT_TRUE(mocksd_exists("/config.json"));  // the one survivor
+    const char* gone[] = {
+        "/classes", "/classes/CS101-M1", "/classes/CS101-M1/class.json",
+        "/classes/CS101-M1/attendance/2026-07-20.jsonl",
+        "/students", "/students/students.json", "/students/photos/2023-0142.jpg",
+        "/students/checkins/2023-0142/2026-07-20_CS101_01.jpg",
+        "/photos", "/photos/IMG_0001.jpg", "/exports", "/models", "/backup",
+    };
+    for (unsigned i = 0; i < sizeof(gone) / sizeof(gone[0]); i++) {
+        TEST_ASSERT_FALSE_MESSAGE(mocksd_exists(gone[i]), gone[i]);
+    }
+}
+
+// Config lives at the root, so a same-named file deeper in the tree must NOT be
+// spared — only the root entry is.
+static void test_wipe_spares_only_the_root_copy(void) {
+    seed_full_card();
+    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", nullptr, nullptr, 0));
+    TEST_ASSERT_TRUE(mocksd_exists("/config.json"));
+    TEST_ASSERT_FALSE(mocksd_exists("/backup/previous/config.json"));
+}
+
+// FAT is case-insensitive, so CONFIG.JSON and config.json are the same file.
+static void test_wipe_keep_match_is_case_insensitive(void) {
+    mocksd_reset();
+    mocksd_add_file("/CONFIG.JSON", "{}");
+    mocksd_add_file("/classes/X/class.json", "{}");
+    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", nullptr, nullptr, 0));
+    TEST_ASSERT_TRUE(mocksd_exists("/CONFIG.JSON"));
+    TEST_ASSERT_FALSE(mocksd_exists("/classes"));
+}
+
+static void test_wipe_on_a_card_without_config_is_still_clean(void) {
+    mocksd_reset();
+    mocksd_add_file("/classes/X/class.json", "{}");
+    mocksd_add_file("/stray.txt", "x");
+    sd_tree_stats_t st = {0, 0};
+    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", &st, nullptr, 0));
+    TEST_ASSERT_EQUAL_INT(0, st.failed);
+    TEST_ASSERT_FALSE(mocksd_exists("/classes"));
+    TEST_ASSERT_FALSE(mocksd_exists("/stray.txt"));
+}
+
+static void test_wipe_of_an_empty_card_is_a_no_op(void) {
+    mocksd_reset();
+    mocksd_add_file("/config.json", "{}");
+    sd_tree_stats_t st = {0, 0};
+    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", &st, nullptr, 0));
+    TEST_ASSERT_EQUAL_INT(0, st.removed);
+    TEST_ASSERT_EQUAL_INT(0, st.failed);
+    TEST_ASSERT_TRUE(mocksd_exists("/config.json"));
+}
+
+// Running it twice must be safe and leave the same card.
+static void test_wipe_is_idempotent(void) {
+    seed_full_card();
+    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", nullptr, nullptr, 0));
+    sd_tree_stats_t st = {0, 0};
+    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", &st, nullptr, 0));
+    TEST_ASSERT_EQUAL_INT(0, st.removed);
+    TEST_ASSERT_TRUE(mocksd_exists("/config.json"));
+}
+
+// An empty/NULL keep means "spare nothing" — config.json goes too.
+static void test_wipe_with_no_keep_removes_everything(void) {
+    seed_full_card();
+    TEST_ASSERT_TRUE(sd_tree_wipe_root(nullptr, nullptr, nullptr, 0));
+    TEST_ASSERT_FALSE(mocksd_exists("/config.json"));
+    TEST_ASSERT_FALSE(mocksd_exists("/classes"));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_is_dir);
@@ -152,5 +245,12 @@ int main(int, char**) {
     RUN_TEST(test_rename_rejects_bad_names);
     RUN_TEST(test_rename_rejects_collision_and_missing);
     RUN_TEST(test_rename_to_same_name_is_noop);
+    RUN_TEST(test_wipe_keeps_only_config);
+    RUN_TEST(test_wipe_spares_only_the_root_copy);
+    RUN_TEST(test_wipe_keep_match_is_case_insensitive);
+    RUN_TEST(test_wipe_on_a_card_without_config_is_still_clean);
+    RUN_TEST(test_wipe_of_an_empty_card_is_a_no_op);
+    RUN_TEST(test_wipe_is_idempotent);
+    RUN_TEST(test_wipe_with_no_keep_removes_everything);
     return UNITY_END();
 }

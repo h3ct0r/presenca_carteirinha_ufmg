@@ -20,7 +20,7 @@ reuse), [`STUDENT_PHOTOS.md`](STUDENT_PHOTOS.md), the tool itself in
 The decisive property: **the config-builder does zero server-side work.** CSV
 parsing, name→id photo matching, canvas re-encode, and tar building all run in
 the professor's browser. The ESP32 would be a dumb static-file host, so none of
-this project's usual constraints apply — no LVGL heap pressure (128 KB), no CPU
+this project's usual constraints apply — no LVGL heap pressure, no CPU
 contention with the camera, no new FreeRTOS task.
 
 Three payoffs, in order of real value:
@@ -38,19 +38,20 @@ Three payoffs, in order of real value:
    internet. Matches the tool's existing "offline, no CDN, everything vendored"
    rule — it was practically designed for this.
 
-## 2. Measured facts (2026-07-28)
+## 2. Measured facts (2026-07-31)
 
 | Fact | Value |
 |---|---|
-| Tool size (`index.html` + `src/*.js`) | **79,884 bytes** (~80 KB) |
-| Same, gzipped (`gzip -9`) | **23,335 bytes** (~23 KB) |
+| Tool size (`index.html` + `src/*.js`) | **99,926 bytes** (~100 KB) |
+| Same, gzipped (`gzip -9`) | **29,968 bytes** (~30 KB) |
 | `app0` partition | 6 MB (`0x600000`) |
-| Flash used by firmware | 3,929,494 bytes (**62.5%**) → **~2.36 MB free** |
+| Flash used by firmware | 4,052,926 bytes (**64.4%**) → **~2.14 MB free** |
 | `spiffs` partition | 9.3 MB (`0x8E0000`) — **entirely unused**, nothing in `src/` mounts it |
 | Staged-tar cap | 16 MB (`MAX_TAR`, raised for bundled photos) |
 
-The tool costs ~1% of remaining flash headroom. Storage is a non-issue by two
-orders of magnitude.
+The tool costs ~1.4% of remaining flash headroom. Storage is a non-issue by two
+orders of magnitude. Re-measure before acting on this — the tool grew 25% between
+2026-07-28 and 2026-07-31, and the firmware grew with it.
 
 ## 3. What already exists (nothing here is greenfield)
 
@@ -60,7 +61,7 @@ orders of magnitude.
 | HTTP server + list/read/download/save/rename/delete/upload | [`src/services/file_server.cpp`](../../src/services/file_server.cpp) |
 | Precedent: an embedded web app in PROGMEM | the file-manager page itself (`INDEX_HTML`) |
 | Validated tar import with backup + rollback | [`src/services/import_service.cpp`](../../src/services/import_service.cpp) |
-| On-device import confirm dialog | [`src/ui/screens/scr_admin.cpp:618`](../../src/ui/screens/scr_admin.cpp) |
+| On-device import confirm dialog | [`scr_admin.cpp`](../../src/ui/screens/scr_admin.cpp) |
 
 ## 4. Hosting: where the files live
 
@@ -90,11 +91,11 @@ The real controls are structural, and they are stronger than they look:
 
 | Control | Where |
 |---|---|
-| AP is **off by default**; requires a physical tap to start | [`scr_wifi_editor.cpp:77`](../../src/ui/screens/scr_wifi_editor.cpp) |
-| HTTP server exists **only while the WiFi screen is open** (`on_show`/`on_hide`) | [`scr_wifi_editor.cpp:26`](../../src/ui/screens/scr_wifi_editor.cpp) |
-| Bottom nav **locked** while the AP is up — the professor is trapped on the screen, watching | [`scr_wifi_editor.cpp:58`](../../src/ui/screens/scr_wifi_editor.cpp) |
-| WPA2, 8 random digits, **regenerated every boot** | [`wifi_ap.cpp:22`](../../src/services/wifi_ap.cpp) |
-| Applying config requires a **physical tap** on the Admin confirm dialog | [`scr_admin.cpp:601`](../../src/ui/screens/scr_admin.cpp) |
+| AP is **off by default**; requires a physical tap to start | [`scr_wifi_editor.cpp`](../../src/ui/screens/scr_wifi_editor.cpp) |
+| HTTP server exists **only while the WiFi screen is open** (`on_show`/`on_hide`) | [`scr_wifi_editor.cpp`](../../src/ui/screens/scr_wifi_editor.cpp) |
+| Bottom nav **locked** while the AP is up — the professor is trapped on the screen, watching | [`scr_wifi_editor.cpp`](../../src/ui/screens/scr_wifi_editor.cpp) |
+| WPA2, 8 random digits, **regenerated every boot** | [`wifi_ap.cpp`](../../src/services/wifi_ap.cpp) |
+| Applying config requires a **physical tap** on the Admin confirm dialog | [`scr_admin.cpp`](../../src/ui/screens/scr_admin.cpp) |
 
 In short: **security = physical presence + a short, supervised window.** That is
 a legitimate model for a classroom device, and it is the property to preserve.

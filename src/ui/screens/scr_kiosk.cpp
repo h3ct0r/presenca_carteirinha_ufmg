@@ -144,12 +144,7 @@ static void kiosk_label(lv_obj_t* parent, const char* text, const lv_font_t* fon
 // The student's avatar if it exists on the SD card, otherwise a placeholder
 // circle — same photo/placeholder treatment as the in-class check-in overlay.
 static void kiosk_photo(lv_obj_t* parent, const student_t* st) {
-    char src[80];
-    if (st && student_photo_src(st->id, src, sizeof(src))) {
-        lv_obj_t* img = lv_image_create(parent);
-        lv_image_set_src(img, src);
-        return;
-    }
+    if (st && student_photo_image(parent, st->id, AVATAR_MAX_PX)) return;
     const int SZ = 140;
     lv_obj_t* ph = lv_obj_create(parent);
     lv_obj_remove_flag(ph, LV_OBJ_FLAG_SCROLLABLE);

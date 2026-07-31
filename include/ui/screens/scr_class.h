@@ -2,10 +2,9 @@
 
 #include "ui/screen.h"
 
-// Staff: one class loaded from the SD card, with tabs for today's roll call,
-// past-session history, and student enrollment. Presence marking/history
-// arrive with the attendance feature; until then Today shows the roster
-// unchecked and History is an empty state.
+// Staff: one class loaded from the SD card. A view stack, not a tab bar — a hub
+// with two big actions opens into a dated roll-call session or the past-session
+// history, and enrollment is reached from within an open session.
 //
 // on_show arg: const class_rec_t* from roster_service (its static storage,
 // so the pointer stays valid while shown). Pass NULL to re-show the last

@@ -3,8 +3,10 @@
 // logic (validate, model→files, tar, uid) lives in the unit-tested pure
 // modules imported below.
 
-import { validate, LIMITS } from './validate.js';
-import { buildFiles, classTeacherEmails } from './model.js';
+import { validate, LIMITS, CHECKIN_MODES, checkinMode } from './validate.js';
+import {
+  buildFiles, classTeacherEmails, DEFAULT_FACE_VERIFY_SECONDS, DEFAULT_MIN_ATTENDANCE_MIN,
+} from './model.js';
 import { makeTar } from './tarball.js';
 import { decodeCsvBytes, parseDiario, applyDiario } from './diario.js';
 import { parseTar } from './untar.js';
@@ -123,6 +125,13 @@ function normalize(m) {
     classes: (m.classes || []).map((c) => ({
       code: c.code || '', name: c.name || '', schedule: c.schedule || '',
       teacher_emails: classTeacherEmails(c), color: c.color || '272766',
+      // Per-class attendance settings (contract §3.3). Absent in an older model
+      // JSON means "never authored" — fall back to the contract defaults, which
+      // are what the device would have used anyway.
+      capture_photos: !!c.capture_photos,
+      timed_attendance: !!c.timed_attendance,
+      face_verify_seconds: c.face_verify_seconds ?? DEFAULT_FACE_VERIFY_SECONDS,
+      min_attendance_min: c.min_attendance_min ?? DEFAULT_MIN_ATTENDANCE_MIN,
       // Roster entries are { id, turma }. Accept bare-id strings and {id} too.
       roster: (c.roster || [])
         .map((r) => (typeof r === 'string' ? { id: r, turma: '' } : { id: r.id || '', turma: r.turma || '' }))
@@ -698,7 +707,13 @@ function classesSection() {
     el('p', { class: 'hint', text: 'A class links to one teacher; students carry their group (turma) per roster entry.' }),
     body,
     el('button', { class: 'add', text: '+ Add class', onclick: () => {
-      model.classes.push({ code: '', name: '', schedule: '', teacher_emails: [], color: '272766', roster: [] });
+      model.classes.push({
+        code: '', name: '', schedule: '', teacher_emails: [], color: '272766',
+        capture_photos: false, timed_attendance: false,
+        face_verify_seconds: DEFAULT_FACE_VERIFY_SECONDS,
+        min_attendance_min: DEFAULT_MIN_ATTENDANCE_MIN,
+        roster: [],
+      });
       render();
     } }),
   ]);
@@ -752,7 +767,70 @@ function classCard(c, i) {
       fieldInput('Schedule', c.schedule, (v) => { c.schedule = v; }, { placeholder: 'e.g. Tue/Thu 10:00' }),
       el('label', { class: 'field' }, ['Professors', teacherBox]),
     ]),
+    checkinField(c),
     el('label', { class: 'field roster-field' }, [`Roster (${c.roster.length}/100)`, roster]),
+  ]);
+}
+
+// How students register presence in this class. The device stores two
+// independent booleans, but authoring one mode per class keeps the choice
+// legible — see CONFIG_IMPORT.md §3.3 for the mapping and its one limitation.
+const CHECKIN_LABELS = {
+  single: ['Single tap', 'One tap on the reader marks the student present.'],
+  double: ['Double tap', 'Tap on arrival, then tap again once the threshold has passed.'],
+  photo: ['Photo check-in', 'The kiosk verifies a face and saves a photo for each tap.'],
+};
+
+function checkinField(c) {
+  const mode = checkinMode(c);
+
+  const select = el('select', { class: 'checkin-mode' },
+    Object.keys(CHECKIN_MODES).map((key) =>
+      el('option', { value: key, selected: key === mode }, [CHECKIN_LABELS[key][0]])));
+  select.addEventListener('change', () => {
+    // Assign the pair the mode stands for; the two numbers are kept either way
+    // so flipping modes back and forth never loses a typed value.
+    Object.assign(c, CHECKIN_MODES[select.value]);
+    render();
+  });
+
+  // Only the number the chosen mode actually uses is shown — the other one is
+  // still emitted (at its stored value), it just has no effect on the device.
+  const extra = [];
+  if (mode === 'double') {
+    extra.push(numberField('Minutes before the second tap counts', c.min_attendance_min,
+      DEFAULT_MIN_ATTENDANCE_MIN, LIMITS.MIN_ATTENDANCE_MIN, LIMITS.MIN_ATTENDANCE_MAX,
+      (v) => { c.min_attendance_min = v; }));
+  } else if (mode === 'photo') {
+    extra.push(numberField('Seconds to capture the photo', c.face_verify_seconds,
+      DEFAULT_FACE_VERIFY_SECONDS, LIMITS.FACE_VERIFY_SECONDS_MIN,
+      LIMITS.FACE_VERIFY_SECONDS_MAX, (v) => { c.face_verify_seconds = v; }));
+  }
+
+  return el('div', { class: 'checkin-box' }, [
+    el('div', { class: 'class-grid' }, [
+      el('label', { class: 'field' }, ['Check-in mode', select]),
+      ...extra,
+    ]),
+    el('p', { class: 'hint checkin-hint', text: CHECKIN_LABELS[mode][1] }),
+  ]);
+}
+
+// A labelled integer input. Blank restores `fallback` in the model, so a class
+// can never end up with an empty setting in the tar.
+function numberField(labelText, value, fallback, min, max, onchange) {
+  const input = el('input', {
+    type: 'number', class: 'num', value: value ?? fallback,
+    min: String(min), max: String(max), step: '1',
+  });
+  input.addEventListener('input', () => {
+    onchange(input.value === '' ? fallback : Number(input.value));
+    syncStatus();
+  });
+  return el('label', { class: 'field' }, [
+    labelText,
+    input,
+    el('span', { class: 'field-note', text: `${min}–${max}, default ${fallback}` }),
   ]);
 }
 
