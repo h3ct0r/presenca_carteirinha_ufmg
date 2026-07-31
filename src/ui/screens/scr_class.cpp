@@ -40,11 +40,6 @@ typedef enum { ENROLL_SEARCH,
 
 static constexpr int MAX_DATES = 24;  // recent/history dates listed
 
-// Height cap on the "Recent sessions" box in the open-a-session view. A date
-// row is a card (~42 px) plus an 8 px gap, so this shows about five at a time —
-// the number the list used to be truncated to — and scrolls the rest.
-static constexpr int RECENT_LIST_MAX_H = 240;
-
 static shell_t s_sh;
 static lv_obj_t* s_content = nullptr;  // rebuilt on view switch
 
@@ -662,33 +657,18 @@ static void build_session_closed(void) {
                                     open_selected_cb, nullptr);
     lv_obj_set_width(open, LV_PCT(100));
 
+    // Just the most recent session, as a shortcut back into it. The full list
+    // lives in the History view; repeating it here meant a scrollable box inside
+    // the already-scrolling body, which handed the drag over to the outer
+    // scroller mid-gesture whenever the inner one hit its end.
     if (s_dates_count > 0) {
         lv_obj_t* rc = lv_obj_create(s_content);
         lv_obj_remove_style_all(rc);
         lv_obj_set_size(rc, LV_PCT(100), LV_SIZE_CONTENT);
         lv_obj_set_flex_flow(rc, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_style_pad_row(rc, 8, 0);
-        // The heading stays put; only the dates below it scroll.
-        ui_make_label(rc, "Recent sessions", THEME_PRIMARY, &lv_font_montserrat_20);
-
-        // Every past session is listed and reachable by scrolling this box,
-        // instead of the list being silently cut to the first five. It sizes to
-        // its rows and stops growing at RECENT_LIST_MAX_H — a short history
-        // takes only the room it needs, a long one scrolls inside the cap
-        // (LVGL clamps LV_SIZE_CONTENT against max_height).
-        lv_obj_t* list = lv_obj_create(rc);
-        lv_obj_remove_style_all(list);
-        lv_obj_set_width(list, LV_PCT(100));
-        lv_obj_set_height(list, LV_SIZE_CONTENT);
-        lv_obj_set_style_max_height(list, RECENT_LIST_MAX_H, 0);
-        lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
-        lv_obj_set_style_pad_row(list, 8, 0);
-        lv_obj_set_style_pad_right(list, 4, 0);  // keep rows clear of the scrollbar
-        lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_scroll_dir(list, LV_DIR_VER);
-        lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
-
-        for (int i = 0; i < s_dates_count; i++) add_date_row(list, i, false);
+        ui_make_label(rc, "Last session", THEME_PRIMARY, &lv_font_montserrat_20);
+        add_date_row(rc, 0, false);  // dates are newest first
     }
 }
 

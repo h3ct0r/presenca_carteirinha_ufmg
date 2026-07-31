@@ -135,13 +135,18 @@ class would otherwise exhaust the pool. Taps rebuild only the chip container via
 
 ### Cost of listing past sessions
 
-The session picker, the history view and the statistics screen each want a
-present-count for every recorded date, and each count is a whole-file fold of
-that day's JSONL. `attendance_present_for()` therefore **memoises** per
-(class, date); writes through `attendance_store` drop the affected day, and
+The history view and the statistics screen each want a present-count for every
+recorded date, and each count is a whole-file fold of that day's JSONL.
+`attendance_present_for()` therefore **memoises** per (class, date); writes
+through `attendance_store` drop the affected day, and
 `attendance_history_cache_clear()` exists for the one case that bypasses the
 module — the debug WiFi file editor. Without it, a class with 24 sessions cost
-24 blocking SD reads on every rebuild of any of those three views.
+24 blocking SD reads on every rebuild of either view.
+
+The open-a-session picker asks for one date only: it shows the **last** session
+as a shortcut (`s_dates[0]` — `attendance_list_dates()` is newest first) and
+leaves the full list to History, which is also what keeps a scrollable box out
+of the already-scrolling body.
 
 ## Reactive state and card capture
 
