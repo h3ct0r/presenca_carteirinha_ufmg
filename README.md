@@ -116,14 +116,17 @@ tests against the mocks in `lib/hw_mocks/`). See [`test/README.md`](test/README.
 - [Downloading student photos from Moodle](docs/software/MOODLE_PHOTOS.md)
 - [Generating the custom fonts](docs/software/CUSTOM_FONT_GENERATION.md)
 - [Sample SD card](docs/software/sd_card_example/) — a complete card to copy.
-- [Web firmware installer](docs/flasher/) — browser USB flash (GitHub Pages).
+- [GitHub Pages hub](docs/site/) — Config + Firmware on
+  [verlab.github.io/…](https://verlab.github.io/presenca_carteirinha_ufmg/).
 
 **Tools**
-- [config-builder](tools/config-builder/README.md) — the offline browser tool that
-  authors `config.tar`. Also has a [spec](tools/config-builder/SPEC.md) and
-  [deployment notes](tools/config-builder/DEPLOY.md).
+- [config-builder](tools/config-builder/README.md) — browser tool that authors
+  `config.tar` ([live `/config/`](https://verlab.github.io/presenca_carteirinha_ufmg/config/);
+  [spec](tools/config-builder/SPEC.md), [deploy](tools/config-builder/DEPLOY.md)).
+- [Web firmware installer](docs/flasher/) —
+  [live `/firmware/`](https://verlab.github.io/presenca_carteirinha_ufmg/firmware/).
 - [Serving the builder from the device](docs/software/ONBOARD_CONFIG_BUILDER.md) —
-  designed, not built.
+  designed, not built (Pages hosting does not replace this).
 
 **Contributing**
 - [`CLAUDE.md`](CLAUDE.md) — build/test commands, layer rules, and the conventions
