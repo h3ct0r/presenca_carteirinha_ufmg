@@ -19,8 +19,9 @@ bool student_photo_src(const char* student_id, char* out, size_t cap);
 // caller). Does SD I/O — avoid calling it in a tight per-scan loop; count once.
 bool student_photo_exists(const char* student_id);
 
-// How many students in this class have an avatar on the card. One SD lookup per
-// student, so call it once per screen entry — never inside a rebuild.
+// How many students in this class have an avatar on the card. One directory
+// listing, matched against the roster in RAM — cheap enough for a view rebuild,
+// but still SD I/O on the LVGL thread: don't call it per card scan.
 int student_photo_count_for_class(const class_rec_t* cls);
 
 // The box every full-size avatar is fitted into (check-in overlay, kiosk

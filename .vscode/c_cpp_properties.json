@@ -723,7 +723,7 @@
                 ]
             },
             "defines": [
-                "APP_GIT_SHA=\"23dab8c-dirty\"",
+                "APP_GIT_SHA=\"5aa883a-dirty\"",
                 "PLATFORMIO=60118",
                 "BOARD_HAS_PSRAM",
                 "BOARD_HAS_PSRAM",
@@ -731,6 +731,7 @@
                 "ARDUINO_USB_CDC_ON_BOOT=1",
                 "ARDUINO_USB_MODE=1",
                 "CORE_DEBUG_LEVEL=3",
+                "BATTERY_DRAIN_LOG",
                 "CONFIG_PIX_CVT_RGB565_TO_RGB565_SUPPORT=1",
                 "CONFIG_PIX_CVT_RGB565_TO_RGB888_SUPPORT=1",
                 "CONFIG_PIX_CVT_RGB565_TO_GRAY_SUPPORT=1",

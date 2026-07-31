@@ -91,11 +91,6 @@ static lv_obj_t* s_roll_bar = nullptr;    // present-progress bar
 static lv_obj_t* s_fb_overlay = nullptr;
 static lv_timer_t* s_fb_timer = nullptr;
 
-// Count of roster students who have an avatar on the SD card. Computed once per
-// class entry (on_show) — never in the per-scan rebuild — since it does one SD
-// lookup per student.
-static int s_photo_count = 0;
-
 // EVERY static pointing into s_content, dropped together before it is cleaned.
 // Half of these used to be cleared and half not, which is exactly how a stale
 // pointer survives a refactor.
@@ -303,8 +298,8 @@ static void on_session_card(const char* uid_hex) {
         // Face-verified capture is kiosk-only; a roll-call tap registers directly.
         register_recognized(idx);
     }
-    update_roll_call();                      // only the chips changed
-    ui_set_card_capture(on_session_card);    // the capture is one-shot; re-arm it
+    update_roll_call();                    // only the chips changed
+    ui_set_card_capture(on_session_card);  // the capture is one-shot; re-arm it
 }
 
 static void roll_toggle_cb(lv_event_t* e) {
@@ -359,9 +354,12 @@ static void build_session_open(void) {
     lv_obj_set_style_bg_color(bar, lv_color_hex(THEME_BORDER), LV_PART_MAIN);
     lv_obj_set_style_bg_color(bar, lv_color_hex(THEME_SUCCESS), LV_PART_INDICATOR);
 
+    // Read here rather than on screen entry: this summary is the only place that
+    // shows it, and the hub the class list lands on must not pay for SD I/O.
+    // Card scans rebuild only the chips (update_roll_call), not this view.
     char photo_txt[48];
-    snprintf(photo_txt, sizeof(photo_txt), LV_SYMBOL_IMAGE "  %d/%d with photo", s_photo_count,
-             total);
+    snprintf(photo_txt, sizeof(photo_txt), LV_SYMBOL_IMAGE "  %d/%d with photo",
+             student_photo_count_for_class(s_cls), total);
     ui_make_label(summary, photo_txt, THEME_MUTED, &lv_font_montserrat_14);
 
     char turma_txt[160];
@@ -435,7 +433,7 @@ static void build_session_open(void) {
     lv_obj_set_width(s_roll_list, LV_PCT(100));
     lv_obj_set_height(s_roll_list, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(s_roll_list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(s_roll_list, 10, 0);  // matches s_content's row gap
+    lv_obj_set_style_pad_row(s_roll_list, 10, 0);             // matches s_content's row gap
     lv_obj_remove_flag(s_roll_list, LV_OBJ_FLAG_SCROLLABLE);  // sh.body scrolls
 
     update_roll_call();
@@ -552,6 +550,12 @@ static void update_roll_call(void) {
     lv_label_set_long_mode(count, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(count, LV_PCT(100));
     lv_obj_move_to_index(count, 0);
+
+    // repeat the truncated message at the bottom as well
+    if (truncated) {
+        snprintf(head, sizeof(head), "Showing %d of %d — search to narrow the list", shown,
+                 matched);
+    }
 }
 
 static void cal_changed_cb(lv_event_t* e) {
@@ -1065,7 +1069,7 @@ static void enroll_goto(enroll_state_t st) {
     forget_view_widgets();
     lv_obj_clean(s_content);
     lv_obj_set_height(s_content, LV_SIZE_CONTENT);  // SEARCH overrides; see build_enroll_search
-    update_header();       // the subtitle names the enroll step
+    update_header();                                // the subtitle names the enroll step
     apply_keyboard_pad();
     build_enroll();
 }
@@ -1164,9 +1168,9 @@ static void update_header(void) {
     }
     char subtitle[88];
     if (s_view == VIEW_ENROLL) {
-        const char* step = s_enroll_state == ENROLL_MANUAL  ? "new student"
-                           : s_enroll_state == ENROLL_WAIT  ? "waiting for the card"
-                                                            : "find the student";
+        const char* step = s_enroll_state == ENROLL_MANUAL ? "new student"
+                           : s_enroll_state == ENROLL_WAIT ? "waiting for the card"
+                                                           : "find the student";
         lv_label_set_text(s_sh.title, "Enroll a card");
         snprintf(subtitle, sizeof(subtitle), "%s  |  %s", s_cls->name, step);
     } else {
@@ -1266,9 +1270,8 @@ static void on_show(void* arg) {
     } else if (arg) {
         s_view = VIEW_HUB;
     }
-    s_photo_count = student_photo_count_for_class(s_cls);  // once per entry, not per scan
-    keyboard_set_visibility_cb(kb_visibility_cb);   // reclaim the keyboard's space when it hides
-    rebuild_content();                              // sets the header + padding
+    keyboard_set_visibility_cb(kb_visibility_cb);  // reclaim the keyboard's space when it hides
+    rebuild_content();                             // sets the header + padding
 }
 
 static void on_hide(void) {

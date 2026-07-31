@@ -2,13 +2,18 @@
 
 #include <SD_MMC.h>
 #include <stdio.h>
+#include <string.h>
+#include <strings.h>
 
 #include "app/photo_fit.h"
+#include "esp_timer.h"
 #include "services/roster_service.h"
 #include "esp32-hal-log.h"
 #include "storage/sd_card.h"
 
 static const char* TAG = "student_photo";
+
+static const char* PHOTO_DIR = "/students/photos";
 
 // photo_fit stays free of lvgl.h so it can be host-tested; this is the one file
 // that sees both constants, so it is where they get tied together.
@@ -31,8 +36,29 @@ static constexpr size_t AVATAR_MAX_BYTES = 64 * 1024;
 bool student_photo_exists(const char* student_id) {
     if (!student_id || !student_id[0] || !sd_card_mount()) return false;
     char path[80];
-    snprintf(path, sizeof(path), "/students/photos/%s.jpg", student_id);
+    snprintf(path, sizeof(path), "%s/%s.jpg", PHOTO_DIR, student_id);
     return SD_MMC.exists(path);
+}
+
+// "12345.jpg" -> "12345". False for anything that isn't a .jpg, or whose stem
+// is longer than a student id can be (so it could never match one anyway).
+static bool photo_stem(const char* filename, char* out, size_t cap) {
+    if (!filename || !out || !cap) return false;
+    const char* dot = strrchr(filename, '.');
+    if (!dot || strcasecmp(dot, ".jpg") != 0) return false;
+    size_t len = (size_t)(dot - filename);
+    if (len == 0 || len >= cap) return false;
+    memcpy(out, filename, len);
+    out[len] = '\0';
+    return true;
+}
+
+static bool class_has_student_id(const class_rec_t* cls, const char* id) {
+    for (int j = 0; j < cls->roster_count; j++) {
+        const student_t* st = roster_student_at(cls->roster[j]);
+        if (st && strcmp(st->id, id) == 0) return true;
+    }
+    return false;
 }
 
 bool student_photo_src(const char* student_id, char* out, size_t cap) {
@@ -62,13 +88,36 @@ bool student_photo_src(const char* student_id, char* out, size_t cap) {
     return true;
 }
 
+// One pass over the photo directory, matching filenames against the roster in
+// RAM. The obvious version — student_photo_exists() per student — walked that
+// same flat directory once per student (it holds EVERY student's avatar, not
+// just this class's), which is what made opening a class screen lag.
 int student_photo_count_for_class(const class_rec_t* cls) {
-    if (!cls) return 0;
-    int n = 0;
-    for (int j = 0; j < cls->roster_count; j++) {
-        const student_t* st = roster_student_at(cls->roster[j]);
-        if (st && student_photo_exists(st->id)) n++;
+    if (!cls || !sd_card_mount()) return 0;
+    const int64_t t0 = esp_timer_get_time();
+
+    File dir = SD_MMC.open(PHOTO_DIR);
+    if (!dir || !dir.isDirectory()) {
+        if (dir) dir.close();
+        return 0;
     }
+
+    int n = 0, seen = 0;
+    File e;
+    while ((e = dir.openNextFile())) {
+        if (!e.isDirectory()) {
+            seen++;
+            char id[sizeof(student_t::id)];
+            if (photo_stem(e.name(), id, sizeof(id)) && class_has_student_id(cls, id)) n++;
+        }
+        e.close();
+    }
+    dir.close();
+
+    // Instrumentation: this is the one SD cost on the class-screen path, and it
+    // can only be measured on the device.
+    ESP_LOGI(TAG, "photo count for %s: %d/%d students, %d files scanned, %lld ms", cls->code, n,
+             cls->roster_count, seen, (long long)((esp_timer_get_time() - t0) / 1000));
     return n;
 }
 
