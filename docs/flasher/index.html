@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Install firmware · RFID Attendance</title>
+    <meta
+      name="description"
+      content="USB firmware installer for the RFID Attendance device (ESP32-P4) — Web Serial, GitHub Releases."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="device-shell">
+      <header class="topbar">
+        <div class="brands">
+          <img src="assets/verlab.jpg" alt="VerLab" class="logo" />
+          <img src="assets/GEAR.jpg" alt="GEAR" class="logo" />
+        </div>
+        <span class="topbar-meta">ESP32-P4 · USB-JTAG</span>
+      </header>
+
+      <section class="page-header">
+        <h1>Install firmware</h1>
+        <p class="subtitle">
+          RFID Attendance · firmware from
+          <a id="releasesLink" href="https://github.com/verlab/presenca_carteirinha_ufmg/releases"
+            >GitHub Releases</a
+          >
+        </p>
+      </section>
+
+      <main class="content">
+        <noscript>
+          <p class="banner err">JavaScript is required for USB flashing.</p>
+        </noscript>
+
+        <div id="noSerial" class="banner err hidden" role="alert">
+          Your browser does not support Web Serial. Open this page in
+          <strong>Google Chrome</strong> or <strong>Microsoft Edge</strong> on a
+          desktop PC (not on iOS).
+        </div>
+
+        <article class="card steps-card">
+          <div class="card-icon" aria-hidden="true">1</div>
+          <div class="card-body">
+            <h2>Before you start</h2>
+            <ol class="steps">
+              <li>
+                Connect the device with a USB <strong>data</strong> cable. On
+                battery, press <strong>SW3</strong> to power on.
+              </li>
+              <li>
+                Close PlatformIO monitor / any other serial tool.
+              </li>
+              <li>
+                Select a release, acknowledge the risk, click
+                <strong>Install</strong>, pick the serial port.
+              </li>
+              <li>
+                If auto-reset fails:
+                <strong>hold BOOT → tap RST → release RST → release BOOT</strong>.
+              </li>
+            </ol>
+          </div>
+          <img
+            src="assets/device.jpg"
+            alt="RFID Attendance device"
+            class="device-photo"
+          />
+        </article>
+
+        <article class="card install-card">
+          <div class="card-icon accent" aria-hidden="true">⚡</div>
+          <div class="card-body install-panel">
+            <h2>Flash</h2>
+
+            <div class="row">
+              <label for="releaseSelect">Firmware</label>
+              <select id="releaseSelect" disabled>
+                <option value="">Loading releases…</option>
+              </select>
+            </div>
+
+            <div class="row row-split">
+              <div>
+                <label for="flashBaud">Flash speed</label>
+                <select id="flashBaud">
+                  <option value="115200" selected>115200 baud</option>
+                  <option value="230400">230400 baud</option>
+                  <option value="460800">460800 baud</option>
+                  <option value="921600">921600 baud</option>
+                </select>
+              </div>
+              <div class="installed">
+                <span class="label">Installed</span>
+                <span id="deviceVersion" class="mono">—</span>
+                <button
+                  type="button"
+                  class="linkish"
+                  id="btnReadVersion"
+                  title="Reset and read boot banner @ 115200 baud"
+                >
+                  Read
+                </button>
+              </div>
+            </div>
+
+            <p id="versionCompare" class="hint"></p>
+            <p id="statusLine" class="status-line" role="status"></p>
+
+            <label class="ack">
+              <input type="checkbox" id="ackFlash" />
+              <span
+                >I understand the risks (do not unplug USB during flash). This
+                writes bootloader + partition table + app; SD card data is not
+                erased.</span
+              >
+            </label>
+
+            <button type="button" class="install-btn" id="btnInstall" disabled>
+              Install
+            </button>
+
+            <div class="progress" id="progressWrap">
+              <div id="progressBar"></div>
+            </div>
+
+            <details class="log-details">
+              <summary>Log</summary>
+              <div class="log" id="log" aria-live="polite"></div>
+            </details>
+          </div>
+        </article>
+      </main>
+
+      <footer class="bottombar">
+        <a
+          id="repoLink"
+          class="nav-chip"
+          href="https://github.com/verlab/presenca_carteirinha_ufmg"
+          >Repo</a
+        >
+        <a
+          id="deployLink"
+          class="nav-chip"
+          href="https://github.com/verlab/presenca_carteirinha_ufmg/blob/main/docs/flasher/DEPLOY.md"
+          >Deploy notes</a
+        >
+        <span class="nav-chip active">Installer</span>
+        <span class="nav-chip muted">VerLab / GEAR</span>
+      </footer>
+    </div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
