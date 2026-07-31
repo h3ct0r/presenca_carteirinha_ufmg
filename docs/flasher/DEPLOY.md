@@ -6,7 +6,7 @@ Static page on GitHub Pages. Firmware binaries come from **GitHub Releases**
 ## Setup
 
 1. Repository should be **public** (`verlab/presenca_carteirinha_ufmg`).
-2. **Settings → Pages → Source: GitHub Actions**.
+2. **Settings → Pages → Source: GitHub Actions** (no `gh-pages` branch).
 3. URL after first deploy:
    **https://verlab.github.io/presenca_carteirinha_ufmg/**
 

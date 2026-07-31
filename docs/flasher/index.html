@@ -56,12 +56,10 @@
                 Connect the device with a USB <strong>data</strong> cable. On
                 battery, press <strong>SW3</strong> to power on.
               </li>
-              <li>
-                Close PlatformIO monitor / any other serial tool.
-              </li>
+              <li>Close PlatformIO monitor / any other serial tool.</li>
               <li>
                 Select a release, acknowledge the risk, click
-                <strong>Install</strong>, pick the serial port.
+                <strong>Install</strong>, then pick the serial port.
               </li>
               <li>
                 If auto-reset fails:
@@ -118,8 +116,8 @@
             <label class="ack">
               <input type="checkbox" id="ackFlash" />
               <span
-                >I understand the risks (do not unplug USB during flash). This
-                writes bootloader + partition table + app; SD card data is not
+                >I understand the risks — do not unplug USB during flash. This
+                writes bootloader, partition table, and app. SD card data is not
                 erased.</span
               >
             </label>
@@ -145,7 +143,7 @@
           id="repoLink"
           class="nav-chip"
           href="https://github.com/verlab/presenca_carteirinha_ufmg"
-          >Repo</a
+          >Repository</a
         >
         <a
           id="deployLink"
@@ -154,7 +152,7 @@
           >Deploy notes</a
         >
         <span class="nav-chip active">Installer</span>
-        <span class="nav-chip muted">VerLab / GEAR</span>
+        <span class="nav-chip muted">VerLab · GEAR</span>
       </footer>
     </div>
     <script type="module" src="app.js"></script>

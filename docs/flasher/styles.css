@@ -22,6 +22,8 @@
   --nav-idle: #111827;
   --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
   --sans: "Source Sans 3", "Segoe UI", sans-serif;
+  --shell-max: 960px;
+  --pad-x: 20px;
 }
 
 * {
@@ -35,12 +37,12 @@ body {
   background: #cfd8e3;
   color: var(--text);
   font-family: var(--sans);
-  line-height: 1.45;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
 
 .device-shell {
-  max-width: 480px;
+  max-width: var(--shell-max);
   min-height: 100vh;
   margin: 0 auto;
   display: flex;
@@ -53,8 +55,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 10px 14px;
+  gap: 16px;
+  padding: 12px var(--pad-x);
   background: var(--chrome);
   color: var(--on-primary);
 }
@@ -62,21 +64,21 @@ body {
 .brands {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
 
 .logo {
-  height: 28px;
+  height: 32px;
   width: auto;
   object-fit: contain;
   background: #fff;
   border-radius: 4px;
-  padding: 2px 6px;
+  padding: 2px 8px;
 }
 
 .topbar-meta {
-  font-size: 0.72rem;
+  font-size: 0.8rem;
   font-weight: 600;
   color: var(--header-sub);
   white-space: nowrap;
@@ -85,20 +87,21 @@ body {
 .page-header {
   background: var(--primary);
   color: var(--on-primary);
-  padding: 18px 18px 20px;
+  padding: 22px var(--pad-x) 24px;
 }
 
 .page-header h1 {
   margin: 0;
-  font-size: 1.55rem;
+  font-size: clamp(1.55rem, 2.4vw, 1.85rem);
   font-weight: 700;
   letter-spacing: -0.01em;
 }
 
 .page-header .subtitle {
-  margin: 6px 0 0;
-  font-size: 0.92rem;
+  margin: 8px 0 0;
+  font-size: 1rem;
   color: var(--header-sub);
+  max-width: 42rem;
 }
 
 .page-header a {
@@ -108,16 +111,30 @@ body {
 
 .content {
   flex: 1;
-  padding: 14px 12px 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  padding: 20px var(--pad-x) 28px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  align-content: start;
+}
+
+@media (min-width: 800px) {
+  .content {
+    grid-template-columns: minmax(280px, 1fr) minmax(320px, 1.15fr);
+    gap: 18px;
+    align-items: start;
+  }
+
+  .content > .banner,
+  .content > noscript {
+    grid-column: 1 / -1;
+  }
 }
 
 .banner {
-  padding: 12px 14px;
-  border-radius: 10px;
-  font-size: 0.9rem;
+  padding: 14px 16px;
+  border-radius: 12px;
+  font-size: 0.95rem;
   background: var(--surface);
   border: 1px solid var(--border);
 }
@@ -134,30 +151,65 @@ body {
 
 .card {
   display: grid;
-  grid-template-columns: 44px 1fr auto;
-  gap: 12px;
+  grid-template-columns: 48px 1fr;
+  gap: 14px 16px;
   align-items: start;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 14px;
+  border-radius: 14px;
+  padding: 18px;
   box-shadow: 0 1px 0 rgba(13, 31, 74, 0.04);
 }
 
+.steps-card {
+  grid-template-columns: 48px 1fr;
+  grid-template-areas:
+    "icon body"
+    "photo photo";
+}
+
+.steps-card .card-icon {
+  grid-area: icon;
+}
+
+.steps-card .card-body {
+  grid-area: body;
+}
+
+.steps-card .device-photo {
+  grid-area: photo;
+  width: 100%;
+  height: 180px;
+  margin-top: 2px;
+}
+
+@media (min-width: 800px) {
+  .steps-card {
+    grid-template-columns: 48px 1fr;
+    grid-template-areas:
+      "icon body"
+      ". photo";
+  }
+
+  .steps-card .device-photo {
+    height: 220px;
+  }
+}
+
 .card.install-card {
-  grid-template-columns: 44px 1fr;
+  grid-template-columns: 48px 1fr;
 }
 
 .card-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 10px;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
   background: var(--primary);
   color: var(--on-primary);
   display: grid;
   place-items: center;
   font-weight: 700;
-  font-size: 1.05rem;
+  font-size: 1.1rem;
   flex-shrink: 0;
 }
 
@@ -170,41 +222,32 @@ body {
 }
 
 .card-body h2 {
-  margin: 0 0 8px;
-  font-size: 1.05rem;
+  margin: 0 0 10px;
+  font-size: 1.15rem;
   font-weight: 700;
   color: var(--text);
 }
 
 .device-photo {
-  width: 72px;
-  height: 96px;
   object-fit: cover;
-  border-radius: 8px;
+  border-radius: 10px;
   border: 1px solid var(--border);
-}
-
-@media (max-width: 420px) {
-  .steps-card {
-    grid-template-columns: 44px 1fr;
-  }
-
-  .steps-card .device-photo {
-    grid-column: 2;
-    width: 100%;
-    height: 140px;
-  }
+  background: var(--soft);
 }
 
 .steps {
   margin: 0;
-  padding-left: 1.15rem;
+  padding-left: 1.2rem;
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: 0.95rem;
 }
 
 .steps li {
-  margin-bottom: 6px;
+  margin-bottom: 8px;
+}
+
+.steps li:last-child {
+  margin-bottom: 0;
 }
 
 .steps strong {
@@ -212,16 +255,16 @@ body {
 }
 
 .row {
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 
 .row-split {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: 14px;
 }
 
-@media (max-width: 420px) {
+@media (max-width: 560px) {
   .row-split {
     grid-template-columns: 1fr;
   }
@@ -230,7 +273,7 @@ body {
 label,
 .installed .label {
   display: block;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -240,42 +283,42 @@ label,
 
 select {
   width: 100%;
-  padding: 11px 12px;
+  padding: 12px 14px;
   border-radius: 10px;
   border: 1px solid var(--border);
   background: var(--soft);
   color: var(--text);
   font-family: var(--sans);
-  font-size: 0.95rem;
+  font-size: 0.98rem;
 }
 
 .installed {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  padding-top: 18px;
+  gap: 8px 12px;
+  padding-top: 20px;
 }
 
 .mono {
   font-family: var(--mono);
-  font-size: 0.88rem;
+  font-size: 0.92rem;
 }
 
 .hint {
-  margin: 0 0 8px;
-  font-size: 0.85rem;
+  margin: 0 0 10px;
+  font-size: 0.9rem;
   color: var(--muted);
   min-height: 1.15em;
 }
 
 .status-line {
-  margin: 0 0 12px;
-  padding: 10px 12px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
   border-radius: 10px;
   border: 1px solid var(--border);
   background: var(--soft);
-  font-size: 0.88rem;
+  font-size: 0.92rem;
   color: var(--muted);
   min-height: 1.1rem;
 }
@@ -295,16 +338,21 @@ select {
 .ack {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  margin: 14px 0 16px;
-  font-size: 0.88rem;
+  gap: 12px;
+  margin: 16px 0 18px;
+  font-size: 0.92rem;
+  line-height: 1.45;
   color: var(--muted);
   cursor: pointer;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
 }
 
 .ack input {
-  margin-top: 3px;
+  margin-top: 4px;
   width: auto;
+  flex-shrink: 0;
   accent-color: var(--primary);
 }
 
@@ -315,7 +363,7 @@ select {
   border: none;
   border-radius: 12px;
   font-family: var(--sans);
-  font-size: 1.05rem;
+  font-size: 1.08rem;
   font-weight: 700;
   cursor: pointer;
   color: var(--on-primary);
@@ -338,7 +386,7 @@ button.linkish {
   background: none;
   color: var(--accent);
   font-family: var(--sans);
-  font-size: 0.85rem;
+  font-size: 0.88rem;
   font-weight: 700;
   cursor: pointer;
   padding: 0;
@@ -346,8 +394,8 @@ button.linkish {
 }
 
 .progress {
-  margin-top: 14px;
-  height: 8px;
+  margin-top: 16px;
+  height: 10px;
   border-radius: 999px;
   background: var(--soft);
   overflow: hidden;
@@ -366,8 +414,8 @@ button.linkish {
 }
 
 .log-details {
-  margin-top: 14px;
-  font-size: 0.85rem;
+  margin-top: 16px;
+  font-size: 0.9rem;
   color: var(--muted);
 }
 
@@ -378,41 +426,51 @@ button.linkish {
 }
 
 .log {
-  margin-top: 8px;
-  padding: 10px 12px;
+  margin-top: 10px;
+  padding: 12px 14px;
   border-radius: 10px;
   background: var(--nav-idle);
   color: #f9fafb;
   border: 1px solid #1f2937;
   font-family: var(--mono);
-  font-size: 0.72rem;
-  max-height: 160px;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  max-height: 240px;
   overflow-y: auto;
   white-space: pre-wrap;
 }
 
 .bottombar {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-  padding: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px var(--pad-x);
   background: var(--chrome);
 }
 
 .nav-chip {
-  display: grid;
-  place-items: center;
-  min-height: 48px;
-  padding: 8px 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 8px 14px;
   border-radius: 10px;
   border: 1.5px solid rgba(255, 255, 255, 0.55);
   background: var(--nav-idle);
   color: #fff;
   text-align: center;
   text-decoration: none;
-  font-size: 0.68rem;
+  font-size: 0.8rem;
   font-weight: 700;
   line-height: 1.2;
+  flex: 1 1 auto;
+}
+
+@media (min-width: 800px) {
+  .nav-chip {
+    flex: 0 1 auto;
+    min-width: 140px;
+  }
 }
 
 .nav-chip.active {
