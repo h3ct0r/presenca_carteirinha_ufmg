@@ -1,45 +1,45 @@
 #include "app/battery_curve.h"
 
-// mV -> %, high to low. Linear from 3.75 V (100%) to 2.70 V (0%), with an anchor
-// every 5% (52.5 mV apart) so the mapping is easy to tweak per-anchor later;
-// battery_mv_to_pct() interpolates linearly between adjacent anchors.
+// mV -> %, high to low. Linear across the pack's usable range
+// 4.20 V (100%) .. 2.70 V (0%), with an anchor every 5% (75 mV) so the mapping
+// is easy to tweak per-anchor later; battery_mv_to_pct() interpolates linearly
+// between adjacent anchors.
 //
 // These are post-calibration volts, i.e. what battery_service reports after
-// BAT_CAL_SCALE — not raw cell volts. The endpoints have NOT been checked
-// against a real discharge; build with BATTERY_DRAIN_LOG (platformio.ini) to
-// collect that data. See BACKLOG.md §Q4.
+// BAT_CAL_SCALE — not raw cell volts. Endpoints under load are still unverified;
+// see BACKLOG.md §Q4 / BATTERY_DRAIN_LOG in platformio.ini.
 struct volt_pct_t {
     uint16_t mv;
     uint8_t pct;
 };
 static const volt_pct_t CURVE[] = {
-    {3750, 100},
-    {3698, 95},
-    {3645, 90},
-    {3593, 85},
-    {3540, 80},
-    {3488, 75},
-    {3435, 70},
-    {3383, 65},
-    {3330, 60},
-    {3278, 55},
-    {3225, 50},
-    {3173, 45},
-    {3120, 40},
-    {3068, 35},
-    {3015, 30},
-    {2963, 25},
-    {2910, 20},
-    {2858, 15},
-    {2805, 10},
-    {2753, 5},
+    {4200, 100},
+    {4125, 95},
+    {4050, 90},
+    {3975, 85},
+    {3900, 80},
+    {3825, 75},
+    {3750, 70},
+    {3675, 65},
+    {3600, 60},
+    {3525, 55},
+    {3450, 50},
+    {3375, 45},
+    {3300, 40},
+    {3225, 35},
+    {3150, 30},
+    {3075, 25},
+    {3000, 20},
+    {2925, 15},
+    {2850, 10},
+    {2775, 5},
     {2700, 0},
 };
 
-// 3.99 V. Above the table's 100% anchor with room to spare, and below the ~4.2 V
-// a cell is driven to while charging, so a full battery on its own never reaches
-// it and a charging one always passes it.
-static constexpr uint16_t CHARGING_MV = 3990;
+// No charge-status pin on this board. Treat readings strictly above the 100%
+// anchor as "on the charger" — a full pack at 4.20 V is not charging; the rail
+// only goes higher while USB is actively topping the cell.
+static constexpr uint16_t CHARGING_MV = 4200;
 
 bool battery_is_charging(uint16_t mv) { return mv > CHARGING_MV; }
 
