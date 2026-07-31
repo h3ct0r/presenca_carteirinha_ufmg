@@ -8,7 +8,8 @@
 // Events are plain PODs copied by value into the queue, so payloads must be
 // fixed-size (no pointers to task-local buffers).
 typedef enum : uint8_t {
-    APP_EVENT_CARD_SCANNED,  // payload: card
+    APP_EVENT_CARD_SCANNED,   // payload: card
+    APP_EVENT_CARD_COLLISION, // no payload: several cards on the reader at once
     APP_EVENT_NET_STATE,     // payload: net
     APP_EVENT_POWER_STATE,   // payload: power
     APP_EVENT_CONFIG_STATE,  // payload: config

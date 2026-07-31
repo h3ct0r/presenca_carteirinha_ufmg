@@ -11,7 +11,7 @@ Strict layering, events flow up. Only `ui/` includes `lvgl.h`.
 ```
 src/ui/        LVGL screens, components, theme
 src/app/       pure logic, no hardware: event_bus, auth, session, uid, ustar,
-               battery_curve, photo_fit
+               battery_curve, photo_fit, card_gate
 src/services/  own hardware + SD, run FreeRTOS tasks: config, roster, rfid,
                battery, export, wifi_ap, file_server, face_detection, import
 src/storage/   SD modules: sd_card (mount), attendance_store, photo_store,
@@ -113,6 +113,18 @@ to.
 `ui_set_card_capture(cb)` diverts the next scanned card to a flow such as enroll.
 It is **one-shot** — the dispatcher clears it before calling, so a flow that
 wants the next card must re-arm. Nothing re-arms it implicitly.
+
+### Reading cards
+
+The PN532 is polled for **one** target at a time (`InListPassiveTarget` with
+MaxTg=1), so when several cards sit on the reader it returns whichever wins
+anticollision — and that **alternates between polls**. A debounce that only
+remembers the previous UID is therefore useless: every poll looks like a new
+card. `app/card_gate` handles this by requiring the same UID on two consecutive
+polls before accepting one (alternating cards never manage a run that long), and
+by treating a UID that reappears after a different one as proof that more than
+one card is present — reported once as `APP_EVENT_CARD_COLLISION` so the UI can
+ask for a single card. Nothing registers until the reader is cleared.
 
 ## LVGL gotchas
 

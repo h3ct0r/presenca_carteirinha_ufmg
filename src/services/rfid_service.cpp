@@ -17,6 +17,14 @@ static void on_card(const uint8_t* uid, uint8_t uid_len) {
     event_bus_post(&ev);
 }
 
+// Several cards on the reader: no tap can be attributed to a student, so tell
+// the UI rather than registering an arbitrary one of them.
+static void on_collision(void) {
+    app_event_t ev = {};
+    ev.type = APP_EVENT_CARD_COLLISION;
+    event_bus_post(&ev);
+}
+
 bool rfid_service_start(void) {
-    return pn532_reader_start(on_card);
+    return pn532_reader_start(on_card, on_collision);
 }

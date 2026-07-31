@@ -33,6 +33,17 @@ static void test_tap_posts_card_scanned_event(void) {
     TEST_ASSERT_EQUAL_UINT8_ARRAY(uid, ev.card.uid, 7);
 }
 
+// Several cards on the reader cannot be attributed to one student, so the
+// service must say so instead of posting an arbitrary CARD_SCANNED.
+static void test_collision_posts_its_own_event(void) {
+    mock_pn532_collision();
+
+    app_event_t ev = {};
+    TEST_ASSERT_TRUE(event_bus_poll(&ev));
+    TEST_ASSERT_EQUAL(APP_EVENT_CARD_COLLISION, ev.type);
+    TEST_ASSERT_FALSE(event_bus_poll(&ev));  // exactly one event, no card event
+}
+
 static void test_oversized_uid_is_clamped(void) {
     // Event payload holds at most 10 bytes; a longer UID must be truncated,
     // not overflow.
@@ -55,6 +66,7 @@ int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_start_registers_with_reader);
     RUN_TEST(test_tap_posts_card_scanned_event);
+    RUN_TEST(test_collision_posts_its_own_event);
     RUN_TEST(test_oversized_uid_is_clamped);
     RUN_TEST(test_start_fails_when_reader_absent);
     return UNITY_END();

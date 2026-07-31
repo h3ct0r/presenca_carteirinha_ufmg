@@ -1,8 +1,10 @@
 #include "ui/ui.h"
 
 #include "esp32-hal-log.h"
+#include "audio/beeper.h"
 #include "ui/components/keyboard.h"
 #include "ui/components/status_bar.h"
+#include "ui/components/toast.h"
 #include "ui/lvgl_fs_sd.h"
 #include "ui/screen_manager.h"
 #include "ui/screens/scr_admin.h"
@@ -69,6 +71,12 @@ void ui_handle_event(const app_event_t* ev) {
                      (int)scr_mgr_current());
             break;
         }
+        case APP_EVENT_CARD_COLLISION:
+            // Screen-agnostic on purpose: this can happen on the idle gate, the
+            // roll call or the kiosk, and the advice is the same everywhere.
+            beeper_error();
+            ui_toast_show("Two cards detected - present one card at a time", false);
+            break;
         case APP_EVENT_NET_STATE:
             ui_state_set_net(ev->net.connected, ev->net.rssi);
             break;

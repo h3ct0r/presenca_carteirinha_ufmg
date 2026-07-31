@@ -21,7 +21,7 @@ native-only).
 
 ## Suites
 
-15 suites, 164 cases. This table is the only place those numbers are recorded —
+16 suites, 181 cases. This table is the only place those numbers are recorded —
 other docs link here rather than restating them.
 
 | Suite | Cases | Covers |
@@ -33,13 +33,14 @@ other docs link here rather than restating them.
 | `native/test_ustar` | 14 | tar reading and the import path whitelist |
 | `native/test_core` | 11 | `uid_normalize`, login session, battery voltage→percent curve |
 | `native/test_photo_fit` | 11 | aspect-preserving avatar scale/size arithmetic |
+| `native/test_card_gate` | 16 | RFID tap decisions: confirm-before-accept, multi-card detection |
 | `native/test_export` | 6 | CSV export: FREQ tallying, overwrite, session snapshot/restore |
 | `native/test_import` | 6 | `config.tar` staging, validation, apply and rollback |
 | `native/test_photo` | 6 | photo capture pipeline: JPEG write, BMP fallback, file numbering |
 | `native/test_battery_log` | 6 | drain-log CSV header and append behaviour |
 | `native/test_checkin` | 5 | check-in photo path and per-day counter |
 | `native/test_backup` | 5 | pre-import snapshot of the authored files |
-| `native/test_rfid` | 4 | fake card taps → `CARD_SCANNED` events, UID clamping |
+| `native/test_rfid` | 5 | fake card taps → `CARD_SCANNED` events, UID clamping |
 | `native/test_event_bus` | 3 | event bus FIFO semantics and full-queue drop policy |
 
 ## How the hardware is mocked

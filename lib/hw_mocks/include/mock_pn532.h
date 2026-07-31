@@ -9,3 +9,7 @@
 void mock_pn532_set_start_result(bool ok);
 bool mock_pn532_started(void);
 void mock_pn532_tap(const uint8_t* uid, uint8_t uid_len);
+
+// Fires the collision callback, as the real reader does when several cards are
+// on it at once.
+void mock_pn532_collision(void);
