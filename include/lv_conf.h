@@ -69,11 +69,14 @@
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
     /** Size of memory available for `lv_malloc()` in bytes (>= 2kB).
-     *  Widget objects (cards/labels/chips) come from this pool. A full-class
-     *  roll call (~100 students x several objects) can approach the old 64 kB,
-     *  and LV_USE_ASSERT_MALLOC turns an exhaustion into a hard reboot, so keep
-     *  generous headroom. Lives in internal RAM (draw buffers are in PSRAM). */
-    #define LV_MEM_SIZE (256 * 1024U)         /**< [bytes] */
+     *  Widget objects (cards/labels/chips) come from this pool, and
+     *  LV_USE_ASSERT_MALLOC turns an exhaustion into a silent freeze, so it is
+     *  sized for headroom rather than measured need. Cheap to be generous now
+     *  that it comes from PSRAM (see LV_MEM_POOL_ALLOC below): it costs nothing
+     *  in internal RAM, and TLSF keeps its control block inside the pool.
+     *  scr_class logs the roll-call peak — the real worst case — so this can be
+     *  set from evidence later. */
+    #define LV_MEM_SIZE (512 * 1024U)         /**< [bytes] */
 
     /** Size of the memory expand for `lv_malloc()` in bytes */
     #define LV_MEM_POOL_EXPAND_SIZE 0
@@ -82,8 +85,16 @@
     #define LV_MEM_ADR 0     /**< 0: unused*/
     /* Instead of an address give a memory allocator that will be called to get a memory pool for LVGL. E.g. my_malloc */
     #if LV_MEM_ADR == 0
-        #undef LV_MEM_POOL_INCLUDE
-        #undef LV_MEM_POOL_ALLOC
+        /* Take the pool from PSRAM. Left to itself LVGL declares this as a
+         * static array (`work_mem_int`), which put 256 kB of the P4's 768 kB of
+         * INTERNAL RAM permanently out of reach — with the roster statics and
+         * the task stacks on top, bringing the WiFi stack up left too little
+         * for DMA-capable allocations and every sdmmc read started failing with
+         * ESP_ERR_NO_MEM (see docs/software/ARCHITECTURE.md, "Memory budget").
+         * PSRAM is slower per allocation, but the draw buffers already live
+         * there and the pool is sized for headroom rather than speed. */
+        #define LV_MEM_POOL_INCLUDE "esp_heap_caps.h"
+        #define LV_MEM_POOL_ALLOC(size) heap_caps_malloc(size, MALLOC_CAP_SPIRAM)
     #endif
 #endif  /*LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN*/
 
@@ -1113,7 +1124,7 @@
 #define LV_USE_SNAPSHOT 0
 
 /** 1: Enable system monitor component */
-#define LV_USE_SYSMON   0
+#define LV_USE_SYSMON   1
 #if LV_USE_SYSMON
     /** Get the idle percentage. E.g. uint32_t my_get_idle(void); */
     #define LV_SYSMON_GET_IDLE lv_os_get_idle_percent

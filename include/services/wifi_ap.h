@@ -24,11 +24,5 @@ void wifi_ap_stop(void);
 
 bool wifi_ap_is_running(void);
 
-// True once the AP has been started in this boot, even after wifi_ap_stop().
-// Consumers that need the internal heap the WiFi stack permanently took (the
-// face-detection model load, which reads from SD through a DMA-capable buffer)
-// use this to degrade instead of failing at an unrecoverable point.
-bool wifi_ap_was_started(void);
-
 // The AP gateway IP as a string ("192.168.4.1"), or "" when not running.
 void wifi_ap_ip(char* out, size_t cap);

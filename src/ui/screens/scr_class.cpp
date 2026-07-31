@@ -10,6 +10,7 @@
 #include "app/class_stats.h"
 #include "app/uid.h"
 #include "audio/beeper.h"
+#include "esp32-hal-log.h"
 #include "esp_timer.h"
 #include "services/roster_service.h"
 #include "storage/attendance_store.h"
@@ -441,6 +442,25 @@ static void build_session_open(void) {
     ui_set_card_capture(on_session_card);
 }
 
+// The roll call is the heaviest LVGL screen in the firmware — ROLL_MAX_ROWS
+// chips at ~5 objects each, rebuilt from scratch on every tap — so its peak is
+// what LV_MEM_SIZE has to be sized for. The boot-time figure in main.cpp is
+// measured before any of this exists and says nothing about the worst case.
+//
+// Logged only when a new high-water mark is reached, so a session produces a
+// handful of lines rather than one per tap.
+static void log_pool_peak(int chips) {
+    static uint32_t s_peak_used = 0;
+    lv_mem_monitor_t m;
+    lv_mem_monitor(&m);
+    const uint32_t used = (uint32_t)(m.total_size - m.free_size);
+    if (used <= s_peak_used) return;
+    s_peak_used = used;
+    ESP_LOGI("scr_class", "LVGL pool peak: %u/%u B used (%u%%), largest free %u, %d chips",
+             (unsigned)used, (unsigned)m.total_size, (unsigned)m.used_pct,
+             (unsigned)m.free_biggest_size, chips);
+}
+
 // Rebuilds ONLY the roll-call chips and the two summary widgets that track the
 // present count. Called on every tap in place of the old whole-view rebuild.
 static void update_roll_call(void) {
@@ -551,6 +571,8 @@ static void update_roll_call(void) {
     lv_label_set_long_mode(count, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(count, LV_PCT(100));
     lv_obj_move_to_index(count, 0);
+
+    log_pool_peak(shown);
 }
 
 static void cal_changed_cb(lv_event_t* e) {

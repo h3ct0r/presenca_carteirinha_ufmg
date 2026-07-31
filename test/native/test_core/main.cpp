@@ -86,6 +86,22 @@ static void test_battery_table_points(void) {
     TEST_ASSERT_EQUAL_UINT8(60, battery_mv_to_pct(3480));
 }
 
+// The board has no charge-status line, so "charging" is inferred from the rail
+// reading higher than the pack alone can drive it.
+static void test_battery_charging_threshold(void) {
+    TEST_ASSERT_FALSE(battery_is_charging(3990));  // exactly 3.99 V is not yet charging
+    TEST_ASSERT_TRUE(battery_is_charging(3991));
+    TEST_ASSERT_TRUE(battery_is_charging(4200));  // on the charger
+}
+
+static void test_battery_full_pack_is_not_charging(void) {
+    // A full battery sits at the curve's 100% anchor, well under the threshold:
+    // the icon must not claim to be charging just because the pack is full.
+    TEST_ASSERT_FALSE(battery_is_charging(3750));
+    TEST_ASSERT_FALSE(battery_is_charging(3000));
+    TEST_ASSERT_FALSE(battery_is_charging(0));
+}
+
 static void test_battery_interpolates_between_points(void) {
     // 3400 mV is 50/65 of the way from the 50% anchor (3350) to the 55% anchor
     // (3415): 53.85 -> rounds to 54.
@@ -114,5 +130,7 @@ int main(int, char**) {
     RUN_TEST(test_battery_table_points);
     RUN_TEST(test_battery_interpolates_between_points);
     RUN_TEST(test_battery_monotonic);
+    RUN_TEST(test_battery_charging_threshold);
+    RUN_TEST(test_battery_full_pack_is_not_charging);
     return UNITY_END();
 }

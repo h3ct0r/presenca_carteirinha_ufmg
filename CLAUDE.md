@@ -76,10 +76,11 @@ src/lcd/  src/touch/  src/rfid/  src/audio/     device drivers
   `LV_OBJ_FLAG_IGNORE_LAYOUT` (they're otherwise laid out as flex children).
 - **Shared keyboard**: one instance on `layer_top` (`ui/components/keyboard.cpp`),
   reduced numeric map (digits + backspace + OK).
-- Watch the LVGL heap: `LV_MEM_SIZE` is 256 KB and `LV_USE_ASSERT_MALLOC=1`
-  turns exhaustion into a **silent infinite loop** on the UI thread — a freeze,
-  not a reboot. Prefer updating changed widgets over full rebuilds on large
-  lists (roll call).
+- Watch the LVGL heap: `LV_MEM_SIZE` is 512 KB — allocated from PSRAM, so it
+  costs no internal RAM — and `LV_USE_ASSERT_MALLOC=1` turns exhaustion into a
+  **silent infinite loop** on the UI thread — a freeze, not a reboot. Prefer
+  updating changed widgets over full rebuilds on large lists (roll call).
+  Internal RAM is the scarce pool; see ARCHITECTURE.md §Memory budget.
 - **Git-tracked, but the user commits manually** — never commit, push, or open
   PRs unless explicitly asked. Deletions are recoverable via git, but still
   confirm before removing files.

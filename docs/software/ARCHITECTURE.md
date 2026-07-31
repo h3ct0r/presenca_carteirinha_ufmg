@@ -62,12 +62,12 @@ the card can change under any screen. Two rules keep that honest:
   retarget it;
 - returning to the idle gate calls `scr_wifi_editor_stop_ap()`, so signing out
   cannot leave an unauthenticated file manager on air;
-- using the AP costs the face model for the rest of the boot. Stopping it frees
-  nothing — `wifi_ap_stop()` keeps the stack up on purpose — and the model's SD
-  read needs the internal DMA memory that stack is holding. `wifi_ap_was_started()`
-  is the sticky flag that lets the camera service degrade to preview instead of
-  panicking inside esp-dl (see [FACE_DETECTION.md](FACE_DETECTION.md) §Status /
-  caveats).
+- the AP's memory cost is permanent for the boot — `wifi_ap_stop()` keeps the
+  stack up on purpose — and it comes out of the internal pool the face model's
+  SD read needs. That used to leave too little and panic esp-dl; since the LVGL
+  pool moved to PSRAM there is room for both, and the camera service decides on
+  free memory rather than on whether WiFi ran (see
+  [FACE_DETECTION.md](FACE_DETECTION.md) §Status / caveats).
 
 ## Screens
 
@@ -165,6 +165,49 @@ by treating a UID that reappears after a different one as proof that more than
 one card is present — reported once as `APP_EVENT_CARD_COLLISION` so the UI can
 ask for a single card. Nothing registers until the reader is cleared.
 
+## Memory budget
+
+Two pools, and only one of them is scarce.
+
+**Internal RAM — 768 KB** (`0x4ff00000`–`0x4ffc0000`), and the only place
+DMA-capable buffers can come from. `sdmmc` needs one for **every** transfer, so
+when this runs out the whole SD card goes away at once: reads fail with
+`ESP_ERR_NO_MEM` (`0x101`), attendance and config read as empty rather than
+erroring, and if the WiFi stack is up ESP-Hosted eventually cannot allocate a TX
+buffer and asserts in `transport_drv_ap_tx`. That is the failure signature to
+recognise — a wall of `sdmmc_read_sectors: not enough mem` is a memory report,
+not a card problem.
+
+The permanent occupants, measured with `nm --size-sort` on `firmware.elf`:
+
+| What | Size | Where |
+|---|---|---|
+| LVGL heap (`LV_MEM_SIZE`) | 512 KB | **PSRAM** via `LV_MEM_POOL_ALLOC` |
+| LVGL draw buffers (2 × 480×800×2) | 1.5 MB | PSRAM |
+| `s_students` (600 × `student_t`) | 53 KB | internal `.bss` |
+| `s_classes` (12 × `class_rec_t`) | 28 KB | internal `.bss` |
+| everything else static | ~47 KB | internal `.bss` |
+| task stacks (loopTask 16 K, face_detect 16 K, fileserv 8 K, …) | ~68 KB | internal |
+| WiFi + ESP-Hosted, once started | tens of KB | internal, **never freed** |
+
+LVGL's pool is the reason `LV_MEM_POOL_ALLOC` exists in `lv_conf.h`: left to
+itself LVGL declares it as a static array, which put 256 KB of the 768 KB out of
+reach and left too little for SD DMA once WiFi came up. Static internal use is
+128 KB with it in PSRAM, against 384 KB before — and the pool has since been
+doubled to 512 KB, which costs PSRAM only (TLSF's control block lives inside the
+pool, and `FL_INDEX_MAX` sizes itself from `LV_MEM_SIZE`). `update_roll_call()`
+logs a line whenever the pool hits a new high-water mark, which is the number to
+size it from; the boot figure in `main.cpp` is measured before any screen is
+built and says nothing about the worst case.
+
+Note what `wifi_ap_stop()` does *not* do: it drops the visible network but keeps
+the stack and the P4↔C6 link, so its memory is gone until a reboot. Three places
+log the pool so this stays measurable — `main.cpp` at boot, `wifi_ap` around
+start/stop, and `face_detection_service` around the model load.
+
+**PSRAM — 32 MB**, comfortable. Draw buffers, the LVGL heap, camera preview
+buffers, decoded avatars (20 KB each). Nothing here has been close to the limit.
+
 ## LVGL gotchas
 
 These have each caused a real bug:
@@ -177,13 +220,20 @@ These have each caused a real bug:
   shared keyboard floats above them.
 - **Overlays parented to the shell root need `LV_OBJ_FLAG_IGNORE_LAYOUT`,**
   otherwise they are laid out as flex children and misrender.
-- **Watch the LVGL heap.** `LV_MEM_SIZE` is 256 KB and `LV_USE_ASSERT_MALLOC=1`
-  turns exhaustion into a silent infinite loop on the UI thread — a freeze with
-  no panic and no reboot. Prefer updating changed widgets over full rebuilds on
-  large lists.
+- **Watch the LVGL heap.** `LV_MEM_SIZE` is 512 KB (in PSRAM, see §Memory
+  budget) and `LV_USE_ASSERT_MALLOC=1` turns exhaustion into a silent infinite
+  loop on the UI thread — a freeze with no panic and no reboot. Prefer updating
+  changed widgets over full rebuilds on large lists.
 - **`lv_image` reports its untransformed size** as its self-size, so a scaled
   image must also be `lv_obj_set_size`d to its drawn size or the layout reserves
   the wrong box. See `ui/components/student_photo.cpp`.
+- **A GT911 read answers "is there a new report?", not "is a finger down?"**
+  `esp_lcd_touch_gt911_get_xy()` consumes each report (`tp->data.points = 0`),
+  and `read_data()` only refreshes it when the panel has published since the last
+  poll. Sampling the indev faster than the panel's refresh cadence therefore
+  turns the gaps into phantom releases — one tap arriving as two clicks. The
+  indev is read every 10 ms (for scroll smoothness), so `gt911_touch::getTouch()`
+  holds the last point for `TOUCH_HOLD_US` before reporting a release.
 
 ## Theme
 

@@ -31,6 +31,13 @@ static const volt_pct_t CURVE[] = {
     {2700, 0},
 };
 
+// 3.99 V. Above the table's 100% anchor with room to spare, and below the ~4.2 V
+// a cell is driven to while charging, so a full battery on its own never reaches
+// it and a charging one always passes it.
+static constexpr uint16_t CHARGING_MV = 3990;
+
+bool battery_is_charging(uint16_t mv) { return mv > CHARGING_MV; }
+
 uint8_t battery_mv_to_pct(uint16_t mv) {
     const int n = sizeof(CURVE) / sizeof(CURVE[0]);
     if (mv >= CURVE[0].mv) return 100;

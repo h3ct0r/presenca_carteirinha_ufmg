@@ -6,6 +6,7 @@
 // esp32-hal-log.h remaps ESP_LOG* to Arduino's logger; the IDF-native ones are
 // compiled out of this framework build (CONFIG_LOG_MAXIMUM_LEVEL=ERROR).
 #include "esp32-hal-log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "touch/esp_lcd_touch_gt911.h"
@@ -28,6 +29,21 @@ static esp_lcd_panel_io_handle_t s_tp_io_handle = NULL;
 // Scratch outputs for esp_lcd_touch_get_coordinates (single-point reads).
 static uint16_t s_touch_strength[1];
 static uint8_t s_touch_cnt = 0;
+
+// How long a touch is held after the last report before it counts as released.
+// The GT911 publishes on its own refresh cadence (~10-20 ms) and
+// esp_lcd_touch_gt911_get_xy() CONSUMES each report ("Invalidate":
+// tp->data.points = 0), so a poll landing between two reports returns "no
+// touch" — indistinguishable from a real lift. LVGL samples every 10 ms, right
+// at that beat, so those gaps were reaching it as genuine releases and a single
+// tap could arrive as two clicks. Holding the last point across a quiet gap
+// fixes that; the cost is up to this much delay on a real release. Longer than
+// one report interval, short enough to feel immediate.
+static constexpr int64_t TOUCH_HOLD_US = 40 * 1000;
+
+static uint16_t s_last_x = 0, s_last_y = 0;
+static int64_t s_last_report_us = 0;
+static bool s_pressed = false;
 
 gt911_touch::gt911_touch(int8_t sda_pin, int8_t scl_pin, int8_t rst_pin, int8_t int_pin)
     : _sda(sda_pin), _scl(scl_pin), _rst(rst_pin), _int(int_pin) {}
@@ -85,7 +101,26 @@ void gt911_touch::begin() {
 
 bool gt911_touch::getTouch(uint16_t* x, uint16_t* y) {
     esp_lcd_touch_read_data(s_tp);
-    return esp_lcd_touch_get_coordinates(s_tp, x, y, s_touch_strength, &s_touch_cnt, 1);
+    if (esp_lcd_touch_get_coordinates(s_tp, x, y, s_touch_strength, &s_touch_cnt, 1)) {
+        s_last_x = *x;
+        s_last_y = *y;
+        s_last_report_us = esp_timer_get_time();
+        s_pressed = true;
+        return true;
+    }
+
+    // No new report. That is only a release once the panel has stayed quiet for
+    // longer than its own refresh interval (see TOUCH_HOLD_US); until then,
+    // repeat the last point. Repeating it — rather than interpolating — keeps
+    // the gap invisible to LVGL's scroll velocity, which is a sum of per-sample
+    // deltas.
+    if (s_pressed && (esp_timer_get_time() - s_last_report_us) < TOUCH_HOLD_US) {
+        *x = s_last_x;
+        *y = s_last_y;
+        return true;
+    }
+    s_pressed = false;
+    return false;
 }
 
 void gt911_touch::set_rotation(uint8_t r) {

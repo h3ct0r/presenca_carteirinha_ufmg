@@ -16,6 +16,23 @@ unnoticed because the sample rosters are ASCII-only. The fix and a ready-to-run
 `lv_font_conv` command are in the "Known gap" callout of
 [CUSTOM_FONT_GENERATION.md](CUSTOM_FONT_GENERATION.md).
 
+**Internal RAM is still the constrained pool.** Moving the LVGL heap to PSRAM
+returned 255 KB, but 81 KB of it is still `s_students` (53 KB) and `s_classes`
+(28 KB) as static arrays, sized for the 600-student / 12-class caps regardless of
+what the card holds. Making them PSRAM allocations at `roster_service_start()`
+is the next lever if the budget gets tight again; see
+[ARCHITECTURE.md](ARCHITECTURE.md) §Memory budget for what the pool is spent on
+and how to measure it.
+
+**The face-model memory thresholds are set by argument, not measurement.**
+`MIN_INTERNAL_FREE` (128 KB) and `MIN_INTERNAL_BLOCK` (64 KB) in
+`face_detection_service` were chosen as a comfortable margin over the one
+observed failure (46,976 B total free), not from a run that measured how much
+the model's SD read actually needs. The `log_heap()` lines in `wifi_ap` and
+`face_detection_service` print both numbers at every camera start and around the
+load; one session with the AP up settles whether these are too tight, too loose,
+or right.
+
 **Q4 — `battery_curve.cpp`'s comment is wrong.** It says "linear from 4.2 V (100%)
 to 3.2 V (0%) … every 5% (each 50 mV)"; the table actually runs 4.0 V → 2.7 V in
 65 mV steps. The ADC divider and the 2.7 V cutoff are also unverified against a

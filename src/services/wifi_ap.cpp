@@ -1,6 +1,7 @@
 #include "services/wifi_ap.h"
 
 #include <WiFi.h>
+#include <esp_heap_caps.h>
 #include <esp_random.h>
 #include <stdio.h>
 #include <string.h>
@@ -9,10 +10,24 @@
 
 static const char* TAG = "wifi_ap";
 
+// Bringing the AP up starts ESP-Hosted and the WiFi stack, which take a large
+// and PERMANENT bite out of internal RAM — the same pool sdmmc needs a
+// DMA-capable buffer from for every transfer. When it ran out, every SD read
+// failed with ESP_ERR_NO_MEM and ESP-Hosted itself eventually asserted in
+// transport_drv_ap_tx. These lines are how that budget gets watched: compare
+// "before" with "after", and with the boot figure main.cpp prints.
+static void log_heap(const char* when) {
+    ESP_LOGI(TAG, "%s: internal %u B free (largest %u), DMA %u B, PSRAM %u B", when,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+}
+
 static char s_ssid[33] = "";
 static char s_pass[16] = "";
 static bool s_running = false;
-static bool s_was_started = false;  // sticky: the stack is never torn down
+static bool s_was_started = false;  // sticky, for the log label below
 
 // Generates the SSID/password once per boot so they stay stable while the
 // screen is open (and across revisits).
@@ -32,6 +47,7 @@ void wifi_ap_credentials(char* ssid, size_t ssid_cap, char* pass, size_t pass_ca
 
 bool wifi_ap_start(void) {
     generate_once();
+    log_heap(s_was_started ? "before AP restart" : "before first AP start");
     WiFi.mode(WIFI_AP);
     bool ok = WiFi.softAP(s_ssid, s_pass);
     if (!ok) {
@@ -47,6 +63,7 @@ bool wifi_ap_start(void) {
     } else {
         ESP_LOGE(TAG, "soft-AP failed to start (C6 companion available?)");
     }
+    log_heap("after AP start");
     return ok;
 }
 
@@ -58,11 +75,12 @@ void wifi_ap_stop(void) {
     WiFi.softAPdisconnect(false);
     s_running = false;
     ESP_LOGI(TAG, "soft-AP stopped (stack kept alive for reliable restart)");
+    // Expected to be close to "after AP start", not to the boot figure: this
+    // only drops the visible network, it does not free the stack.
+    log_heap("after AP stop");
 }
 
 bool wifi_ap_is_running(void) { return s_running; }
-
-bool wifi_ap_was_started(void) { return s_was_started; }
 
 void wifi_ap_ip(char* out, size_t cap) {
     if (!cap) return;

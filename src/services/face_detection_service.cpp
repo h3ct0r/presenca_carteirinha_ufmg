@@ -13,7 +13,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
-#include "services/wifi_ap.h"
 #include "storage/photo_store.h"
 
 // Face inference is optional: it needs the ESP-DL framework (dl::*), which is a
@@ -212,17 +211,24 @@ static void detection_task(void*) {
     bool files_ok = have_msr && have_mnp && sz_msr >= MIN_MODEL_BYTES && sz_mnp >= MIN_MODEL_BYTES;
 
     // The other way the load fails is running out of DMA-capable internal RAM
-    // for the SD read, which ends in the same unguardable esp-dl fault. Using
-    // the debug WiFi AP is what causes it in practice: the stack it leaves
-    // behind is never freed, not even by wifi_ap_stop() (see wifi_ap.h), so
-    // once the AP has been up in this boot only a restart brings the memory
-    // back. Refuse to load rather than panic.
-    size_t internal_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-    bool wifi_used = wifi_ap_was_started();
-    // Calibrated from the observed failure: the SD read died at 46,976 B free.
-    // Raise this if a load ever fails with more than that available.
-    static constexpr size_t MIN_INTERNAL_FREE = 56 * 1024;
-    bool memory_ok = !wifi_used && internal_free >= MIN_INTERNAL_FREE;
+    // for the SD read, which ends in the same unguardable esp-dl fault. Both
+    // numbers matter: sdmmc needs a contiguous DMA buffer, so a fragmented pool
+    // can fail with plenty of total free.
+    //
+    // This used to also refuse whenever the debug WiFi AP had run in this boot,
+    // because the stack it leaves behind is never freed (wifi_ap.h) and that
+    // left ~47 KB free — the level at which the read actually failed. Moving
+    // LVGL's 256 KB pool to PSRAM returned far more than the shortfall, so the
+    // memory check alone is now the honest predicate: it lets detection work
+    // whenever there is room, and still degrades to preview when there is not.
+    const size_t internal_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    const size_t internal_block = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+    // Set well above the one observed failure (46,976 B total) rather than just
+    // past it: the cost of being wrong is a panic inside esp-dl, and the cost of
+    // being conservative is preview-only with a clear message.
+    static constexpr size_t MIN_INTERNAL_FREE = 128 * 1024;
+    static constexpr size_t MIN_INTERNAL_BLOCK = 64 * 1024;
+    const bool memory_ok = internal_free >= MIN_INTERNAL_FREE && internal_block >= MIN_INTERNAL_BLOCK;
 
     HumanFaceDetect* detect = nullptr;
     if (files_ok && memory_ok) {
@@ -239,14 +245,12 @@ static void detection_task(void*) {
         detect->set_score_thr(0.45f, 1);  // stage 1 (MNP): final accept
         log_heap("after model load");
         set_status("model ready");
-    } else if (files_ok && wifi_used) {
-        set_status("restart the device to use face detection (WiFi was used)");
-        ESP_LOGW(TAG, "skipping model load: the WiFi AP ran this boot, %u B internal free",
-                 (unsigned)internal_free);
     } else if (files_ok) {
-        set_status("not enough memory for the model - preview only");
-        ESP_LOGW(TAG, "skipping model load: %u B internal free, need %u",
-                 (unsigned)internal_free, (unsigned)MIN_INTERNAL_FREE);
+        set_status("not enough memory for the model - restart the device");
+        ESP_LOGW(TAG,
+                 "skipping model load: %u B internal free (need %u), largest block %u (need %u)",
+                 (unsigned)internal_free, (unsigned)MIN_INTERNAL_FREE, (unsigned)internal_block,
+                 (unsigned)MIN_INTERNAL_BLOCK);
     } else if (have_msr && have_mnp) {
         set_status("model file empty/truncated - preview only");
         ESP_LOGW(TAG, "model file too small (msr=%uB mnp=%uB); preview only", (unsigned)sz_msr,

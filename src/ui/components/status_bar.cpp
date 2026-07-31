@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 
+#include "app/battery_curve.h"
 #include "ui/theme/theme.h"
 #include "ui/ui_state.h"
 
@@ -25,7 +26,13 @@ static void battery_changed_cb(lv_observer_t*, lv_subject_t*) {
     int pct = lv_subject_get_int(&ui_subj_battery_pct);
     int mv = lv_subject_get_int(&ui_subj_battery_mv);
 
-    const char* icon = (pct > 85)   ? LV_SYMBOL_BATTERY_FULL
+    // On the charger the rail reads above anything the pack can drive itself to,
+    // so the level icon would say nothing useful — show the bolt. (The reading
+    // still clamps to 100% in the text, since the curve tops out below this.)
+    const bool charging = battery_is_charging((uint16_t)mv);
+
+    const char* icon = charging    ? LV_SYMBOL_CHARGE
+                       : (pct > 85) ? LV_SYMBOL_BATTERY_FULL
                        : (pct > 60) ? LV_SYMBOL_BATTERY_3
                        : (pct > 35) ? LV_SYMBOL_BATTERY_2
                        : (pct > 15) ? LV_SYMBOL_BATTERY_1
@@ -35,7 +42,8 @@ static void battery_changed_cb(lv_observer_t*, lv_subject_t*) {
     snprintf(text, sizeof(text), "%s %d%% (%d.%02d V)", icon, pct, mv / 1000, (mv % 1000) / 10);
     lv_label_set_text(s_batt_label, text);
 
-    bool low = pct <= 15;
+    // Charging is never "low", however the curve reads the rail at that moment.
+    bool low = !charging && pct <= 15;
     lv_obj_set_style_text_color(s_batt_label, lv_color_hex(low ? COL_WARN : COL_TEXT), 0);
 }
 
