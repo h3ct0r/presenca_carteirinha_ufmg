@@ -10,7 +10,7 @@
 [![Build: PlatformIO](https://img.shields.io/badge/Build-PlatformIO-FF7F00?logo=platformio&logoColor=white)](https://platformio.org)
 
 <a href="https://youtube.com/shorts/oyJePKWmUqI?feature=share" target="_blank">
-   <img src="https://raw.githubusercontent.com/h3ct0r/presenca_carteirinha_ufmg/refs/heads/main/assets/carteirinha_v0.1.jpg" alt="Watch the demo video" width="380" />
+   <img src="https://raw.githubusercontent.com/verlab/presenca_carteirinha_ufmg/refs/heads/main/assets/carteirinha_v0.1.jpg" alt="Watch the demo video" width="380" />
 </a>
 
 <sub>▶ Click to watch the demo</sub>
@@ -49,6 +49,15 @@ are in [`docs/hardware/`](docs/hardware/).
 - **Power:** IP5306 boost PMIC + TLV62569 buck. **SW3 is the power button** —
   on battery it must be pressed to boot.
 - **No RTC:** session dates are chosen with a calendar picker.
+
+## Firmware update (USB)
+
+Web installer (Chrome / Edge, Web Serial):
+**[verlab.github.io/presenca_carteirinha_ufmg](https://verlab.github.io/presenca_carteirinha_ufmg/)**
+
+Tag `v*` → GitHub Release with `rfid-attendance-<tag>-firmware.bin` → Pages
+syncs the bins for same-origin download. See
+[`docs/flasher/DEPLOY.md`](docs/flasher/DEPLOY.md).
 
 ## Build & test
 
@@ -101,6 +110,7 @@ tests against the mocks in `lib/hw_mocks/`). See [`test/README.md`](test/README.
 - [Downloading student photos from Moodle](docs/software/MOODLE_PHOTOS.md)
 - [Generating the custom fonts](docs/software/CUSTOM_FONT_GENERATION.md)
 - [Sample SD card](docs/software/sd_card_example/) — a complete card to copy.
+- [Web firmware installer](docs/flasher/) — browser USB flash (GitHub Pages).
 
 **Tools**
 - [config-builder](tools/config-builder/README.md) — the offline browser tool that

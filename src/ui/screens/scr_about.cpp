@@ -14,7 +14,7 @@
 LV_IMAGE_DECLARE(logo_verlab);
 LV_IMAGE_DECLARE(logo_gear);
 
-static const char* REPO_URL = "https://github.com/h3ct0r/presenca_carteirinha_ufmg";
+static const char* REPO_URL = "https://github.com/verlab/presenca_carteirinha_ufmg";
 
 // NOTE: all copy here is deliberately ASCII-only. The fonts in this build cover
 // 0x20-0x7F plus a few FontAwesome glyphs, so accented characters ("Hector
