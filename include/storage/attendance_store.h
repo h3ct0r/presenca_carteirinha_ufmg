@@ -3,6 +3,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "app/progress.h"
+
 // Per-class, per-day attendance in append-only JSONL files:
 //
 //   /classes/<dir>/attendance/YYYY-MM-DD.jsonl
@@ -106,4 +108,7 @@ void attendance_history_cache_clear(void);
 // closes any open session. Returns the number of files removed. When `out_failed`
 // is non-NULL it receives the number of files that could NOT be deleted, so a
 // partial wipe isn't reported as a clean success (each failure is also logged).
-int attendance_clear(const char* class_dir, int* out_failed);
+//
+// `cb` (optional) reports one item per file. The dates are listed up front, so
+// this one knows its total.
+int attendance_clear(const char* class_dir, int* out_failed, progress_cb_t cb, void* ctx);

@@ -13,6 +13,7 @@
 #include "mock_freertos.h"
 #include "mock_sd.h"
 #include "services/config_service.h"
+#include "app/credential.h"
 #include "services/roster_service.h"
 
 void setUp(void) {
@@ -219,7 +220,10 @@ static void test_accessors_expose_loaded_data(void) {
     const student_t* maria = roster_student_at(cs101->roster[0]);
     TEST_ASSERT_NOT_NULL(maria);
     TEST_ASSERT_EQUAL_STRING("Maria Santos", maria->name);
-    TEST_ASSERT_EQUAL_STRING("04:A3:1B:2C", maria->rfid_uid);
+    // The authored card id was converted on load: stored as a keyed fingerprint,
+    // never the id itself. That it still resolves her card is asserted in
+    // test_authored_card_is_converted_and_still_matches below.
+    TEST_ASSERT_TRUE(credential_is_fingerprint(maria->rfid_uid, UID_FINGERPRINT_HEX));
 
     const class_rec_t* ma110 = roster_class_at(1);
     TEST_ASSERT_NOT_NULL(ma110);
@@ -281,12 +285,20 @@ static void test_enroll_existing_binds_and_persists(void) {
     roster_result_t r = roster_enroll_existing("CS101-M1", idx, "AA:BB:CC:01");
     TEST_ASSERT_TRUE(r.ok);
     TEST_ASSERT_NOT_NULL(strstr(r.message, "John Miller"));
-    // In-RAM reflects the binding.
-    TEST_ASSERT_EQUAL_STRING("AA:BB:CC:01", roster_student_at(idx)->rfid_uid);
-    // students.json on the card was rewritten with the UID.
+    // In-RAM reflects the binding, as a fingerprint rather than the card id.
+    TEST_ASSERT_TRUE(credential_is_fingerprint(roster_student_at(idx)->rfid_uid,
+                                               UID_FINGERPRINT_HEX));
+    // students.json was rewritten — and must NOT contain the card id anywhere.
+    // Enrolling is where a card id enters the device, so this is the assertion
+    // that would catch it being written through in the clear.
     char buf[2048];
     read_card("/students/students.json", buf, sizeof(buf));
-    TEST_ASSERT_NOT_NULL(strstr(buf, "AA:BB:CC:01"));
+    TEST_ASSERT_NULL(strstr(buf, "AA:BB:CC:01"));
+    TEST_ASSERT_NOT_NULL(strstr(buf, roster_student_at(idx)->rfid_uid));
+    // ...and the card still resolves to this student on a re-scan.
+    char owner[48];
+    TEST_ASSERT_TRUE(roster_uid_belongs_to_student("aa-bb-cc-01", owner, sizeof(owner)));
+    TEST_ASSERT_EQUAL_STRING("John Miller", owner);
     // The temp file must not linger.
     TEST_ASSERT_FALSE(mocksd_exists("/students/students.json.tmp"));
 }
@@ -385,7 +397,8 @@ static void test_clear_all_uids(void) {
     // Maria Santos starts bound to a card.
     int maria = find_idx("2023-0142");
     TEST_ASSERT_TRUE(maria >= 0);
-    TEST_ASSERT_EQUAL_STRING("04:A3:1B:2C", roster_student_at(maria)->rfid_uid);
+    TEST_ASSERT_TRUE(credential_is_fingerprint(roster_student_at(maria)->rfid_uid,
+                                               UID_FINGERPRINT_HEX));
 
     roster_result_t cleared = roster_clear_all_uids();
     TEST_ASSERT_TRUE_MESSAGE(cleared.ok, cleared.message);
@@ -593,6 +606,76 @@ static void test_class_capture_and_settings(void) {
     TEST_ASSERT_EQUAL_INT(60, roster_class_at(0)->min_attendance_min);
 }
 
+// --- authoring plaintext -> stored fingerprints ------------------------------
+
+// A card authored in students.json must be converted on load AND still resolve
+// on a tap. Converting rather than rejecting is what keeps an imported card
+// working instead of silently unbinding every student.
+static void test_authored_card_is_converted_and_still_matches(void) {
+    setup_valid();  // Maria is authored with rfid_uid "04:A3:1B:2C"
+
+    char buf[2048];
+    read_card("/students/students.json", buf, sizeof(buf));
+    TEST_ASSERT_NULL_MESSAGE(strstr(buf, "04:A3:1B:2C"), "card id left in the clear");
+    TEST_ASSERT_NOT_NULL(strstr(buf, "v1:"));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "Maria Santos"));  // the rest is untouched
+
+    // The physical card still resolves, in whatever format the reader reports.
+    char owner[48];
+    TEST_ASSERT_TRUE(roster_uid_belongs_to_student("04:A3:1B:2C", owner, sizeof(owner)));
+    TEST_ASSERT_EQUAL_STRING("Maria Santos", owner);
+    TEST_ASSERT_TRUE(roster_uid_belongs_to_student("04a31b2c", owner, sizeof(owner)));
+    TEST_ASSERT_EQUAL_STRING("Maria Santos", owner);
+    TEST_ASSERT_FALSE(roster_uid_belongs_to_student("DE:AD:BE:EF", owner, sizeof(owner)));
+}
+
+// Re-hashing on the next boot would unbind every student permanently.
+static void test_student_conversion_is_idempotent(void) {
+    setup_valid();
+    char first[2048];
+    read_card("/students/students.json", first, sizeof(first));
+
+    roster_service_reload();
+    roster_service_reload();
+    TEST_ASSERT_EQUAL(ROSTER_OK, roster_get_status());
+
+    char third[2048];
+    read_card("/students/students.json", third, sizeof(third));
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(first, third,
+                                     "students.json changed on reload - not idempotent");
+    char owner[48];
+    TEST_ASSERT_TRUE(roster_uid_belongs_to_student("04:A3:1B:2C", owner, sizeof(owner)));
+}
+
+// Both files are keyed by the same device secret, so the cross-file guard still
+// works with neither side readable: a professor's card must not become a
+// student's, in either direction.
+static void test_professor_card_is_still_refused_for_a_student(void) {
+    mocksd_reset();
+    mocksd_add_file("/config.json",
+                    "{ \"teachers\": [ { \"name\": \"Prof A\", \"email\": \"a@x\", "
+                    "\"rfid_uid\": \"CA:FE:00:01\", \"password\": \"111111\" } ] }");
+    mocksd_add_file("/students/students.json",
+                    "{ \"students\": [ { \"id\": \"S1\", \"name\": \"Sam\" } ] }");
+    mocksd_add_file("/classes/CS101-M1/class.json",
+                    "{ \"code\": \"CS101-M1\", \"name\": \"DS\", "
+                    "\"roster\": [ { \"id\": \"S1\" } ] }");
+    config_service_start();
+    roster_service_start();
+    TEST_ASSERT_EQUAL(CONFIG_OK, config_get_status());
+    TEST_ASSERT_EQUAL(ROSTER_OK, roster_get_status());
+
+    // Enrolling the professor's card onto a student is refused, and names them.
+    int s1 = find_idx("S1");
+    TEST_ASSERT_TRUE(s1 >= 0);
+    roster_result_t r = roster_enroll_existing("CS101-M1", s1, "ca-fe-00-01");
+    TEST_ASSERT_FALSE(r.ok);
+    TEST_ASSERT_NOT_NULL(strstr(r.message, "Prof A"));
+
+    // A card belonging to nobody is still accepted.
+    TEST_ASSERT_TRUE(roster_enroll_existing("CS101-M1", s1, "BE:EF:00:02").ok);
+}
+
 int main(int, char**) {
     mock_freertos_set_delay_scale(1000);
     event_bus_init();
@@ -619,6 +702,9 @@ int main(int, char**) {
     RUN_TEST(test_enroll_new_rejects_overlong_turma);
     RUN_TEST(test_clear_all_uids);
     RUN_TEST(test_clear_all_uids_reports_why_it_failed);
+    RUN_TEST(test_authored_card_is_converted_and_still_matches);
+    RUN_TEST(test_student_conversion_is_idempotent);
+    RUN_TEST(test_professor_card_is_still_refused_for_a_student);
     RUN_TEST(test_enroll_rejects_professor_card);  // last of the enroll chain
     RUN_TEST(test_validate_tree_accepts_good_staging);          // resets to a fresh valid live tree
     RUN_TEST(test_validate_tree_rejects_bad_staging_leaving_live_intact);  // chains from above

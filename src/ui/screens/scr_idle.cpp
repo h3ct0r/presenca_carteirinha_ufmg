@@ -10,7 +10,9 @@
 #include "services/config_service.h"
 #include "services/import_service.h"
 #include "services/roster_service.h"
+#include "ui/components/modal.h"
 #include "ui/components/keyboard.h"
+#include "ui/components/progress.h"
 #include "ui/components/toast.h"
 #include "ui/screen_manager.h"
 #include "ui/screens/scr_wifi_editor.h"
@@ -181,21 +183,11 @@ static void open_pw_modal(lv_event_t*) {
         return;
     }
 
-    s_pw_modal = lv_obj_create(s_root);
-    lv_obj_remove_style_all(s_pw_modal);
-    lv_obj_set_size(s_pw_modal, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(s_pw_modal, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(s_pw_modal, LV_OPA_50, 0);
-    lv_obj_add_flag(s_pw_modal, LV_OBJ_FLAG_CLICKABLE);  // swallow taps behind
-    lv_obj_remove_flag(s_pw_modal, LV_OBJ_FLAG_SCROLLABLE);
+    // Card near the top, kept clear of the on-screen keyboard.
+    lv_obj_t* card;
+    s_pw_modal = ui_modal_create(s_root, 70, &card);
 
-    // Light card near the top, kept clear of the on-screen keyboard.
-    lv_obj_t* card = ui_make_card(s_pw_modal);
-    lv_obj_set_width(card, LV_PCT(86));
-    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 70);
-    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(card, 12, 0);
-
+    // 32, not the shared modal title size: this is the whole point of the screen.
     ui_make_label(card, "Enter password", THEME_PRIMARY, &lv_font_montserrat_32);
 
     // Passwords are digits-only (enforced at config load), so the login pad is
@@ -208,18 +200,7 @@ static void open_pw_modal(lv_event_t*) {
     keyboard_show(s_pw_ta, LV_KEYBOARD_MODE_NUMBER);
     keyboard_set_ready_cb(pw_ok_cb);
 
-    lv_obj_t* row = lv_obj_create(card);
-    lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(row, 10, 0);
-    lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t* cancel = ui_make_button(row, "Cancel", &theme_style_btn_outline, pw_cancel_cb,
-                                      nullptr);
-    lv_obj_set_flex_grow(cancel, 1);
-    lv_obj_t* ok = ui_make_button(row, "Unlock", &theme_style_btn_primary, pw_ok_cb, nullptr);
-    lv_obj_set_flex_grow(ok, 1);
+    ui_modal_actions(card, "Unlock", &theme_style_btn_primary, pw_ok_cb, pw_cancel_cb);
 }
 
 // ---- config import (offline config.tar) -----------------------------------
@@ -238,50 +219,30 @@ static void import_confirm_cb(lv_event_t*) {
     // Runs the full pipeline (backup -> validate -> apply -> reload). On success
     // the reload republishes config/roster status, so the observers refresh the
     // gate panel on their own — nothing to do here but report.
-    import_result_t r = import_service_run(import_service_tar_path());
+    //
+    // It blocks this thread for as long as the card takes, so the overlay is
+    // what keeps the screen from looking dead. Closed unconditionally, including
+    // on the failure paths: a full-screen overlay left on layer_top would
+    // swallow every touch on every screen (ui/components/progress.h).
+    ui_progress_open("Importing configuration");
+    import_result_t r = import_service_run(import_service_tar_path(), ui_progress_cb, nullptr);
+    ui_progress_close();
     ui_toast_show(r.message, r.ok);
 }
 
 static void open_import_confirm(lv_event_t*) {
     if (s_import_modal) return;
 
-    s_import_modal = lv_obj_create(s_root);
-    lv_obj_remove_style_all(s_import_modal);
-    lv_obj_set_size(s_import_modal, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(s_import_modal, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(s_import_modal, LV_OPA_50, 0);
-    lv_obj_add_flag(s_import_modal, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(s_import_modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* card;
+    s_import_modal = ui_modal_create(s_root, UI_MODAL_CENTER, &card);
 
-    lv_obj_t* card = ui_make_card(s_import_modal);
-    lv_obj_set_width(card, LV_PCT(86));
-    lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(card, 12, 0);
-
-    ui_make_label(card, LV_SYMBOL_DOWNLOAD "  Import configuration", THEME_PRIMARY,
-                  &lv_font_montserrat_20);
-    lv_obj_t* hint = ui_make_label(
-        card,
-        "A config.tar was found on the SD card. Import it to set up this device? Any existing "
-        "configuration is backed up first — one backup is kept, and importing again "
-        "replaces it.",
-        THEME_MUTED, &lv_font_montserrat_14);
-    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(hint, LV_PCT(100));
-
-    lv_obj_t* row = lv_obj_create(card);
-    lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(row, 10, 0);
-    lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t* cancel =
-        ui_make_button(row, "Cancel", &theme_style_btn_outline, import_cancel_cb, nullptr);
-    lv_obj_set_flex_grow(cancel, 1);
-    lv_obj_t* ok = ui_make_button(row, "Import", &theme_style_btn_primary, import_confirm_cb,
-                                  nullptr);
-    lv_obj_set_flex_grow(ok, 1);
+    ui_modal_title(card, LV_SYMBOL_DOWNLOAD "  Import configuration", THEME_PRIMARY);
+    ui_modal_body(card,
+                  "A config.tar was found on the SD card. Import it to set up this device? "
+                  "Any existing configuration is backed up first - one backup is kept, and "
+                  "importing again replaces it.");
+    ui_modal_actions(card, "Import", &theme_style_btn_primary, import_confirm_cb,
+                     import_cancel_cb);
 }
 
 // ---- first-run setup (no config.json on the card) --------------------------
@@ -316,28 +277,15 @@ static void setup_create_cb(lv_event_t*) {
 static void open_setup_modal(lv_event_t*) {
     if (s_setup_modal || config_get_status() != CONFIG_NO_FILE) return;
 
-    s_setup_modal = lv_obj_create(s_root);
-    lv_obj_remove_style_all(s_setup_modal);
-    lv_obj_set_size(s_setup_modal, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(s_setup_modal, lv_color_hex(THEME_SCRIM), 0);
-    lv_obj_set_style_bg_opa(s_setup_modal, LV_OPA_50, 0);
-    lv_obj_add_flag(s_setup_modal, LV_OBJ_FLAG_CLICKABLE);  // swallow taps behind
-    lv_obj_remove_flag(s_setup_modal, LV_OBJ_FLAG_SCROLLABLE);
-
     // Near the top, like the password modal: the keyboard covers the lower half.
-    lv_obj_t* card = ui_make_card(s_setup_modal);
-    lv_obj_set_width(card, LV_PCT(86));
-    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 40);
-    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(card, 10, 0);
+    lv_obj_t* card;
+    s_setup_modal = ui_modal_create(s_root, 40, &card);
 
-    ui_make_label(card, "Set up this device", THEME_PRIMARY, &lv_font_montserrat_20);
-    lv_obj_t* hint = ui_make_label(card,
-                                   "Create the first professor so you can unlock the device and "
-                                   "load a configuration. This account sees every class and is "
-                                   "replaced when you import a config.tar.",
-                                   THEME_MUTED, &lv_font_montserrat_14);
-    ui_label_fit(hint);
+    ui_modal_title(card, "Set up this device", THEME_PRIMARY);
+    ui_modal_body(card,
+                  "Create the first professor so you can unlock the device and load a "
+                  "configuration. This account sees every class and is replaced when you "
+                  "import a config.tar.");
 
     ui_make_label(card, "Your name", THEME_TEXT, &lv_font_montserrat_14);
     s_setup_name_ta = keyboard_make_textarea(card, "Name", 47, LV_KEYBOARD_MODE_TEXT_UPPER);
@@ -346,18 +294,7 @@ static void open_setup_modal(lv_event_t*) {
     s_setup_pw_ta = keyboard_make_textarea(card, "Password", 31, LV_KEYBOARD_MODE_NUMBER);
     lv_textarea_set_password_mode(s_setup_pw_ta, true);
 
-    lv_obj_t* row = lv_obj_create(card);
-    lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(row, 10, 0);
-    lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t* cancel = ui_make_button(row, "Cancel", &theme_style_btn_outline, setup_cancel_cb,
-                                      nullptr);
-    lv_obj_set_flex_grow(cancel, 1);
-    lv_obj_t* ok = ui_make_button(row, "Create", &theme_style_btn_primary, setup_create_cb,
-                                  nullptr);
-    lv_obj_set_flex_grow(ok, 1);
+    ui_modal_actions(card, "Create", &theme_style_btn_primary, setup_create_cb, setup_cancel_cb);
 }
 
 // ---- static content -------------------------------------------------------
@@ -525,6 +462,11 @@ static void update_gate_cb(lv_observer_t*, lv_subject_t*) {
             case CONFIG_NON_NUMERIC_PASSWORD:
                 title = "Password not numeric";
                 break;
+            case CONFIG_NO_KEY:
+                // The card is fine; the device's own key store is not. Say so,
+                // or someone will go and edit a config.json that has no problem.
+                title = "Device key unavailable";
+                break;
             default:
                 break;
         }
@@ -647,6 +589,7 @@ static void on_hide(void) {
     close_pw_modal();
     close_import_modal();
     close_setup_modal();
+    ui_progress_close();  // defensive: an orphan here blocks touch everywhere
     if (s_denied_timer) {
         lv_timer_delete(s_denied_timer);
         s_denied_timer = nullptr;

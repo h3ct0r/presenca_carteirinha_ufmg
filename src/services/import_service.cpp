@@ -16,13 +16,23 @@
 static const char* TAG = "import";
 
 static constexpr const char* SD_TAR = "/config.tar";
-static constexpr const char* SENTINEL = "/config.tar.imported";
+// No sentinel file any more: a successful import DELETES /config.tar (it holds
+// the authored credentials in the clear), and its absence is the "already
+// imported" signal import_service_pending() reads.
 static constexpr const char* STAGING = "/import_staging";
 static constexpr size_t MAX_TAR = 16 * 1024 * 1024;  // 16 MB cap (CONFIG_IMPORT.md §4)
 
 const char* import_service_tar_path(void) { return SD_TAR; }
 
 bool import_service_pending(void) { return sd_card_mount() && SD_MMC.exists(SD_TAR); }
+
+// Stage-only report (no per-item detail), for the steps that are a single
+// indivisible operation from the operator's point of view.
+static void stage(progress_cb_t cb, void* ctx, const char* name) {
+    if (!cb) return;
+    progress_t p = {name, nullptr, 0, 0};
+    cb(&p, ctx);
+}
 
 static const char* ustar_err_str(ustar_status_t s) {
     switch (s) {
@@ -129,9 +139,22 @@ static void clean_staging(void) {
 
 // --- unpack -----------------------------------------------------------------
 
+// Counts regular-file entries without writing anything. Runs as the visitor of
+// the whitelist pass that already happens before any change is made, so the
+// entry total costs nothing extra — and it is what makes both the unpack and the
+// apply bars determinate.
+static bool count_visitor(const ustar_entry_t*, void* ctx) {
+    (*(int*)ctx)++;
+    return true;
+}
+
 struct unpack_ctx {
     bool ok;
     char msg[96];
+    progress_cb_t cb;
+    void* cb_ctx;
+    int done;
+    int total;
 };
 
 static bool unpack_visitor(const ustar_entry_t* e, void* ctx) {
@@ -152,14 +175,34 @@ static bool unpack_visitor(const ustar_entry_t* e, void* ctx) {
         snprintf(u->msg, sizeof(u->msg), "short write to staging");
         return false;
     }
+    if (u->cb) {
+        progress_t p = {"Unpacking", e->name, ++u->done, u->total};
+        u->cb(&p, u->cb_ctx);
+    }
     return true;
 }
 
 // --- apply ------------------------------------------------------------------
 
+// Progress state for one apply pass. `total` is the entry count the whitelist
+// pass produced (apply moves exactly the files unpack wrote), or 0 for a revert,
+// whose source tree was never unpacked and carries no photos.
+struct apply_ctx {
+    progress_cb_t cb;
+    void* cb_ctx;
+    int done;
+    int total;
+};
+
+static void applied(apply_ctx* a, const char* name) {
+    if (!a || !a->cb) return;
+    progress_t p = {"Applying", name, ++a->done, a->total};
+    a->cb(&p, a->cb_ctx);
+}
+
 // Copies each authored file from a validated tree at `root` into place, atomic
 // per file. attendance/photos/models are never named here, so they survive.
-static bool apply_tree(const char* root, char* err, size_t cap) {
+static bool apply_tree(const char* root, char* err, size_t cap, apply_ctx* prog) {
     char src[192];
 
     snprintf(src, sizeof(src), "%s/config.json", root);
@@ -167,6 +210,7 @@ static bool apply_tree(const char* root, char* err, size_t cap) {
         snprintf(err, cap, "Apply of config.json failed");
         return false;
     }
+    applied(prog, "config.json");
 
     ensure_dir("/students");
     snprintf(src, sizeof(src), "%s/students/students.json", root);
@@ -174,6 +218,7 @@ static bool apply_tree(const char* root, char* err, size_t cap) {
         snprintf(err, cap, "Apply of students.json failed");
         return false;
     }
+    applied(prog, "students.json");
 
     // Optional authored avatars: overwrite each staged students/photos/<id>.jpg
     // into place (dir created if new). Absent tree -> nothing to do. The device's
@@ -200,6 +245,7 @@ static bool apply_tree(const char* root, char* err, size_t cap) {
                 snprintf(err, cap, "Apply of avatar %s failed", fname);
                 return false;
             }
+            applied(prog, fname);  // the bulk of a photo-carrying import
         }
         pdir.close();
     }
@@ -229,6 +275,7 @@ static bool apply_tree(const char* root, char* err, size_t cap) {
                 snprintf(err, cap, "Apply of class %s failed", dname);
                 return false;
             }
+            applied(prog, dname);
         }
         dir.close();
     }
@@ -238,9 +285,14 @@ static bool apply_tree(const char* root, char* err, size_t cap) {
 // Validates a tree at `root` with the live rules, applies it, and reloads the
 // services. Shared by import (root = staging) and revert (root = backup). Does
 // NOT back up — the caller owns that decision.
-static import_result_t apply_validated_tree(const char* root) {
+static import_result_t apply_validated_tree(const char* root, progress_cb_t cb, void* ctx,
+                                            int total) {
     import_result_t r = {false, ""};
     char vmsg[128];
+    // Validation reloads the roster twice (staging, then live to restore), which
+    // is not instant on a 600-student card — worth naming rather than looking
+    // like a pause between unpack and apply.
+    stage(cb, ctx, "Validating");
     if (!config_validate_tree(root, vmsg, sizeof(vmsg))) {
         snprintf(r.message, sizeof(r.message), "Config invalid: %s", vmsg);
         return r;
@@ -249,8 +301,11 @@ static import_result_t apply_validated_tree(const char* root) {
         snprintf(r.message, sizeof(r.message), "Roster invalid: %s", vmsg);
         return r;
     }
-    if (!apply_tree(root, r.message, sizeof(r.message))) return r;
 
+    apply_ctx prog = {cb, ctx, 0, total};
+    if (!apply_tree(root, r.message, sizeof(r.message), &prog)) return r;
+
+    stage(cb, ctx, "Reloading");
     config_service_reload();
     roster_service_reload();
     r.ok = true;
@@ -259,7 +314,7 @@ static import_result_t apply_validated_tree(const char* root) {
 
 // --- public -----------------------------------------------------------------
 
-import_result_t import_service_run(const char* tar_path) {
+import_result_t import_service_run(const char* tar_path, progress_cb_t cb, void* ctx) {
     import_result_t r = {false, ""};
     if (!sd_card_mount()) {
         snprintf(r.message, sizeof(r.message), "No SD card");
@@ -267,6 +322,7 @@ import_result_t import_service_run(const char* tar_path) {
     }
 
     // 1. Read the staged tar into a heap buffer (capped).
+    stage(cb, ctx, "Reading config.tar");
     File f = SD_MMC.open(tar_path, FILE_READ);
     if (!f) {
         snprintf(r.message, sizeof(r.message), "No import file found");
@@ -292,8 +348,11 @@ import_result_t import_service_run(const char* tar_path) {
         return r;
     }
 
-    // 2. Structural + §4 whitelist check before we change anything.
-    ustar_status_t us = ustar_iterate(buf, n, MAX_TAR, nullptr, nullptr);
+    // 2. Structural + §4 whitelist check before we change anything. The visitor
+    //    only counts, so this doubles as the entry total for the two bars below.
+    stage(cb, ctx, "Checking the archive");
+    int entries = 0;
+    ustar_status_t us = ustar_iterate(buf, n, MAX_TAR, count_visitor, &entries);
     if (us != USTAR_OK) {
         free(buf);
         snprintf(r.message, sizeof(r.message), "Invalid archive: %s", ustar_err_str(us));
@@ -301,6 +360,7 @@ import_result_t import_service_run(const char* tar_path) {
     }
 
     // 3. Back up the current config (safety net) before touching anything.
+    stage(cb, ctx, "Backing up the current config");
     backup_result_t bk = backup_store_create();
     if (!bk.ok) {
         free(buf);
@@ -309,9 +369,10 @@ import_result_t import_service_run(const char* tar_path) {
     }
 
     // 4. Unpack into a clean staging tree.
+    stage(cb, ctx, "Clearing the staging area");
     clean_staging();
     ensure_dir(STAGING);
-    unpack_ctx u = {true, ""};
+    unpack_ctx u = {true, "", cb, ctx, 0, entries};
     us = ustar_iterate(buf, n, MAX_TAR, unpack_visitor, &u);
     free(buf);
     if (us != USTAR_OK || !u.ok) {
@@ -321,15 +382,22 @@ import_result_t import_service_run(const char* tar_path) {
         return r;
     }
 
-    // 5-7. Validate the staging tree, apply, reload.
-    r = apply_validated_tree(STAGING);
+    // 5-7. Validate the staging tree, apply, reload. Apply moves exactly the set
+    //      unpack just wrote, so it reuses the same total.
+    r = apply_validated_tree(STAGING, cb, ctx, entries);
+    stage(cb, ctx, "Cleaning up");
     clean_staging();
     if (!r.ok) return r;
 
-    // 8. Sentinel the SD source so it isn't re-imported on the next boot.
+    // 8. Delete the SD source. It carries the authored password and card ids in
+    //    the clear, so keeping it — as the old rename to config.tar.imported did
+    //    — would leave them on the card forever under a new name and undo the
+    //    fingerprinting entirely. Its absence is also what tells
+    //    import_service_pending() the work is done, so no sentinel is needed.
     if (strcmp(tar_path, SD_TAR) == 0) {
-        SD_MMC.remove(SENTINEL);
-        SD_MMC.rename(SD_TAR, SENTINEL);
+        if (!SD_MMC.remove(SD_TAR)) {
+            ESP_LOGW(TAG, "could not delete %s - it still holds authored credentials", SD_TAR);
+        }
     }
 
     ESP_LOGI(TAG, "import applied from %s", tar_path);
@@ -337,7 +405,7 @@ import_result_t import_service_run(const char* tar_path) {
     return r;
 }
 
-import_result_t import_service_revert(void) {
+import_result_t import_service_revert(progress_cb_t cb, void* ctx) {
     import_result_t r = {false, ""};
     if (!sd_card_mount()) {
         snprintf(r.message, sizeof(r.message), "No SD card");
@@ -347,7 +415,9 @@ import_result_t import_service_revert(void) {
         snprintf(r.message, sizeof(r.message), "No backup to restore");
         return r;
     }
-    r = apply_validated_tree(backup_store_root());
+    // total = 0: the backup tree was never unpacked, so there is no entry count
+    // to reuse. It holds no photos either, so the apply is short.
+    r = apply_validated_tree(backup_store_root(), cb, ctx, 0);
     if (r.ok) {
         ESP_LOGI(TAG, "reverted to backup snapshot");
         snprintf(r.message, sizeof(r.message), "Restored the previous config");

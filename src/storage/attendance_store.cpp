@@ -438,7 +438,7 @@ int attendance_present_for(const char* class_dir, const char* date) {
     return count;
 }
 
-int attendance_clear(const char* class_dir, int* out_failed) {
+int attendance_clear(const char* class_dir, int* out_failed, progress_cb_t cb, void* ctx) {
     attendance_close();  // never leave a session open on files we're deleting
     if (cache_is(class_dir)) cache_flush();
     // List the dates first, then delete — removing files while iterating the
@@ -462,6 +462,12 @@ int attendance_clear(const char* class_dir, int* out_failed) {
         } else {
             // Silently dropping this is how a partial wipe used to look clean.
             ESP_LOGE(TAG, "clear %s: could not delete %s", class_dir, path);
+        }
+        // Report attempts, not successes: the point is that the wipe is moving,
+        // and a file that resisted still consumed the time.
+        if (cb) {
+            progress_t p = {"Deleting attendance", dates[i], i + 1, n};
+            cb(&p, ctx);
         }
     }
     free(dates);

@@ -8,7 +8,8 @@
 
 #include "app/auth.h"
 #include "app/class_stats.h"
-#include "app/uid.h"
+#include "app/credential.h"
+#include "services/device_secret.h"
 #include "audio/beeper.h"
 #include "esp32-hal-log.h"
 #include "esp_timer.h"
@@ -137,16 +138,20 @@ static const char* class_turma_for_student(int student_idx) {
 }
 
 static int roster_student_by_uid(const char* uid_hex) {
-    char norm[32];
-    uid_normalize(uid_hex, norm, sizeof(norm));
-    if (!norm[0]) return -1;
+    // Fingerprint the scanned card once and compare against the stored form,
+    // which is already a fingerprint (app/credential.h). uid_fingerprint()
+    // normalizes internally, so reader formatting still does not matter.
+    uint8_t key[DEVICE_SECRET_LEN];
+    if (!device_secret_get(key)) return -1;  // fail closed
+    char fp[UID_FINGERPRINT_CAP];
+    uid_fingerprint(key, sizeof(key), uid_hex, fp, sizeof(fp));
+    memset(key, 0, sizeof(key));
+    if (!fp[0]) return -1;
     for (int j = 0; j < s_cls->roster_count; j++) {
         int idx = s_cls->roster[j];
         const student_t* st = roster_student_at(idx);
         if (!st || !st->rfid_uid[0]) continue;
-        char sn[32];
-        uid_normalize(st->rfid_uid, sn, sizeof(sn));
-        if (strcmp(norm, sn) == 0) return idx;
+        if (strcmp(fp, st->rfid_uid) == 0) return idx;
     }
     return -1;
 }

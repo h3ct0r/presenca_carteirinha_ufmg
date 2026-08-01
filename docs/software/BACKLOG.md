@@ -58,8 +58,11 @@ exists to collect that data.
 ## Security
 
 **S1 — the web file manager has no authentication.** Plain HTTP, full read/write
-over the soft-AP, including `config.json` with cleartext professor passwords via
-`/api/read`, and unauthenticated `/api/upload` anywhere on the card. Recursive
+over the soft-AP, and unauthenticated `/api/upload` anywhere on the card.
+Credentials are no longer part of the exposure — card ids and passwords are keyed
+fingerprints now (ARCHITECTURE.md §Stored credentials), so `/api/read` on
+`config.json` yields nothing replayable — but everything else on the card is
+still readable, writable and deletable by anyone on the AP. Recursive
 folder delete widens the blast radius without changing the kind of exposure. The
 AP is per-boot, WPA2-protected and professor-started, which is why this is
 tolerated for a debug tool — it is the reason to add auth, not a new hole.
@@ -67,16 +70,6 @@ The background switch (`scr_wifi_editor`) widens the window: the AP can now stay
 up while the professor is on another screen, so nobody is necessarily looking at
 it. It is bounded on both sides — off at every boot, never persisted, and the
 idle gate stops the AP on sign-out — but it is one more reason to add auth.
-
-**S3 — RFID card IDs and professor passwords are stored in cleartext.**
-`students.json` holds every bound card UID and `config.json` holds every
-password, both on a removable FAT32 card that the debug file manager also serves
-unauthenticated (**S1**). Reading either file is enough to clone a student's card
-— or a professor's, which is also the device-unlock credential. In progress: the
-values become `HMAC-SHA256` fingerprints keyed by a per-device secret in NVS, so
-the card carries nothing usable on its own. A bare hash would not do: a 4-byte
-UID space is 2^32 and a 4-digit password 10^4, both exhaustible instantly without
-a secret the card does not carry.
 
 **S2 — neither debug wipe takes a backup.** "Delete all cards & attendance" and
 "Erase the whole SD card" are immediate and unrecoverable, gated only by the
@@ -90,12 +83,6 @@ off-device copy is the only real undo.
 **Q1 — `scr_class.cpp` is a god-screen** at roughly 1300 lines: hub, date picker,
 roll call, history, enroll and the feedback overlay. Splitting the enroll flow out
 is the obvious first cut.
-
-**Q2 — the modal overlay pattern is copy-pasted** across roughly 16 sites in 8
-files (`scr_admin`, `scr_class`, `scr_idle`, `scr_export`, `scr_camera`,
-`scr_kiosk`, `face_verify`). Extracting a `ui/components/modal` with a
-`ui_confirm(...)` helper would also centralise the layering rules that caused the
-`IGNORE_LAYOUT` misrender bug. High value.
 
 ## UX
 

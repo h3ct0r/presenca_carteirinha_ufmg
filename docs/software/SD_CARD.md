@@ -22,6 +22,22 @@ the importer. Schemas, limits and validation rules live in
 `<CODE>` is the class code and doubles as the folder name, so it must be a safe
 path segment.
 
+**Card ids and passwords are not readable on the card.** They are authored in the
+clear, then converted on the first load into keyed fingerprints (`v1:<hex>`) and
+the file is rewritten — see [CONFIG_IMPORT.md](CONFIG_IMPORT.md) §6. The key
+lives in the device's NVS, never on the card.
+
+Two consequences worth knowing before swapping cards between devices:
+
+- A card carrying fingerprints from **another device** is not recognised: every
+  student reads as unbound and no professor card or password works there. The
+  data (names, classes, attendance) is fine — only the credentials are bound.
+- Erasing NVS (a full flash erase, not an ordinary firmware update) has the same
+  effect on that device.
+
+Recovery either way: Admin → debug → *Delete all cards & attendance*, then
+re-enrol the cards, and re-import `config.tar` for the professors.
+
 ## Device-written — created at runtime, never in a `config.tar`
 
 ```

@@ -91,6 +91,11 @@ import otherwise.
   ]
 }
 ```
+> **`rfid_uid` and `password` are authored in the clear, but not stored that
+> way.** The first load that sees plaintext replaces both with a keyed
+> fingerprint (`v1:` + hex) and **rewrites `config.json` in place** — see
+> §6 below. Author them normally; the device does the rest.
+
 Rules (mirror `config_service.cpp`):
 - At least **one** teacher; **≤ 8** are honored.
 - `password` must be **digits only** (`0-9`) — it's typed on a numeric keypad
@@ -118,6 +123,10 @@ Rules (mirror `roster_service.cpp`):
   form must be unique across students **and** must not equal any teacher's
   `rfid_uid` (a card belongs to one holder). Prefer emitting `null` from the
   builder unless the author explicitly provides a card.
+  **Authored in the clear, stored as a fingerprint** — the first load converts it
+  and rewrites `students.json`, exactly as for the teacher fields (§6). The
+  cross-file "a card belongs to one holder" check still holds afterwards, because
+  both files are keyed by the same device secret.
 - The student registry carries **no** class-group tag — a student is global and
   may belong to several classes/groups. The group (*turma*) is recorded **per
   class**, on each `class.json` roster entry (see §3.3).
@@ -255,11 +264,51 @@ Implemented in [`src/services/import_service.cpp`](../../src/services/import_ser
    are never named here, so they are preserved in place.
 7. **Reload** config + roster services (`*_service_reload()`), which republish
    status so the UI refreshes on its own.
-8. **Sentinel:** on the SD path, rename `/config.tar → /config.tar.imported` so
-   it is not re-imported on the next boot.
+8. **Delete the source:** on the SD path, `/config.tar` is removed. It holds the
+   authored passwords and card ids in the clear, so keeping it — as the old
+   rename to `/config.tar.imported` did — would leave them on the card
+   indefinitely. Its absence is what `import_service_pending()` reads, so no
+   sentinel file is needed. **A failed import does not delete it**, so the
+   operator can fix the archive and retry.
 
 Live config is only touched at step 6, so a power loss earlier leaves a working
-device. **Revert:** `import_service_revert()` re-applies `/backup/previous/` as
+device.
+
+**Progress.** Every step above reports through the optional `progress_cb_t`
+(`app/progress.h`) both entry points take, and steps 4 and 6 report per file —
+the entry count from step 2 is reused as the total for both, since apply moves
+exactly the set unpack wrote. This is not cosmetic: an archive carrying 600
+avatars is ~1200 FAT file creations, and the whole pipeline blocks the LVGL
+thread, so without it the screen looks crashed for the duration. See
+[ARCHITECTURE.md](ARCHITECTURE.md) §Long blocking operations.
+
+### 6. Credentials are converted on first load
+
+The config-builder runs on a laptop and cannot know the device's key, so it
+authors `teachers[].rfid_uid`, `teachers[].password` and `students[].rfid_uid`
+**in the clear**. The device converts them the first time it loads a file
+containing plaintext, replacing each with `HMAC-SHA256(device key, value)` in the
+`v1:<hex>` form, and rewrites the file atomically.
+
+- The **key** is 32 random bytes in NVS, generated on first boot and never
+  written to the SD card (`services/device_secret.h`). Reading the card — by
+  pulling it, or through the unauthenticated web file manager — therefore yields
+  nothing replayable.
+- **Converting, not rejecting.** An imported professor card keeps working;
+  rejecting authored plaintext would silently unbind every card in every config.
+- **Idempotent.** `credential_is_fingerprint()` (prefix + exact length +
+  lowercase hex) tells a converted value from an authored one, so a reload never
+  re-hashes. No authored password (digits only, ≤ 31) or card id can be mistaken
+  for one.
+- **Device-bound.** Moving the SD card to another device, or erasing NVS, makes
+  every fingerprint on it unrecognisable. Recovery: Admin → debug → *Delete all
+  cards & attendance*, then re-enrol; and re-import `config.tar` for the
+  professors.
+- If the rewrite fails (card full or write-protected) the load reports it rather
+  than continuing — leaving plaintext in place would mean every card and password
+  silently stops matching.
+
+**Revert:** `import_service_revert()` re-applies `/backup/previous/` as
 a tree (validate + apply + reload, no new backup). Because import is an overlay
 (§2), a revert restores the authored files but does **not** remove a class the
 import *added* — removing a class stays a separate, explicit action.

@@ -5,9 +5,10 @@
 #include <string.h>
 
 #include "app/auth.h"
+#include "app/credential.h"
 #include "app/roster.h"
 #include "app/teacher.h"
-#include "app/uid.h"
+#include "services/device_secret.h"
 #include "audio/beeper.h"
 #include "esp32-hal-log.h"
 #include "esp_timer.h"
@@ -15,6 +16,7 @@
 #include "services/roster_service.h"
 #include "storage/attendance_store.h"
 #include "ui/components/face_verify.h"
+#include "ui/components/modal.h"
 #include "ui/components/keyboard.h"
 #include "ui/components/status_bar.h"
 #include "ui/components/student_photo.h"
@@ -67,15 +69,18 @@ static void digits_only(const char* s, char* out, size_t cap) {
 }
 
 static const student_t* find_by_uid(const char* uid_hex) {
-    char norm[32];
-    uid_normalize(uid_hex, norm, sizeof(norm));
-    if (!norm[0]) return nullptr;
+    // Fingerprint the scanned card and compare against the stored form, which is
+    // already a fingerprint. See roster_student_by_uid() in scr_class.cpp.
+    uint8_t key[DEVICE_SECRET_LEN];
+    if (!device_secret_get(key)) return nullptr;  // fail closed
+    char fp[UID_FINGERPRINT_CAP];
+    uid_fingerprint(key, sizeof(key), uid_hex, fp, sizeof(fp));
+    memset(key, 0, sizeof(key));
+    if (!fp[0]) return nullptr;
     for (int j = 0; j < s_cls->roster_count; j++) {
         const student_t* st = roster_student_at(s_cls->roster[j]);
         if (!st || !st->rfid_uid[0]) continue;
-        char sn[32];
-        uid_normalize(st->rfid_uid, sn, sizeof(sn));
-        if (strcmp(norm, sn) == 0) return st;
+        if (strcmp(fp, st->rfid_uid) == 0) return st;
     }
     return nullptr;
 }
@@ -410,27 +415,11 @@ static void open_exit_modal(void) {
 
     // Parented to s_root (not lv_layer_top) so the shared password keyboard,
     // which lives on lv_layer_top, still floats above this modal.
-    s_exit_modal = lv_obj_create(s_root);
-    lv_obj_remove_style_all(s_exit_modal);
-    // Escape the screen's flex flow so this is a true full-screen overlay.
-    lv_obj_add_flag(s_exit_modal, LV_OBJ_FLAG_IGNORE_LAYOUT);
-    lv_obj_set_size(s_exit_modal, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(s_exit_modal, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(s_exit_modal, LV_OPA_50, 0);
-    lv_obj_add_flag(s_exit_modal, LV_OBJ_FLAG_CLICKABLE);  // swallow taps behind
-    lv_obj_remove_flag(s_exit_modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* card;
+    s_exit_modal = ui_modal_create(s_root, 60, &card);
 
-    lv_obj_t* card = ui_make_card(s_exit_modal);
-    lv_obj_set_width(card, LV_PCT(88));
-    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 60);
-    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(card, 12, 0);
-
-    ui_make_label(card, "Exit kiosk?", THEME_PRIMARY, &lv_font_montserrat_20);
-    lv_obj_t* hint = ui_make_label(card, "Tap a professor card, or enter a password.",
-                                   THEME_MUTED, &lv_font_montserrat_14);
-    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(hint, LV_PCT(100));
+    ui_modal_title(card, "Exit kiosk?", THEME_PRIMARY);
+    ui_modal_body(card, "Tap a professor card, or enter a password.");
 
     // Passwords are digits-only: use the shared numeric keypad (same as the
     // idle login), pop it up right away, and make its OK/finish button submit.
@@ -439,18 +428,7 @@ static void open_exit_modal(void) {
     keyboard_show(s_exit_ta, LV_KEYBOARD_MODE_NUMBER);
     keyboard_set_ready_cb(exit_pw_ok_cb);
 
-    lv_obj_t* row = lv_obj_create(card);
-    lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(row, 10, 0);
-    lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t* cancel = ui_make_button(row, "Cancel", &theme_style_btn_outline,
-                                      exit_cancel_cb, nullptr);
-    lv_obj_set_flex_grow(cancel, 1);
-    lv_obj_t* ok = ui_make_button(row, "Exit", &theme_style_btn_primary, exit_pw_ok_cb,
-                                  nullptr);
-    lv_obj_set_flex_grow(ok, 1);
+    ui_modal_actions(card, "Exit", &theme_style_btn_primary, exit_pw_ok_cb, exit_cancel_cb);
 
     ui_set_card_capture(on_exit_card);  // divert the next card tap to the gate
 }

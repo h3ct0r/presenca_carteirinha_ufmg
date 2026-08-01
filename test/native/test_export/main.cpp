@@ -99,7 +99,7 @@ static void test_path_and_exists(void) {
 
 static void test_write_csv_content(void) {
     const class_rec_t* cls = setup_data();
-    export_result_t r = export_write_csv(cls);
+    export_result_t r = export_write_csv(cls, nullptr, nullptr);
     TEST_ASSERT_TRUE(r.ok);
     TEST_ASSERT_EQUAL_STRING("/csv_export/CS101-M1.csv", r.path);
     TEST_ASSERT_TRUE(r.size_bytes > 0);
@@ -114,12 +114,12 @@ static void test_write_csv_content(void) {
 
 static void test_overwrite_replaces_not_appends(void) {
     const class_rec_t* cls = setup_data();
-    export_write_csv(cls);
+    export_write_csv(cls, nullptr, nullptr);
     // A later session where only 003 shows up bumps 001 and 002; re-export
     // must replace the file, not append.
     const char* c[] = {"202500003"};
     mark_day("2026-01-20", c, 1);
-    export_result_t r = export_write_csv(cls);
+    export_result_t r = export_write_csv(cls, nullptr, nullptr);
     TEST_ASSERT_TRUE(r.ok);
 
     char buf[256];
@@ -135,7 +135,7 @@ static void test_export_preserves_open_session(void) {
     attendance_open(CLASS_DIR, "2026-02-01");
     attendance_set("202500002", true);
 
-    export_write_csv(cls);  // opens historical dates internally
+    export_write_csv(cls, nullptr, nullptr);  // opens historical dates internally
 
     // The in-progress session is intact afterward.
     TEST_ASSERT_TRUE(attendance_is_open());
@@ -143,6 +143,44 @@ static void test_export_preserves_open_session(void) {
     TEST_ASSERT_EQUAL_STRING(CLASS_DIR, attendance_dir());
     TEST_ASSERT_TRUE(attendance_is_present("202500002"));
     TEST_ASSERT_EQUAL_INT(1, attendance_present_count());
+}
+
+// --- progress reporting ------------------------------------------------------
+//
+// Every session date is a whole-file read, so a class with a year of history
+// blocks the LVGL thread long enough to look crashed. The export screen relies
+// on these counts to drive its bar.
+
+struct ex_rec_t {
+    int calls;
+    int last_done;
+    int last_total;
+    char last_detail[16];
+};
+static ex_rec_t s_ex;
+
+static void ex_cb(const progress_t* p, void* ctx) {
+    ex_rec_t* r = (ex_rec_t*)ctx;
+    r->calls++;
+    r->last_done = p->done;
+    r->last_total = p->total;
+    snprintf(r->last_detail, sizeof(r->last_detail), "%s", p->detail ? p->detail : "");
+}
+
+static void test_progress_counts_every_session_date(void) {
+    const class_rec_t* cls = setup_data();  // 3 sessions
+
+    s_ex = {};
+    TEST_ASSERT_TRUE(export_write_csv(cls, ex_cb, &s_ex).ok);
+
+    // One report per date, ending at done == total, and naming the date it just
+    // folded — that last part is what proves the bar is tracking real work.
+    export_metrics_t m = export_metrics(cls);
+    TEST_ASSERT_TRUE(m.day_count > 0);
+    TEST_ASSERT_EQUAL_INT(m.day_count, s_ex.calls);
+    TEST_ASSERT_EQUAL_INT(m.day_count, s_ex.last_total);
+    TEST_ASSERT_EQUAL_INT(m.day_count, s_ex.last_done);
+    TEST_ASSERT_EQUAL_STRING(m.start_date, s_ex.last_detail);  // oldest is folded last
 }
 
 int main(int, char**) {
@@ -155,5 +193,6 @@ int main(int, char**) {
     RUN_TEST(test_write_csv_content);
     RUN_TEST(test_overwrite_replaces_not_appends);
     RUN_TEST(test_export_preserves_open_session);
+    RUN_TEST(test_progress_counts_every_session_date);
     return UNITY_END();
 }

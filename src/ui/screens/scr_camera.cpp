@@ -3,6 +3,7 @@
 #include "esp_heap_caps.h"
 #include "services/face_detection_service.h"
 #include "storage/photo_store.h"
+#include "ui/components/modal.h"
 #include "ui/components/shell.h"
 #include "ui/screen_manager.h"
 #include "ui/theme/theme.h"
@@ -34,23 +35,11 @@ static void close_saved_modal(lv_event_t*) {
 static void show_saved_modal(const char* path) {
     close_saved_modal(nullptr);
 
-    s_saved_modal = lv_obj_create(s_sh.root);
-    lv_obj_remove_style_all(s_saved_modal);
-    lv_obj_add_flag(s_saved_modal, LV_OBJ_FLAG_IGNORE_LAYOUT);  // true overlay
-    lv_obj_set_size(s_saved_modal, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(s_saved_modal, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(s_saved_modal, LV_OPA_50, 0);
-    lv_obj_add_flag(s_saved_modal, LV_OBJ_FLAG_CLICKABLE);  // swallow taps behind
-    lv_obj_remove_flag(s_saved_modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* card;
+    s_saved_modal = ui_modal_create(s_sh.root, UI_MODAL_CENTER, &card);
 
-    lv_obj_t* card = ui_make_card(s_saved_modal);
-    lv_obj_set_width(card, LV_PCT(88));
-    lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(card, 12, 0);
-
-    ui_make_label(card, LV_SYMBOL_OK "  Picture saved", THEME_PRIMARY,
-                  &lv_font_montserrat_20);
+    ui_modal_title(card, LV_SYMBOL_OK "  Picture saved", THEME_PRIMARY);
+    // The path, not muted body text — it is the content here, not an aside.
     lv_obj_t* p = ui_make_label(card, path, THEME_TEXT, &lv_font_montserrat_14);
     lv_label_set_long_mode(p, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(p, LV_PCT(100));

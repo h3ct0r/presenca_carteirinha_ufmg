@@ -6,6 +6,8 @@
 #include "app/session.h"
 #include "services/export_service.h"
 #include "services/roster_service.h"
+#include "ui/components/progress.h"
+#include "ui/components/modal.h"
 #include "ui/components/shell.h"
 #include "ui/components/toast.h"
 #include "ui/screen_manager.h"
@@ -89,9 +91,21 @@ static void select_all_cb(lv_event_t*) {
 static void do_export_selected(void) {
     int ok = 0, fail = 0;
     uint32_t total = 0;
+
+    // Each class re-reads every one of its session files, so a multi-class
+    // export over a full year is tens of seconds of blocked UI. The context line
+    // tracks classes; export_write_csv drives the bar over that class's days.
+    const int selected = count_selected();
+    int n = 0;
+    ui_progress_open("Exporting CSV");
     for (int i = 0; i < s_check_count; i++) {
         if (!s_checks[i] || !lv_obj_has_state(s_checks[i], LV_STATE_CHECKED)) continue;
-        export_result_t r = export_write_csv(s_check_cls[i]);
+        char ctx[64];
+        // ASCII only: the fonts cover 0x20-0x7F, so an em dash draws as a box.
+        snprintf(ctx, sizeof(ctx), "Class %d of %d - %s", ++n, selected,
+                 s_check_cls[i] ? s_check_cls[i]->code : "");
+        ui_progress_context(ctx);
+        export_result_t r = export_write_csv(s_check_cls[i], ui_progress_cb, nullptr);
         if (r.ok) {
             ok++;
             total += r.size_bytes;
@@ -99,6 +113,7 @@ static void do_export_selected(void) {
             fail++;
         }
     }
+    ui_progress_close();
 
     char msg[128];
     bool good = (ok > 0 && fail == 0);
@@ -139,42 +154,17 @@ static void confirm_overwrite_cb(lv_event_t*) {
 static void open_overwrite_confirm(int existing) {
     if (s_confirm) return;
 
-    s_confirm = lv_obj_create(s_root);
-    lv_obj_remove_style_all(s_confirm);
-    lv_obj_add_flag(s_confirm, LV_OBJ_FLAG_IGNORE_LAYOUT);  // true full-screen overlay
-    lv_obj_set_size(s_confirm, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(s_confirm, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(s_confirm, LV_OPA_50, 0);
-    lv_obj_add_flag(s_confirm, LV_OBJ_FLAG_CLICKABLE);  // swallow taps behind
-    lv_obj_remove_flag(s_confirm, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* card;
+    s_confirm = ui_modal_create(s_root, 80, &card);
 
-    lv_obj_t* card = ui_make_card(s_confirm);
-    lv_obj_set_width(card, LV_PCT(88));
-    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 80);
-    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(card, 12, 0);
-
-    ui_make_label(card, "Overwrite existing exports?", THEME_PRIMARY, &lv_font_montserrat_20);
+    ui_modal_title(card, "Overwrite existing exports?", THEME_PRIMARY);
     char line[96];
     snprintf(line, sizeof(line), "%d of the selected class(es) already have a CSV in " EXPORT_DIR
                                  ". Exporting will replace them.",
              existing);
-    lv_obj_t* hint = ui_make_label(card, line, THEME_MUTED, &lv_font_montserrat_14);
-    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(hint, LV_PCT(100));
-
-    lv_obj_t* row = lv_obj_create(card);
-    lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(row, 10, 0);
-    lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t* cancel = ui_make_button(row, "Cancel", &theme_style_btn_outline, confirm_cancel_cb,
-                                      nullptr);
-    lv_obj_set_flex_grow(cancel, 1);
-    lv_obj_t* ok = ui_make_button(row, "Overwrite all", &theme_style_btn_primary,
-                                  confirm_overwrite_cb, nullptr);
-    lv_obj_set_flex_grow(ok, 1);
+    ui_modal_body(card, line);
+    ui_modal_actions(card, "Overwrite all", &theme_style_btn_primary, confirm_overwrite_cb,
+                     confirm_cancel_cb);
 }
 
 static void export_cb(lv_event_t*) {
@@ -335,7 +325,10 @@ static void on_show(void*) {
     build_list();
 }
 
-static void on_hide(void) { close_confirm(); }
+static void on_hide(void) {
+    close_confirm();
+    ui_progress_close();  // defensive: an orphan here blocks touch everywhere
+}
 
 const screen_t scr_export = {
     .create = create,

@@ -4,8 +4,8 @@
     {
       "name": "config-builder",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8788", "--directory", "tools/config-builder"],
-      "port": 8788
+      "runtimeArgs": ["-m", "http.server", "8765", "--directory", "tools/config-builder"],
+      "port": 8765
     }
   ]
 }

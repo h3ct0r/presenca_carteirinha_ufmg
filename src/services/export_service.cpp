@@ -70,7 +70,7 @@ void restore_session(const SessionSnapshot& s) {
 }
 }  // namespace
 
-export_result_t export_write_csv(const class_rec_t* cls) {
+export_result_t export_write_csv(const class_rec_t* cls, progress_cb_t cb, void* ctx) {
     export_result_t r = {};
     if (!cls) {
         snprintf(r.message, sizeof(r.message), "No class");
@@ -103,6 +103,12 @@ export_result_t export_write_csv(const class_rec_t* cls) {
         for (int j = 0; j < total; j++) {
             const student_t* st = roster_student_at(cls->roster[j]);
             if (st && !attendance_is_present(st->id)) freq[j]++;
+        }
+        // Each iteration re-reads a whole session file, so this is where the
+        // time goes and where the UI needs to see movement.
+        if (cb) {
+            progress_t p = {"Reading sessions", dates[d], d + 1, days};
+            cb(&p, ctx);
         }
     }
     restore_session(saved);

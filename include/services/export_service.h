@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "app/progress.h"
 #include "app/roster.h"
 
 // Exports per-class attendance to CSV files on the SD card, under /csv_export/.
@@ -50,4 +51,8 @@ bool export_exists(const class_rec_t* cls);
 // Writes MATRICULA,FREQ for every enrolled student to /csv_export/<code>.csv,
 // creating the folder and overwriting any existing file. Restores any open
 // attendance session afterward. Returns {ok,path,size_bytes,message}.
-export_result_t export_write_csv(const class_rec_t* cls);
+//
+// `cb` (optional) reports one item per session date folded — the loop that makes
+// this slow, since every date is a whole-file read. A class with a full year of
+// sessions is 366 of them, and the export screen runs this once per ticked class.
+export_result_t export_write_csv(const class_rec_t* cls, progress_cb_t cb, void* ctx);

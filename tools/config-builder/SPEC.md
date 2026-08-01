@@ -79,6 +79,13 @@ file that touches the DOM.
 
 ## 5. Features (screens/sections in one page)
 
+> **Card ids and passwords are authored in the clear here, and that is correct.**
+> This tool runs on a laptop and cannot know the device's key. The device
+> converts both into keyed fingerprints on the first load and rewrites the file
+> (`docs/software/CONFIG_IMPORT.md` §6), and deletes the `config.tar` after a
+> successful import. Do NOT try to hash anything in the browser — the result
+> would not match any device.
+
 1. **Teachers** — add/remove rows: name, email, rfid_uid (optional), password
    (optional, digits-only). Live per-field + uniqueness validation.
 2. **Students** — table: id, name, rfid_uid (default null). Import from

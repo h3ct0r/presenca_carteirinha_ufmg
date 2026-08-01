@@ -90,10 +90,20 @@ static int next_children(const char* dir, char out[][MAX_NAME], int max) {
     return n;
 }
 
-static bool remove_tree(const char* path, int depth, sd_tree_stats_t* st) {
+// `cb` may be NULL. Reported after each successful removal, with the running
+// `removed` count as `done` — the total is unknowable until the walk finishes.
+static void report(progress_cb_t cb, void* ctx, const sd_tree_stats_t* st, const char* path) {
+    if (!cb) return;
+    progress_t p = {"Deleting", path, st->removed, 0};
+    cb(&p, ctx);
+}
+
+static bool remove_tree(const char* path, int depth, sd_tree_stats_t* st, progress_cb_t cb,
+                        void* ctx) {
     if (!sd_tree_is_dir(path)) {
         if (SD_MMC.remove(path)) {
             st->removed++;
+            report(cb, ctx, st, path);
             return true;
         }
         ESP_LOGE(TAG, "could not delete file %s", path);
@@ -124,12 +134,13 @@ static bool remove_tree(const char* path, int depth, sd_tree_stats_t* st) {
                 st->failed++;
                 return false;
             }
-            if (!remove_tree(child, depth + 1, st)) return false;
+            if (!remove_tree(child, depth + 1, st, cb, ctx)) return false;
         }
     }
 
     if (SD_MMC.rmdir(path)) {
         st->removed++;
+        report(cb, ctx, st, path);
         return true;
     }
     ESP_LOGE(TAG, "could not delete directory %s", path);
@@ -158,7 +169,8 @@ bool sd_tree_remove(const char* path, sd_tree_stats_t* out, char* err, size_t er
         return false;
     }
 
-    bool ok = remove_tree(target, 0, st);
+    // No callback: the web file manager's own task is the only caller (sd_tree.h).
+    bool ok = remove_tree(target, 0, st, nullptr, nullptr);
     if (!ok) set_err(err, err_cap, "deleted %d, failed %d", st->removed, st->failed);
     ESP_LOGI(TAG, "remove %s: %d deleted, %d failed", target, st->removed, st->failed);
     return ok;
@@ -193,7 +205,8 @@ static bool first_root_victim(const char* keep, char* out, size_t cap) {
     return got;
 }
 
-bool sd_tree_wipe_root(const char* keep, sd_tree_stats_t* out, char* err, size_t err_cap) {
+bool sd_tree_wipe_root(const char* keep, sd_tree_stats_t* out, char* err, size_t err_cap,
+                       progress_cb_t cb, void* ctx) {
     sd_tree_stats_t local = {0, 0};
     sd_tree_stats_t* st = out ? out : &local;
     st->removed = 0;
@@ -217,7 +230,7 @@ bool sd_tree_wipe_root(const char* keep, sd_tree_stats_t* out, char* err, size_t
     for (; guard < MAX_ROOT_ENTRIES; guard++) {
         char victim[MAX_PATH];
         if (!first_root_victim(keep, victim, sizeof(victim))) break;  // nothing left
-        if (!remove_tree(victim, 0, st)) {
+        if (!remove_tree(victim, 0, st, cb, ctx)) {
             // Stop rather than rescan: the next pass would return this same
             // undeletable entry and spin.
             set_err(err, err_cap, "deleted %d, failed on %s", st->removed, victim);
@@ -229,7 +242,7 @@ bool sd_tree_wipe_root(const char* keep, sd_tree_stats_t* out, char* err, size_t
     ESP_LOGI(TAG, "wipe root (keeping %s): %d deleted", keep && keep[0] ? keep : "-",
              st->removed);
     if (guard >= MAX_ROOT_ENTRIES) {
-        set_err(err, err_cap, "more than %d root entries — deleted %d, run it again",
+        set_err(err, err_cap, "more than %d root entries - deleted %d, run it again",
                 MAX_ROOT_ENTRIES, st->removed);
         return false;
     }

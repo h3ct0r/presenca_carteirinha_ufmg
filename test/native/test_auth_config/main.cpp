@@ -13,6 +13,7 @@
 #include "app/event_bus.h"
 #include "mock_freertos.h"
 #include "mock_sd.h"
+#include "app/credential.h"
 #include "services/config_service.h"
 #include "services/roster_service.h"
 
@@ -145,9 +146,15 @@ static void test_valid_config_parses_teachers(void) {
     TEST_ASSERT_EQUAL_INT(2, cfg.teacher_count);
     TEST_ASSERT_EQUAL_STRING("Prof Hector Azpurua", cfg.teachers[0].name);
     TEST_ASSERT_EQUAL_STRING("two@dcc.ufmg.br", cfg.teachers[1].email);
-    TEST_ASSERT_EQUAL_STRING("1234", cfg.teachers[0].password);
-    TEST_ASSERT_EQUAL_STRING("56789", cfg.teachers[1].password);
+    // Passwords and card ids are never held in the clear: the authored plaintext
+    // was converted to a keyed fingerprint on load. What matters is that it is
+    // NOT the plaintext and that it still authenticates (asserted just below).
+    TEST_ASSERT_TRUE(credential_is_fingerprint(cfg.teachers[0].password, PASSWORD_HASH_HEX));
+    TEST_ASSERT_TRUE(credential_is_fingerprint(cfg.teachers[1].password, PASSWORD_HASH_HEX));
+    TEST_ASSERT_TRUE(credential_is_fingerprint(cfg.teachers[0].rfid_uid, UID_FINGERPRINT_HEX));
     TEST_ASSERT_TRUE(config_has_any_password());
+    TEST_ASSERT_TRUE(auth_lookup_password("1234", nullptr));
+    TEST_ASSERT_TRUE(auth_lookup_password("56789", nullptr));
 }
 
 static void test_uid_lookup_identifies_teacher(void) {
@@ -181,12 +188,20 @@ static void test_password_lookup_identifies_teacher(void) {
 static void test_teacher_has_password(void) {
     // Uses the valid config loaded above; both teachers have a password.
     TEST_ASSERT_TRUE(config_teacher_has_password("hector@dcc.ufmg.br", ""));
-    TEST_ASSERT_TRUE(config_teacher_has_password("", "E0:D1:33:5F"));  // rfid_uid fallback
     TEST_ASSERT_FALSE(config_teacher_has_password("nobody@x.edu", ""));
-    // by_uid copies out only the matched teacher.
+
+    // by_uid takes the SCANNED card and fingerprints it internally, so any
+    // separator/case the reader produces resolves to the same teacher.
     teacher_t who = {};
     TEST_ASSERT_TRUE(config_find_teacher_by_uid("e0d1335f", &who));
     TEST_ASSERT_EQUAL_STRING("Prof Hector Azpurua", who.name);
+    TEST_ASSERT_TRUE(config_find_teacher_by_uid("E0:D1:33:5F", nullptr));
+
+    // The rfid_uid identity fallback (for an account with no email) is keyed on
+    // the STORED form — which is what a session carries, since session_set()
+    // copies a teacher_t straight out of the config. Plaintext must not match.
+    TEST_ASSERT_TRUE(config_teacher_has_password("", who.rfid_uid));
+    TEST_ASSERT_FALSE(config_teacher_has_password("", "E0:D1:33:5F"));
 }
 
 static void test_teacher_list_is_capped(void) {
@@ -442,6 +457,114 @@ static void test_first_teacher_refused_on_broken_config(void) {
     TEST_ASSERT_EQUAL(CONFIG_BAD_JSON, config_get_status());
 }
 
+// --- authoring plaintext -> stored fingerprints ------------------------------
+
+static void read_card(const char* path, char* buf, size_t cap) {
+    size_t n = mocksd_read_file(path, buf, cap - 1);
+    buf[n] = '\0';
+}
+
+// The whole point: what the config-builder authored in the clear must not be on
+// the card after a load.
+static void test_authored_plaintext_is_removed_from_the_card(void) {
+    mocksd_reset();
+    mocksd_add_file("/config.json", VALID_CONFIG);
+    config_service_start();
+    TEST_ASSERT_EQUAL(CONFIG_OK, config_get_status());
+
+    char buf[1024];
+    read_card("/config.json", buf, sizeof(buf));
+    TEST_ASSERT_NULL_MESSAGE(strstr(buf, "\"1234\""), "password left in the clear");
+    TEST_ASSERT_NULL_MESSAGE(strstr(buf, "\"56789\""), "password left in the clear");
+    TEST_ASSERT_NULL_MESSAGE(strstr(buf, "E0:D1:33:5F"), "card id left in the clear");
+    TEST_ASSERT_NOT_NULL(strstr(buf, "v1:"));
+    // The parts that are not credentials are untouched.
+    TEST_ASSERT_NOT_NULL(strstr(buf, "Prof Hector Azpurua"));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "hector@dcc.ufmg.br"));
+}
+
+// THE case that can brick a device: re-hashing an already-hashed value on the
+// next boot would make every password and card stop matching, permanently and
+// with no way back. Load twice and require the file to be byte-identical.
+static void test_conversion_is_idempotent_across_reloads(void) {
+    mocksd_reset();
+    mocksd_add_file("/config.json", VALID_CONFIG);
+    config_service_start();
+    TEST_ASSERT_EQUAL(CONFIG_OK, config_get_status());
+
+    char after_first[1024];
+    read_card("/config.json", after_first, sizeof(after_first));
+
+    // Reload twice more, as a reboot and a post-import reload would.
+    config_service_reload();
+    config_service_reload();
+    TEST_ASSERT_EQUAL(CONFIG_OK, config_get_status());
+
+    char after_third[1024];
+    read_card("/config.json", after_third, sizeof(after_third));
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(after_first, after_third,
+                                     "the file changed on reload - conversion is not idempotent");
+
+    // And the original credentials still work, which is what "not bricked" means.
+    teacher_t who = {};
+    TEST_ASSERT_TRUE(auth_lookup_password("1234", &who));
+    TEST_ASSERT_EQUAL_STRING("Prof Hector Azpurua", who.name);
+    TEST_ASSERT_TRUE(auth_lookup_uid("e0-d1-33-5f", &who));
+    TEST_ASSERT_EQUAL_STRING("Prof Hector Azpurua", who.name);
+}
+
+// A card that cannot be written must not be reported as converted: the values
+// are still plaintext, so every comparison would miss and nobody could log in.
+static void test_failed_conversion_is_reported_not_silent(void) {
+    mocksd_reset();
+    mocksd_add_file("/config.json", VALID_CONFIG);
+    mocksd_set_card_full(true);
+    config_service_start();
+    TEST_ASSERT_NOT_EQUAL(CONFIG_OK, config_get_status());
+    expect_error_contains("secure config.json");
+
+    // Recovering the card and reloading completes the conversion.
+    mocksd_set_card_full(false);
+    config_service_reload();
+    TEST_ASSERT_EQUAL(CONFIG_OK, config_get_status());
+    TEST_ASSERT_TRUE(auth_lookup_password("1234", nullptr));
+}
+
+// A password set on the device is hashed before it is written, so the bootstrap
+// cannot be the one path that puts a plaintext password back on the card.
+static void test_device_set_passwords_are_never_written_in_the_clear(void) {
+    mocksd_reset();
+    config_service_start();
+    TEST_ASSERT_EQUAL(CONFIG_NO_FILE, config_get_status());
+    TEST_ASSERT_TRUE(config_create_first_teacher("Prof Setup", "778899").ok);
+
+    char buf[1024];
+    read_card("/config.json", buf, sizeof(buf));
+    TEST_ASSERT_NULL(strstr(buf, "778899"));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "v1:"));
+    TEST_ASSERT_TRUE(auth_lookup_password("778899", nullptr));
+}
+
+// The other on-device write path. Uses an account with an email as its identity
+// key — a bootstrap account has neither email nor card, and config_set_password
+// cannot match it at all (pre-existing, unrelated to fingerprinting).
+static void test_changed_passwords_are_never_written_in_the_clear(void) {
+    mocksd_reset();
+    mocksd_add_file("/config.json",
+                    "{ \"teachers\": [ { \"name\": \"Prof A\", \"email\": \"a@x\", "
+                    "\"password\": \"111111\" } ] }");
+    config_service_start();
+    TEST_ASSERT_EQUAL(CONFIG_OK, config_get_status());
+
+    TEST_ASSERT_TRUE(config_set_password("a@x", "", "112233").ok);
+    char buf[1024];
+    read_card("/config.json", buf, sizeof(buf));
+    TEST_ASSERT_NULL(strstr(buf, "112233"));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "v1:"));
+    TEST_ASSERT_TRUE(auth_lookup_password("112233", nullptr));
+    TEST_ASSERT_FALSE(auth_lookup_password("111111", nullptr));
+}
+
 int main(int, char**) {
     // Park the services' background retry loops far beyond the test run.
     mock_freertos_set_delay_scale(1000);
@@ -476,5 +599,11 @@ int main(int, char**) {
     RUN_TEST(test_first_teacher_refused_when_config_exists);  // chains from above
     RUN_TEST(test_first_teacher_rejects_bad_input);
     RUN_TEST(test_first_teacher_refused_on_broken_config);        // chains from above
+    // Self-contained (each does its own mocksd_reset), so ordering is free.
+    RUN_TEST(test_authored_plaintext_is_removed_from_the_card);
+    RUN_TEST(test_conversion_is_idempotent_across_reloads);
+    RUN_TEST(test_failed_conversion_is_reported_not_silent);
+    RUN_TEST(test_device_set_passwords_are_never_written_in_the_clear);
+    RUN_TEST(test_changed_passwords_are_never_written_in_the_clear);
     return UNITY_END();
 }

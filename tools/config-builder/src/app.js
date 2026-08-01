@@ -14,6 +14,7 @@ import { matchPhotos } from './photomatch.js';
 import {
   STORAGE_KEY, encodeModel, decodeModel, modelHasContent, describeSavedAt,
 } from './persist.js';
+import { versionLabel } from './version.js';
 
 const EXAMPLE_URL = new URL('../fixtures/example.model.json', import.meta.url);
 
@@ -37,6 +38,7 @@ function emptyModel() {
 // accidental tab close) doesn't lose the work. "Load example" is still one click
 // away in the toolbar.
 async function init() {
+  showVersion();
   const restored = loadLocal();
   if (restored) {
     model = normalize(restored.model);
@@ -45,6 +47,14 @@ async function init() {
     model = emptyModel();
   }
   render();
+}
+
+// Build id in the header. Written once at boot — it never changes — and guarded
+// because the header lives in index.html: a trimmed deployment (DEPLOY.md allows
+// shipping a minimal bundle) must not take the whole app down over a label.
+function showVersion() {
+  const slot = document.getElementById('brand-version');
+  if (slot) slot.textContent = versionLabel();
 }
 
 // --- local working copy (survives a reload) --------------------------------

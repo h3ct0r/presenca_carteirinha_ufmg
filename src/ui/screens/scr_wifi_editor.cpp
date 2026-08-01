@@ -155,7 +155,7 @@ static lv_obj_t* create(void) {
     lv_obj_t* cap = ui_make_label(
         bg,
         "Debug: leaves the access point up while you use the rest of the device "
-        "(kiosk, roll call). The file manager has no password — signing out stops it, "
+        "(kiosk, roll call). The file manager has no password - signing out stops it, "
         "and this switch resets when the device restarts.",
         THEME_MUTED, &lv_font_montserrat_14);
     lv_label_set_long_mode(cap, LV_LABEL_LONG_WRAP);

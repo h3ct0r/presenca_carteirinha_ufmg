@@ -57,6 +57,17 @@
     }
     .brand h1 { font-size: 17px; margin: 0; letter-spacing: -.01em; }
     .brand .sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+    /* Build id, pinned to the right of the header. Quiet on purpose: it answers
+       "which copy of the tool is this?" in a bug report and should never compete
+       with the title. margin-left:auto does the pinning without a spacer. */
+    .brand-version {
+      margin-left: auto; align-self: center; flex: none;
+      font: 12px/1 var(--mono); font-variant-numeric: tabular-nums;
+      color: var(--faint); letter-spacing: .02em;
+      padding: 5px 9px; border: 1px solid var(--line-soft); border-radius: var(--radius-pill);
+      user-select: all;  /* one click selects the whole string to paste into an issue */
+    }
+    @media (max-width: 460px) { .brand-version { display: none; } }
 
     main { max-width: 1060px; margin: 0 auto; padding: var(--sp-5) var(--sp-4) 72px; }
     .loading { color: var(--muted); }
@@ -293,6 +304,9 @@
       <h1>Config Builder</h1>
       <div class="sub">Author <code>config.tar</code> for the RFID attendance device · fully offline</div>
     </div>
+    <!-- Filled by app.js from src/version.js. Empty until then, so a JS failure
+         leaves a blank corner rather than a stale hardcoded version. -->
+    <div class="brand-version" id="brand-version" title="Config Builder build"></div>
   </header>
   <main id="app"><p class="loading">Loading…</p></main>
   <script type="module" src="./src/app.js"></script>

@@ -82,6 +82,13 @@ src/lcd/  src/touch/  src/rfid/  src/audio/     device drivers
   `LV_OBJ_FLAG_IGNORE_LAYOUT` (they're otherwise laid out as flex children).
 - **Shared keyboard**: one instance on `layer_top` (`ui/components/keyboard.cpp`),
   reduced numeric map (digits + backspace + OK).
+- **On-screen strings are ASCII-only.** Every font in the build covers
+  `0x20-0x7F` plus a handful of FontAwesome glyphs, so an em dash, curly quote or
+  ellipsis in a label draws as a box. Use `-` and `...`. This applies to anything
+  that reaches a label — including a service's `result.message` or an `err`
+  buffer, which end up in a toast. `ESP_LOG*` and HTTP responses are exempt (the
+  serial console and the browser are not the device's fonts). Accented names from
+  a real roster hit the same wall — see BACKLOG.md.
 - Watch the LVGL heap: `LV_MEM_SIZE` is 512 KB — allocated from PSRAM, so it
   costs no internal RAM — and `LV_USE_ASSERT_MALLOC=1` turns exhaustion into a
   **silent infinite loop** on the UI thread — a freeze, not a reboot. Prefer

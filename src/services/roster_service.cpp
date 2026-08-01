@@ -8,9 +8,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "app/credential.h"
 #include "app/event_bus.h"
 #include "app/uid.h"
 #include "esp32-hal-log.h"
+#include "services/device_secret.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -379,9 +381,29 @@ static roster_status_t load_all(const char* root, bool strict) {
     return ROSTER_OK;
 }
 
+// Defined with the other DOM-edit helpers below; declared here because the live
+// load is the only place allowed to run it.
+static bool students_need_conversion(void);
+static bool convert_students_file(void);
+
 static roster_status_t locked_load(void) {
     xSemaphoreTake(s_lock, portMAX_DELAY);
     roster_status_t st = load_all("", /*strict=*/false);  // live: skip broken classes
+
+    // Authored plaintext card ids become fingerprints once, here in the LIVE
+    // path only — roster_validate_tree() drives the same loaders against a staged
+    // tree it must not touch. The reload afterwards publishes the converted
+    // values and proves the rewrite is still readable.
+    if (st == ROSTER_OK && students_need_conversion()) {
+        if (convert_students_file()) {
+            st = load_all("", /*strict=*/false);
+        } else {
+            // Left plaintext, so every card comparison would now miss. Say so
+            // rather than presenting a device that silently rejects everyone.
+            st = fail(ROSTER_BAD_STUDENTS,
+                      "Could not secure students.json - SD full or write-protected?");
+        }
+    }
     xSemaphoreGive(s_lock);
     return st;
 }
@@ -497,13 +519,77 @@ static bool write_json_file(const char* path, JsonDocument& doc) {
     return ok;
 }
 
-// Is this normalized UID already assigned to a student other than `except`?
-static int uid_owner(const char* norm_uid, int except) {
-    char other[32];
+// --- authoring plaintext -> stored fingerprints ------------------------------
+//
+// The config-builder may author a student's card in the clear (it usually emits
+// null and the card is bound at first tap, but the field exists). The device
+// converts any such value once, on the first live load that sees it, and
+// rewrites students.json. Converting rather than rejecting is what keeps an
+// imported card working instead of silently unbinding it.
+
+static bool students_need_conversion(void) {
+    for (int i = 0; i < s_student_count; i++) {
+        const char* u = s_students[i].rfid_uid;
+        if (u[0] && !credential_is_fingerprint(u, UID_FINGERPRINT_HEX)) return true;
+    }
+    return false;
+}
+
+static bool convert_students_file(void) {
+    uint8_t key[DEVICE_SECRET_LEN];
+    if (!device_secret_get(key)) {
+        ESP_LOGE(TAG, "device key unavailable - cannot secure students.json");
+        return false;
+    }
+
+    JsonDocument doc;
+    if (!read_json_file(STUDENTS_PATH, doc)) {
+        memset(key, 0, sizeof(key));
+        return false;
+    }
+
+    int converted = 0;
+    for (JsonObject o : doc["students"].as<JsonArray>()) {
+        const char* uid = o["rfid_uid"] | "";
+        if (!uid[0] || credential_is_fingerprint(uid, UID_FINGERPRINT_HEX)) continue;
+        char fp[UID_FINGERPRINT_CAP];
+        uid_fingerprint(key, sizeof(key), uid, fp, sizeof(fp));
+        // A uid with no usable characters becomes unbound rather than a broken
+        // stored value that could never match a real tap.
+        if (fp[0]) {
+            o["rfid_uid"] = fp;
+        } else {
+            o["rfid_uid"] = nullptr;
+        }
+        converted++;
+    }
+    memset(key, 0, sizeof(key));
+    if (converted == 0) return true;  // nothing to write
+
+    if (!write_json_file(STUDENTS_PATH, doc)) return false;
+    ESP_LOGW(TAG, "converted %d authored card id(s) to fingerprints", converted);
+    return true;
+}
+
+// Fingerprints a scanned card for comparison against the stored form. Writes ""
+// when the key is unavailable or the uid has no usable characters — callers must
+// treat that as "matches nothing" and never fall through to a plaintext compare.
+static void fingerprint_uid(const char* uid, char* out, size_t cap) {
+    if (out && cap) out[0] = '\0';
+    uint8_t key[DEVICE_SECRET_LEN];
+    if (!device_secret_get(key)) return;  // fail closed
+    uid_fingerprint(key, sizeof(key), uid ? uid : "", out, cap);
+    memset(key, 0, sizeof(key));
+}
+
+// Is this FINGERPRINT already assigned to a student other than `except`? Both
+// sides are stored fingerprints, so this is a plain compare — no normalizing,
+// because a fingerprint is already canonical.
+static int uid_owner(const char* fp, int except) {
+    if (!fp || !fp[0]) return -1;
     for (int i = 0; i < s_student_count; i++) {
         if (i == except || !s_students[i].rfid_uid[0]) continue;
-        uid_normalize(s_students[i].rfid_uid, other, sizeof(other));
-        if (strcmp(norm_uid, other) == 0) return i;
+        if (strcmp(fp, s_students[i].rfid_uid) == 0) return i;
     }
     return -1;
 }
@@ -511,26 +597,26 @@ static int uid_owner(const char* norm_uid, int except) {
 bool roster_uid_belongs_to_student(const char* uid, char* name_out, size_t cap) {
     if (name_out && cap) name_out[0] = '\0';
     if (!uid || uid[0] == '\0' || roster_get_status() != ROSTER_OK) return false;
-    char norm[32];
-    uid_normalize(uid, norm, sizeof(norm));
-    if (norm[0] == '\0') return false;
-    int owner = uid_owner(norm, -1);
+    char fp[UID_FINGERPRINT_CAP];
+    fingerprint_uid(uid, fp, sizeof(fp));
+    if (fp[0] == '\0') return false;
+    int owner = uid_owner(fp, -1);
     if (owner < 0) return false;
     if (name_out) snprintf(name_out, cap, "%s", s_students[owner].name);
     return true;
 }
 
-// Does this normalized UID belong to one of the professors in config.json? A
-// student must never be given a card that unlocks the device. Copies the
-// professor's name into name_out on a match.
-static bool uid_is_professor(const char* norm_uid, char* name_out, size_t cap) {
+// Does this FINGERPRINT belong to one of the professors in config.json? A
+// student must never be given a card that unlocks the device. Both files are
+// keyed by the same device secret, so the cross-file check still works with
+// neither side readable. Copies the professor's name into name_out on a match.
+static bool uid_is_professor(const char* fp, char* name_out, size_t cap) {
+    if (!fp || !fp[0]) return false;
     device_config_t cfg;
     config_get(&cfg);  // zeroed unless config is loaded
-    char other[32];
     for (int i = 0; i < cfg.teacher_count; i++) {
         if (!cfg.teachers[i].rfid_uid[0]) continue;
-        uid_normalize(cfg.teachers[i].rfid_uid, other, sizeof(other));
-        if (strcmp(norm_uid, other) == 0) {
+        if (strcmp(fp, cfg.teachers[i].rfid_uid) == 0) {
             if (name_out) snprintf(name_out, cap, "%s", cfg.teachers[i].name);
             return true;
         }
@@ -540,25 +626,30 @@ static bool uid_is_professor(const char* norm_uid, char* name_out, size_t cap) {
 
 // Persists rfid_uid onto the student's object in students.json (DOM edit, so
 // any fields we don't model are preserved).
-static bool persist_student_uid(const char* student_id, const char* uid) {
+//
+// `fp` is the FINGERPRINT, never the scanned card id — named so because passing
+// a raw uid here is exactly the mistake that would put a readable card id back
+// on the card. Callers derive it with fingerprint_uid().
+static bool persist_student_uid(const char* student_id, const char* fp) {
     JsonDocument doc;
     if (!read_json_file(STUDENTS_PATH, doc)) return false;
     for (JsonObject o : doc["students"].as<JsonArray>()) {
         if (strcmp(o["id"] | "", student_id) == 0) {
-            o["rfid_uid"] = uid;
+            o["rfid_uid"] = fp;
             return write_json_file(STUDENTS_PATH, doc);
         }
     }
     return false;
 }
 
-static bool persist_new_student(const char* id, const char* name, const char* uid) {
+// `fp` as above: a fingerprint, not a card id.
+static bool persist_new_student(const char* id, const char* name, const char* fp) {
     JsonDocument doc;
     if (!read_json_file(STUDENTS_PATH, doc)) return false;
     JsonObject o = doc["students"].add<JsonObject>();
     o["id"] = id;
     o["name"] = name;
-    o["rfid_uid"] = uid;
+    o["rfid_uid"] = fp;
     return write_json_file(STUDENTS_PATH, doc);
 }
 
@@ -615,23 +706,25 @@ roster_result_t roster_enroll_existing(const char* class_code, int student_idx,
     } else if (student_idx < 0 || student_idx >= s_student_count) {
         r = make_result(false, "Unknown student");
     } else {
-        char norm[32];
-        uid_normalize(uid, norm, sizeof(norm));
-        int owner = uid_owner(norm, student_idx);
+        // Fingerprint once: it is what every check below compares and what gets
+        // stored. The raw uid never reaches the card.
+        char fp[UID_FINGERPRINT_CAP];
+        fingerprint_uid(uid, fp, sizeof(fp));
+        int owner = uid_owner(fp, student_idx);
         int ci = roster_class_index(class_code);
-        if (norm[0] == '\0') {
+        if (fp[0] == '\0') {
             r = make_result(false, "Empty card ID");
         } else if (owner >= 0) {
             r = make_result(false, "Card already assigned to %s", s_students[owner].name);
-        } else if (uid_is_professor(norm, prof, sizeof(prof))) {
+        } else if (uid_is_professor(fp, prof, sizeof(prof))) {
             r = make_result(false, "Card belongs to %s", prof);
         } else if (ci < 0) {
             r = make_result(false, "Unknown class");
-        } else if (!persist_student_uid(s_students[student_idx].id, uid)) {
+        } else if (!persist_student_uid(s_students[student_idx].id, fp)) {
             r = make_result(false, "Could not save students.json");
         } else {
             snprintf(s_students[student_idx].rfid_uid,
-                     sizeof(s_students[student_idx].rfid_uid), "%s", uid);
+                     sizeof(s_students[student_idx].rfid_uid), "%s", fp);
             if (!persist_enroll(&s_classes[ci], s_students[student_idx].id, nullptr)) {
                 r = make_result(false, "Card saved, but class.json failed");
             } else {
@@ -649,10 +742,10 @@ roster_result_t roster_enroll_new(const char* class_code, const char* id, const 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     roster_result_t r = {false, ""};
 
-    char norm[32];
-    uid_normalize(uid, norm, sizeof(norm));
+    char fp[UID_FINGERPRINT_CAP];
+    fingerprint_uid(uid, fp, sizeof(fp));
     int ci = roster_class_index(class_code);
-    int owner = uid_owner(norm, -1);
+    int owner = uid_owner(fp, -1);
     char prof[48];
 
     if (s_status != ROSTER_OK) {
@@ -663,23 +756,23 @@ roster_result_t roster_enroll_new(const char* class_code, const char* id, const 
         r = make_result(false, "Turma too long (max 15)");
     } else if (find_student(id) >= 0) {
         r = make_result(false, "Student %s already exists", id);
-    } else if (norm[0] == '\0') {
+    } else if (fp[0] == '\0') {
         r = make_result(false, "Empty card ID");
     } else if (owner >= 0) {
         r = make_result(false, "Card already assigned to %s", s_students[owner].name);
-    } else if (uid_is_professor(norm, prof, sizeof(prof))) {
+    } else if (uid_is_professor(fp, prof, sizeof(prof))) {
         r = make_result(false, "Card belongs to %s", prof);
     } else if (ci < 0) {
         r = make_result(false, "Unknown class");
     } else if (s_student_count >= ROSTER_MAX_STUDENTS) {
         r = make_result(false, "Student registry is full");
-    } else if (!persist_new_student(id, name, uid)) {
+    } else if (!persist_new_student(id, name, fp)) {
         r = make_result(false, "Could not save students.json");
     } else {
         int idx = s_student_count++;
         snprintf(s_students[idx].id, sizeof(s_students[idx].id), "%s", id);
         snprintf(s_students[idx].name, sizeof(s_students[idx].name), "%s", name);
-        snprintf(s_students[idx].rfid_uid, sizeof(s_students[idx].rfid_uid), "%s", uid);
+        snprintf(s_students[idx].rfid_uid, sizeof(s_students[idx].rfid_uid), "%s", fp);
         if (!persist_enroll(&s_classes[ci], id, turma)) {
             r = make_result(false, "Student saved, but class.json failed");
         } else {
@@ -714,7 +807,7 @@ roster_result_t roster_clear_all_uids(void) {
             }
             if (!write_json_file(STUDENTS_PATH, doc)) {
                 snprintf(r.message, sizeof(r.message),
-                         "Could not save %s — SD full or write-protected?", STUDENTS_PATH);
+                         "Could not save %s - SD full or write-protected?", STUDENTS_PATH);
             } else {
                 for (int i = 0; i < s_student_count; i++) s_students[i].rfid_uid[0] = '\0';
                 r.ok = true;

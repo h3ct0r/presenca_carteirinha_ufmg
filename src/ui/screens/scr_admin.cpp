@@ -16,6 +16,8 @@
 #include "storage/sd_card.h"
 #include "storage/sd_tree.h"
 #include "ui/components/keyboard.h"
+#include "ui/components/modal.h"
+#include "ui/components/progress.h"
 #include "ui/components/shell.h"
 #include "ui/components/toast.h"
 #include "app/version.h"
@@ -119,28 +121,11 @@ static void open_pw_modal(void) {
     // Parented to the screen root (not lv_layer_top) so the shared password
     // keyboard, which lives on lv_layer_top, floats ABOVE this modal's dim
     // overlay instead of being covered by it.
-    s_pw_modal = lv_obj_create(s_root);
-    lv_obj_remove_style_all(s_pw_modal);
-    // Escape the shell's flex flow so this is a true full-screen overlay.
-    lv_obj_add_flag(s_pw_modal, LV_OBJ_FLAG_IGNORE_LAYOUT);
-    lv_obj_set_size(s_pw_modal, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(s_pw_modal, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(s_pw_modal, LV_OPA_50, 0);
-    lv_obj_add_flag(s_pw_modal, LV_OBJ_FLAG_CLICKABLE);  // swallow taps behind
-    lv_obj_remove_flag(s_pw_modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* card;
+    s_pw_modal = ui_modal_create(s_root, 60, &card);
 
-    lv_obj_t* card = ui_make_card(s_pw_modal);
-    lv_obj_set_width(card, LV_PCT(88));
-    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 60);
-    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(card, 12, 0);
-
-    ui_make_label(card, has ? "Change password" : "Set password", THEME_PRIMARY,
-                  &lv_font_montserrat_20);
-    lv_obj_t* hint = ui_make_label(card, "Digits only. This is your login fallback.",
-                                   THEME_MUTED, &lv_font_montserrat_14);
-    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(hint, LV_PCT(100));
+    ui_modal_title(card, has ? "Change password" : "Set password", THEME_PRIMARY);
+    ui_modal_body(card, "Digits only. This is your login fallback.");
 
     s_pw_new = keyboard_make_textarea(card, "New password", 31, LV_KEYBOARD_MODE_NUMBER);
     lv_textarea_set_password_mode(s_pw_new, true);
@@ -151,17 +136,7 @@ static void open_pw_modal(void) {
     // login / class-unlock modals) so no extra tap is needed to start typing.
     keyboard_show(s_pw_new, LV_KEYBOARD_MODE_NUMBER);
 
-    lv_obj_t* row = lv_obj_create(card);
-    lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(row, 10, 0);
-    lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t* cancel = ui_make_button(row, "Cancel", &theme_style_btn_outline, pw_cancel_cb,
-                                      nullptr);
-    lv_obj_set_flex_grow(cancel, 1);
-    lv_obj_t* save = ui_make_button(row, "Save", &theme_style_btn_primary, pw_save_cb, nullptr);
-    lv_obj_set_flex_grow(save, 1);
+    ui_modal_actions(card, "Save", &theme_style_btn_primary, pw_save_cb, pw_cancel_cb);
 }
 
 static void change_pw_cb(lv_event_t*) { open_pw_modal(); }
@@ -170,14 +145,17 @@ static void change_pw_cb(lv_event_t*) { open_pw_modal(); }
 
 static void fill_profile(void) {
     const teacher_t* t = session_get();
-    lv_label_set_text(s_name, t ? t->name : "—");
+    lv_label_set_text(s_name, t ? t->name : "-");
 
     char line[96];
     snprintf(line, sizeof(line), "Email: %s", (t && t->email[0]) ? t->email : "(none)");
     lv_label_set_text(s_email, line);
 
     if (t && t->rfid_uid[0]) {
-        snprintf(line, sizeof(line), "Card: %s", t->rfid_uid);
+        // The stored value is a keyed fingerprint, not the card id — printing it
+        // would be noise. Show that a card is bound; the debug "Read a card"
+        // tool is what identifies a physical card.
+        snprintf(line, sizeof(line), "Card: bound");
         lv_obj_set_style_text_color(s_card, lv_color_hex(THEME_SUCCESS), 0);
     } else {
         snprintf(line, sizeof(line), "Card: (password login)");
@@ -272,13 +250,14 @@ static void on_rfid_card(const char* uid_hex) {
     }
     ui_toast_show(r.message, r.ok);
     if (r.ok) {
-        // Keep the session identity in sync so a later change still matches us
-        // (the rfid_uid fallback identity would otherwise use the stale UID).
-        if (t) {
-            teacher_t updated = *t;
-            snprintf(updated.rfid_uid, sizeof(updated.rfid_uid), "%s", uid_hex);
-            session_set(&updated);
-        }
+        // Keep the session identity in sync so a later change still matches us:
+        // rfid_uid doubles as the identity key when the account has no email, and
+        // config_set_password() compares it against what is IN THE FILE — which
+        // is the fingerprint. Copying the raw uid_hex here would leave the
+        // session holding a value that matches nothing, and the next password
+        // change would fail with "your account is not in config.json".
+        teacher_t updated;
+        if (config_find_teacher_by_uid(uid_hex, &updated)) session_set(&updated);
         close_rfid_modal();
         fill_profile();  // profile card shows the card too
         build_rfid();    // refresh the "card set" status
@@ -292,30 +271,16 @@ static void rfid_cancel_cb(lv_event_t*) { close_rfid_modal(); }
 static void open_rfid_modal(void) {
     if (s_rfid_modal) return;
 
-    s_rfid_modal = lv_obj_create(s_root);
-    lv_obj_remove_style_all(s_rfid_modal);
-    lv_obj_add_flag(s_rfid_modal, LV_OBJ_FLAG_IGNORE_LAYOUT);  // full-screen overlay
-    lv_obj_set_size(s_rfid_modal, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(s_rfid_modal, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(s_rfid_modal, LV_OPA_50, 0);
-    lv_obj_add_flag(s_rfid_modal, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(s_rfid_modal, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t* card = ui_make_card(s_rfid_modal);
-    lv_obj_set_width(card, LV_PCT(88));
-    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 80);
-    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_t* card;
+    s_rfid_modal = ui_modal_create(s_root, 80, &card);
+    // Centred content: this one is an icon + prompt, not a form.
     lv_obj_set_flex_align(card, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(card, 12, 0);
     lv_obj_set_style_pad_ver(card, 20, 0);
 
     ui_make_label(card, LV_SYMBOL_SD_CARD, THEME_ACCENT, &lv_font_montserrat_32);
-    ui_make_label(card, "Tap your new card", THEME_PRIMARY, &lv_font_montserrat_20);
-    lv_obj_t* hint = ui_make_label(
-        card, "Hold the RFID card near the reader. It replaces your current login card.",
-        THEME_MUTED, &lv_font_montserrat_14);
-    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(hint, LV_PCT(100));
+    ui_modal_title(card, "Tap your new card", THEME_PRIMARY);
+    ui_modal_body(card,
+                  "Hold the RFID card near the reader. It replaces your current login card.");
 
     lv_obj_t* cancel = ui_make_button(card, "Cancel", &theme_style_btn_outline, rfid_cancel_cb,
                                       nullptr);
@@ -337,9 +302,9 @@ static void build_rfid(void) {
 
     ui_make_label(card, "RFID card", THEME_PRIMARY, &lv_font_montserrat_20);
     if (has) {
-        char line[80];
-        snprintf(line, sizeof(line), "Your login card: %s", t->rfid_uid);
-        ui_make_label(card, line, THEME_SUCCESS, &lv_font_montserrat_14);
+        // Fingerprint, not the card id — see fill_profile().
+        ui_make_label(card, "A login card is bound to your account.", THEME_SUCCESS,
+                      &lv_font_montserrat_14);
     } else {
         ui_make_label(card, "No card bound. Add one to log in by tapping instead of typing.",
                       THEME_MUTED, &lv_font_montserrat_14);
@@ -381,16 +346,28 @@ static void build_settings(void) {
 // Both halves report specifically — a failure must never surface as a bare
 // "failed" with no cause (the details also go to the serial log).
 static void do_wipe(void) {
+    // Destructive and slow (every session file of every class). Without the
+    // overlay this looks hung, and an operator who power-cycles it mid-way is
+    // left with a partially wiped card.
+    ui_progress_open("Deleting all data");
+    ui_progress_set("Unbinding cards", nullptr, 0, 0);
     roster_result_t cards = roster_clear_all_uids();
 
     int files = 0, failed = 0;
-    for (int i = 0; i < roster_class_count(); i++) {
+    const int classes = roster_class_count();
+    for (int i = 0; i < classes; i++) {
         const class_rec_t* c = roster_class_at(i);
         if (!c) continue;
+        char ctx[64];
+        // ASCII only: every font in the build covers 0x20-0x7F, so an em dash
+        // would draw as a box (see BACKLOG.md, accented characters).
+        snprintf(ctx, sizeof(ctx), "Class %d of %d - %s", i + 1, classes, c->code);
+        ui_progress_context(ctx);
         int f = 0;
-        files += attendance_clear(c->dir, &f);
+        files += attendance_clear(c->dir, &f, ui_progress_cb, nullptr);
         failed += f;
     }
+    ui_progress_close();
 
     char msg[160];
     if (!cards.ok) {
@@ -424,42 +401,15 @@ static void wipe_confirm_cb(lv_event_t*) {
 static void open_wipe_confirm(void) {
     if (s_wipe_confirm) return;
 
-    s_wipe_confirm = lv_obj_create(s_root);
-    lv_obj_remove_style_all(s_wipe_confirm);
-    lv_obj_add_flag(s_wipe_confirm, LV_OBJ_FLAG_IGNORE_LAYOUT);  // full-screen overlay
-    lv_obj_set_size(s_wipe_confirm, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(s_wipe_confirm, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(s_wipe_confirm, LV_OPA_50, 0);
-    lv_obj_add_flag(s_wipe_confirm, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(s_wipe_confirm, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* card;
+    s_wipe_confirm = ui_modal_create(s_root, 80, &card);
 
-    lv_obj_t* card = ui_make_card(s_wipe_confirm);
-    lv_obj_set_width(card, LV_PCT(88));
-    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 80);
-    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(card, 12, 0);
-
-    ui_make_label(card, LV_SYMBOL_WARNING "  Delete all data?", THEME_DANGER,
-                  &lv_font_montserrat_20);
-    lv_obj_t* hint = ui_make_label(
-        card, "This unbinds every student's RFID card and erases the attendance logs of "
-              "every class. This cannot be undone.",
-        THEME_MUTED, &lv_font_montserrat_14);
-    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(hint, LV_PCT(100));
-
-    lv_obj_t* row = lv_obj_create(card);
-    lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(row, 10, 0);
-    lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t* cancel = ui_make_button(row, "Cancel", &theme_style_btn_outline, wipe_cancel_cb,
-                                      nullptr);
-    lv_obj_set_flex_grow(cancel, 1);
-    lv_obj_t* del = ui_make_button(row, "Delete all", &theme_style_btn_danger, wipe_confirm_cb,
-                                   nullptr);
-    lv_obj_set_flex_grow(del, 1);
+    ui_modal_title(card, LV_SYMBOL_WARNING "  Delete all data?", THEME_DANGER);
+    ui_modal_body(card,
+                  "This unbinds every student's RFID card and erases the attendance logs of "
+                  "every class. This cannot be undone.");
+    ui_modal_actions(card, "Delete all", &theme_style_btn_danger, wipe_confirm_cb,
+                     wipe_cancel_cb);
 }
 
 static void wipe_cb(lv_event_t*) { open_wipe_confirm(); }
@@ -476,11 +426,17 @@ static void do_card_wipe(void) {
 
     sd_tree_stats_t st = {0, 0};
     char err[80] = "";
-    bool ok = sd_tree_wipe_root("config.json", &st, err, sizeof(err));
+    // The slowest thing the device does — a full card is hundreds of photos plus
+    // every attendance file. This is the wipe most likely to be mistaken for a
+    // freeze, and the most damaging one to interrupt.
+    ui_progress_open("Erasing the SD card");
+    bool ok = sd_tree_wipe_root("config.json", &st, err, sizeof(err), ui_progress_cb, nullptr);
 
     // The roster is gone from the card; drop it from RAM too, or the class list
     // keeps offering classes whose folders no longer exist.
+    ui_progress_set("Reloading", nullptr, 0, 0);
     roster_service_reload();
+    ui_progress_close();
 
     char msg[160];
     if (ok) {
@@ -510,46 +466,18 @@ static void card_wipe_confirm_cb(lv_event_t*) {
 static void open_card_wipe_confirm(void) {
     if (s_card_wipe_confirm) return;
 
-    s_card_wipe_confirm = lv_obj_create(s_root);
-    lv_obj_remove_style_all(s_card_wipe_confirm);
-    lv_obj_add_flag(s_card_wipe_confirm, LV_OBJ_FLAG_IGNORE_LAYOUT);  // full-screen overlay
-    lv_obj_set_size(s_card_wipe_confirm, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(s_card_wipe_confirm, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(s_card_wipe_confirm, LV_OPA_50, 0);
-    lv_obj_add_flag(s_card_wipe_confirm, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(s_card_wipe_confirm, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* card;
+    s_card_wipe_confirm = ui_modal_create(s_root, 80, &card);
 
-    lv_obj_t* card = ui_make_card(s_card_wipe_confirm);
-    lv_obj_set_width(card, LV_PCT(88));
-    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 80);
-    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(card, 12, 0);
-
-    ui_make_label(card, LV_SYMBOL_WARNING "  Erase the whole SD card?", THEME_DANGER,
-                  &lv_font_montserrat_20);
+    ui_modal_title(card, LV_SYMBOL_WARNING "  Erase the whole SD card?", THEME_DANGER);
     // Spell out what goes and what stays: this is the one action that also
     // takes the face-detection models, which need re-uploading afterwards.
-    lv_obj_t* hint = ui_make_label(
-        card,
-        "Deletes EVERYTHING on the card except config.json: students, classes, all "
-        "attendance, photos, CSV exports, the face-detection models and the import "
-        "backup.\n\nProfessors and their passwords are kept. This cannot be undone.",
-        THEME_MUTED, &lv_font_montserrat_14);
-    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(hint, LV_PCT(100));
-
-    lv_obj_t* row = lv_obj_create(card);
-    lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(row, 10, 0);
-    lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t* cancel = ui_make_button(row, "Cancel", &theme_style_btn_outline,
-                                      card_wipe_cancel_cb, nullptr);
-    lv_obj_set_flex_grow(cancel, 1);
-    lv_obj_t* del = ui_make_button(row, "Erase card", &theme_style_btn_danger,
-                                   card_wipe_confirm_cb, nullptr);
-    lv_obj_set_flex_grow(del, 1);
+    ui_modal_body(card,
+                  "Deletes EVERYTHING on the card except config.json: students, classes, all "
+                  "attendance, photos, CSV exports, the face-detection models and the import "
+                  "backup.\n\nProfessors and their passwords are kept. This cannot be undone.");
+    ui_modal_actions(card, "Erase card", &theme_style_btn_danger, card_wipe_confirm_cb,
+                     card_wipe_cancel_cb);
 }
 
 static void card_wipe_cb(lv_event_t*) { open_card_wipe_confirm(); }
@@ -591,25 +519,13 @@ static void reader_close_cb(lv_event_t*) { close_reader_modal(); }
 static void open_reader_modal(void) {
     if (s_reader_modal) return;
 
-    s_reader_modal = lv_obj_create(s_root);
-    lv_obj_remove_style_all(s_reader_modal);
-    lv_obj_add_flag(s_reader_modal, LV_OBJ_FLAG_IGNORE_LAYOUT);  // full-screen overlay
-    lv_obj_set_size(s_reader_modal, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(s_reader_modal, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(s_reader_modal, LV_OPA_50, 0);
-    lv_obj_add_flag(s_reader_modal, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(s_reader_modal, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t* card = ui_make_card(s_reader_modal);
-    lv_obj_set_width(card, LV_PCT(88));
-    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 80);
-    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_t* card;
+    s_reader_modal = ui_modal_create(s_root, 80, &card);
     lv_obj_set_flex_align(card, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(card, 12, 0);
     lv_obj_set_style_pad_ver(card, 20, 0);
 
     ui_make_label(card, LV_SYMBOL_SD_CARD, THEME_ACCENT, &lv_font_montserrat_32);
-    ui_make_label(card, "Card reader", THEME_PRIMARY, &lv_font_montserrat_20);
+    ui_modal_title(card, "Card reader", THEME_PRIMARY);
     ui_make_label(card, "Tap any card to read its UID", THEME_MUTED, &lv_font_montserrat_14);
 
     s_reader_uid = ui_make_label(card, "Waiting for card...", THEME_MUTED, &lv_font_montserrat_20);
@@ -668,7 +584,7 @@ static void build_debug(void) {
 
     lv_obj_t* cap2 = ui_make_label(
         card,
-        "Deletes every file on the card except config.json — including the students, "
+        "Deletes every file on the card except config.json - including the students, "
         "classes, photos, exports and the face-detection models. Professors and their "
         "passwords survive. Cannot be undone.",
         THEME_MUTED, &lv_font_montserrat_14);
@@ -700,41 +616,19 @@ static void open_confirm(const char* title, const char* msg, void (*action)(void
     if (s_confirm_modal) return;
     s_confirm_action = action;
 
-    s_confirm_modal = lv_obj_create(s_root);
-    lv_obj_remove_style_all(s_confirm_modal);
-    lv_obj_add_flag(s_confirm_modal, LV_OBJ_FLAG_IGNORE_LAYOUT);
-    lv_obj_set_size(s_confirm_modal, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(s_confirm_modal, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(s_confirm_modal, LV_OPA_50, 0);
-    lv_obj_add_flag(s_confirm_modal, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(s_confirm_modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* card;
+    s_confirm_modal = ui_modal_create(s_root, 80, &card);
 
-    lv_obj_t* card = ui_make_card(s_confirm_modal);
-    lv_obj_set_width(card, LV_PCT(88));
-    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 80);
-    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(card, 12, 0);
-
-    ui_make_label(card, title, THEME_PRIMARY, &lv_font_montserrat_20);
-    lv_obj_t* hint = ui_make_label(card, msg, THEME_MUTED, &lv_font_montserrat_14);
-    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(hint, LV_PCT(100));
-
-    lv_obj_t* row = lv_obj_create(card);
-    lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(row, 10, 0);
-    lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t* cancel =
-        ui_make_button(row, "Cancel", &theme_style_btn_outline, confirm_cancel_cb, nullptr);
-    lv_obj_set_flex_grow(cancel, 1);
-    lv_obj_t* ok = ui_make_button(row, "Confirm", &theme_style_btn_primary, confirm_ok_cb, nullptr);
-    lv_obj_set_flex_grow(ok, 1);
+    ui_modal_title(card, title, THEME_PRIMARY);
+    ui_modal_body(card, msg);
+    ui_modal_actions(card, "Confirm", &theme_style_btn_primary, confirm_ok_cb,
+                     confirm_cancel_cb);
 }
 
 static void do_import(void) {
-    import_result_t r = import_service_run(import_service_tar_path());
+    ui_progress_open("Importing configuration");
+    import_result_t r = import_service_run(import_service_tar_path(), ui_progress_cb, nullptr);
+    ui_progress_close();
     ui_toast_show(r.message, r.ok);
     // Config/roster changed; refresh the sections that reflect them.
     build_import();
@@ -743,7 +637,9 @@ static void do_import(void) {
 }
 
 static void do_revert(void) {
-    import_result_t r = import_service_revert();
+    ui_progress_open("Restoring configuration");
+    import_result_t r = import_service_revert(ui_progress_cb, nullptr);
+    ui_progress_close();
     ui_toast_show(r.message, r.ok);
     build_import();
     fill_profile();
@@ -752,7 +648,7 @@ static void do_revert(void) {
 static void import_btn_cb(lv_event_t*) {
     open_confirm("Import configuration?",
                  "This replaces the current configuration with the config.tar on the SD card. "
-                 "The current configuration is backed up first — replacing the one backup "
+                 "The current configuration is backed up first - replacing the one backup "
                  "already kept, so only the configuration in use right now can be restored.",
                  do_import);
 }
@@ -774,7 +670,7 @@ static void build_import(void) {
         lv_obj_t* m = ui_make_label(
             card,
             "A config.tar is on the SD card. Importing replaces the current configuration; the "
-            "current one is backed up first. Only one backup is kept — importing again "
+            "current one is backed up first. Only one backup is kept - importing again "
             "replaces it.",
             THEME_TEXT, &lv_font_montserrat_14);
         lv_label_set_long_mode(m, LV_LABEL_LONG_WRAP);
@@ -879,6 +775,7 @@ static void on_hide(void) {
     // s_root, so one left open survives the hide as a full-screen CLICKABLE
     // layer AND wedges its own opener (which returns early on a live pointer).
     close_card_wipe_confirm();
+    ui_progress_close();  // this one lives on layer_top and would block every screen
 }
 
 const screen_t scr_admin = {

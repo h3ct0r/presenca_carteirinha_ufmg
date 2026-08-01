@@ -53,3 +53,8 @@ The single source of truth is `../../docs/software/CONFIG_IMPORT.md`, which itse
 1. change the firmware validator, 2. update `docs/software/CONFIG_IMPORT.md`
 (+ changelog), 3. update this tool + its tests. A PR/change touching one without
 the others is incomplete.
+
+`src/version.js` is pinned to the firmware's `APP_VERSION` the same way, so
+bumping `include/app/version.h` for a release means bumping it here too —
+`test/schema-sync.test.js` fails until you do. `BUILD_SHA` stays empty in the
+repo; it is stamped on the deployed copy (see [DEPLOY.md](DEPLOY.md)).

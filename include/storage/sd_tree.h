@@ -2,6 +2,8 @@
 
 #include <stddef.h>
 
+#include "app/progress.h"
+
 // Whole-tree SD operations for the debug file manager (see file_server.h):
 // recursive delete and rename. Kept out of file_server.cpp so the path handling
 // and the recursion are testable natively.
@@ -24,6 +26,9 @@ bool sd_tree_is_dir(const char* path);
 // Refuses the card root. Directories nested deeper than 8 levels are reported
 // as failed rather than recursed into, so a pathological tree can't run the
 // LVGL thread's stack out.
+//
+// No progress callback on purpose: the only caller is the web file manager's
+// delete handler, which runs on the `fileserv` task with no UI to report to.
 bool sd_tree_remove(const char* path, sd_tree_stats_t* out, char* err, size_t err_cap);
 
 // Deletes every entry at the card root except one: `keep` is a bare filename
@@ -37,7 +42,14 @@ bool sd_tree_remove(const char* path, sd_tree_stats_t* out, char* err, size_t er
 // This is the debug "erase the card" tool. Everything the device produced
 // (rosters, attendance, photos, exports, face models, backups) is destroyed;
 // only the named file survives.
-bool sd_tree_wipe_root(const char* keep, sd_tree_stats_t* out, char* err, size_t err_cap);
+//
+// `cb` (optional) is called after each entry is removed, so the UI can show that
+// a long wipe is progressing. The count is only discovered while recursing, so
+// it reports total = 0 and a rising `done`. This one matters: a silent wipe of a
+// full card looks hung, and an operator who power-cycles it mid-way is left with
+// a half-erased card.
+bool sd_tree_wipe_root(const char* keep, sd_tree_stats_t* out, char* err, size_t err_cap,
+                       progress_cb_t cb, void* ctx);
 
 // Renames the file or directory at `path` to `new_name` **within its own
 // parent directory** — `new_name` is a bare name, not a path. Returns false

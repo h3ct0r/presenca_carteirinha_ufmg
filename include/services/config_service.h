@@ -31,6 +31,14 @@ constexpr int CONFIG_MAX_TEACHERS = 8;
 // authors. See check_password() in config_service.cpp.
 constexpr int CONFIG_MIN_PASSWORD_DIGITS = 6;
 
+// Longest PLAINTEXT password anyone may author or type. Deliberately NOT
+// sizeof(teacher_t::password): that buffer now holds a stored fingerprint
+// ("v1:" + 64 hex), which is far longer than any password a human enters. The
+// two used to be the same number, and the config-builder's drift guard still
+// pins its authoring limit to this one — see tools/config-builder
+// test/schema-sync.test.js.
+constexpr int CONFIG_MAX_PASSWORD_PLAINTEXT = 31;
+
 typedef enum : uint8_t {
     CONFIG_OK = 0,              // SD mounted, config.json parsed and valid
     CONFIG_NO_SD,              // no card, mount failed, or not FAT32
@@ -38,6 +46,11 @@ typedef enum : uint8_t {
     CONFIG_BAD_JSON,           // config.json unparseable or has no teachers
     CONFIG_DUP_PASSWORD,       // two professors share the same password
     CONFIG_NON_NUMERIC_PASSWORD,  // a password contains non-digit characters
+    // The per-device key behind every stored fingerprint could not be read or
+    // created (services/device_secret.h). Nothing can be verified without it, so
+    // the device fails closed rather than comparing under a zeroed key. Distinct
+    // from CONFIG_BAD_JSON on purpose: the file is fine, the flash is not.
+    CONFIG_NO_KEY,
 } config_status_t;
 
 typedef struct {

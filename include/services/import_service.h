@@ -2,6 +2,8 @@
 
 #include <stddef.h>
 
+#include "app/progress.h"
+
 // Offline config import: applies a config.tar (produced by the config-builder)
 // to the SD card. See docs/software/CONFIG_IMPORT.md §4-§5 for the tar contract
 // and the import flow.
@@ -31,11 +33,20 @@ bool import_service_pending(void);
 // tar path, the source is renamed to a sentinel so it is not re-imported every
 // boot. On any failure before the apply step, the live config is untouched.
 // Call on the LVGL/import thread (SD I/O; reloads the services).
-import_result_t import_service_run(const char* tar_path);
+//
+// `cb` (optional) reports each stage, and file-by-file through the two slow ones
+// — unpacking the archive to staging and applying it into place. Both are
+// determinate: the whitelist pass counts the entries before anything is written,
+// and apply moves exactly that set. An archive carrying 600 avatars is ~1200 FAT
+// file creations, which is tens of seconds of frozen screen without this.
+import_result_t import_service_run(const char* tar_path, progress_cb_t cb, void* ctx);
 
 // Restores the last pre-import snapshot (backup_store) by re-applying it as a
 // tree. Does NOT create a new backup (that would clobber the snapshot being
 // restored). Returns {ok,message}; fails if no snapshot exists. Note: like any
 // import this is an overlay — a class the import *added* is not removed by a
 // revert. LVGL/import thread.
-import_result_t import_service_revert(void);
+//
+// `cb` as above, but there is no unpack stage and the backup tree carries no
+// photos, so apply reports total = 0 (indeterminate).
+import_result_t import_service_revert(progress_cb_t cb, void* ctx);

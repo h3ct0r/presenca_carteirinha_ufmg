@@ -157,7 +157,7 @@ static void test_wipe_keeps_only_config(void) {
     seed_full_card();
     sd_tree_stats_t st = {0, 0};
     char err[80] = "";
-    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", &st, err, sizeof(err)));
+    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", &st, err, sizeof(err), nullptr, nullptr));
     TEST_ASSERT_EQUAL_INT(0, st.failed);
     TEST_ASSERT_TRUE(st.removed > 0);
 
@@ -178,7 +178,7 @@ static void test_wipe_keeps_only_config(void) {
 // spared — only the root entry is.
 static void test_wipe_spares_only_the_root_copy(void) {
     seed_full_card();
-    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", nullptr, nullptr, 0));
+    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", nullptr, nullptr, 0, nullptr, nullptr));
     TEST_ASSERT_TRUE(mocksd_exists("/config.json"));
     TEST_ASSERT_FALSE(mocksd_exists("/backup/previous/config.json"));
 }
@@ -188,7 +188,7 @@ static void test_wipe_keep_match_is_case_insensitive(void) {
     mocksd_reset();
     mocksd_add_file("/CONFIG.JSON", "{}");
     mocksd_add_file("/classes/X/class.json", "{}");
-    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", nullptr, nullptr, 0));
+    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", nullptr, nullptr, 0, nullptr, nullptr));
     TEST_ASSERT_TRUE(mocksd_exists("/CONFIG.JSON"));
     TEST_ASSERT_FALSE(mocksd_exists("/classes"));
 }
@@ -198,7 +198,7 @@ static void test_wipe_on_a_card_without_config_is_still_clean(void) {
     mocksd_add_file("/classes/X/class.json", "{}");
     mocksd_add_file("/stray.txt", "x");
     sd_tree_stats_t st = {0, 0};
-    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", &st, nullptr, 0));
+    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", &st, nullptr, 0, nullptr, nullptr));
     TEST_ASSERT_EQUAL_INT(0, st.failed);
     TEST_ASSERT_FALSE(mocksd_exists("/classes"));
     TEST_ASSERT_FALSE(mocksd_exists("/stray.txt"));
@@ -208,7 +208,7 @@ static void test_wipe_of_an_empty_card_is_a_no_op(void) {
     mocksd_reset();
     mocksd_add_file("/config.json", "{}");
     sd_tree_stats_t st = {0, 0};
-    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", &st, nullptr, 0));
+    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", &st, nullptr, 0, nullptr, nullptr));
     TEST_ASSERT_EQUAL_INT(0, st.removed);
     TEST_ASSERT_EQUAL_INT(0, st.failed);
     TEST_ASSERT_TRUE(mocksd_exists("/config.json"));
@@ -217,9 +217,9 @@ static void test_wipe_of_an_empty_card_is_a_no_op(void) {
 // Running it twice must be safe and leave the same card.
 static void test_wipe_is_idempotent(void) {
     seed_full_card();
-    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", nullptr, nullptr, 0));
+    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", nullptr, nullptr, 0, nullptr, nullptr));
     sd_tree_stats_t st = {0, 0};
-    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", &st, nullptr, 0));
+    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", &st, nullptr, 0, nullptr, nullptr));
     TEST_ASSERT_EQUAL_INT(0, st.removed);
     TEST_ASSERT_TRUE(mocksd_exists("/config.json"));
 }
@@ -227,9 +227,45 @@ static void test_wipe_is_idempotent(void) {
 // An empty/NULL keep means "spare nothing" — config.json goes too.
 static void test_wipe_with_no_keep_removes_everything(void) {
     seed_full_card();
-    TEST_ASSERT_TRUE(sd_tree_wipe_root(nullptr, nullptr, nullptr, 0));
+    TEST_ASSERT_TRUE(sd_tree_wipe_root(nullptr, nullptr, nullptr, 0, nullptr, nullptr));
     TEST_ASSERT_FALSE(mocksd_exists("/config.json"));
     TEST_ASSERT_FALSE(mocksd_exists("/classes"));
+}
+
+// The card wipe is the slowest thing the device does and the most damaging to
+// interrupt, so it has to prove it is moving. The count is only discovered while
+// recursing, hence total == 0 and a rising `done`.
+static void test_wipe_reports_progress_as_it_deletes(void) {
+    mocksd_reset();
+    mocksd_add_file("/config.json", "keep me");
+    mocksd_add_file("/students/students.json", "s");
+    mocksd_add_file("/students/photos/1.jpg", "p1");
+    mocksd_add_file("/students/photos/2.jpg", "p2");
+    mocksd_add_file("/classes/CS101/class.json", "c");
+
+    struct rec_t {
+        int calls, last_done, last_total;
+        bool had_detail;
+    } rec = {0, 0, 0, true};
+    auto cb = [](const progress_t* p, void* ctx) {
+        rec_t* r = (rec_t*)ctx;
+        r->calls++;
+        // Monotonic: a counter that jumped backwards would read as restarting.
+        if (p->done <= r->last_done) r->had_detail = false;
+        r->last_done = p->done;
+        r->last_total = p->total;
+        if (!p->detail || !p->detail[0]) r->had_detail = false;
+    };
+
+    sd_tree_stats_t st = {0, 0};
+    TEST_ASSERT_TRUE(sd_tree_wipe_root("config.json", &st, nullptr, 0, cb, &rec));
+
+    TEST_ASSERT_TRUE(rec.calls > 0);
+    TEST_ASSERT_TRUE_MESSAGE(rec.had_detail, "every report names a path and rises");
+    TEST_ASSERT_EQUAL_INT(0, rec.last_total);      // indeterminate by design
+    TEST_ASSERT_EQUAL_INT(st.removed, rec.calls);  // one report per removal
+    TEST_ASSERT_EQUAL_INT(st.removed, rec.last_done);
+    TEST_ASSERT_TRUE(mocksd_exists("/config.json"));
 }
 
 int main(int, char**) {
@@ -252,5 +288,6 @@ int main(int, char**) {
     RUN_TEST(test_wipe_of_an_empty_card_is_a_no_op);
     RUN_TEST(test_wipe_is_idempotent);
     RUN_TEST(test_wipe_with_no_keep_removes_everything);
+    RUN_TEST(test_wipe_reports_progress_as_it_deletes);
     return UNITY_END();
 }

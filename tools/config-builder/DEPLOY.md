@@ -115,6 +115,26 @@ sudo ln -s /etc/nginx/sites-available/config-builder.conf /etc/nginx/sites-enabl
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
+### Stamping the build hash
+
+The header shows a build id in its top-right corner — `v0.2.0` from
+`src/version.js`, which mirrors the firmware's `APP_VERSION` (a test enforces
+that the two match). Because there is no build step, the git hash is **not**
+committed: a value checked into the repo would describe whoever last edited that
+line, not the deployment.
+
+Stamp it on the **deployed copy** instead, right after the rsync, and the header
+reads `v0.2.0+ff64e14` — the same format the device shows on its idle and About
+screens, so a support conversation can compare the two directly:
+
+```bash
+sudo sed -i.bak "s/BUILD_SHA = ''/BUILD_SHA = '$(git rev-parse --short=7 HEAD)'/" \
+  /var/www/config-builder/src/version.js && sudo rm -f /var/www/config-builder/src/version.js.bak
+```
+
+Run it from a checkout of this repo (that is where `git rev-parse` reads from).
+Skipping it is fine — the header just shows the plain version.
+
 ### HTTPS (recommended if reachable over a network)
 
 The tool works fine over plain HTTP on a trusted LAN, but if it's reachable
@@ -153,7 +173,9 @@ exposing it publicly.
 ## Sanity check after deploying
 
 1. Load the page — it should show the example roster and a green **Ready to
-   export** status.
+   export** status, with the build id in the header's top-right corner (see
+   [Stamping the build hash](#stamping-the-build-hash)). A blank corner there
+   means `src/version.js` did not ship or the module failed to load.
 2. Open the browser console — there should be **no errors** (a MIME-type error on
    `src/app.js` means the `.js` type mapping above is missing).
 3. Click **Download config.tar** and confirm a `config.tar` downloads.

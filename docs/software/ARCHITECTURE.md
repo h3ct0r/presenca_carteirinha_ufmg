@@ -11,7 +11,8 @@ Strict layering, events flow up. Only `ui/` includes `lvgl.h`.
 ```
 src/ui/        LVGL screens, components, theme
 src/app/       pure logic, no hardware: event_bus, auth, session, uid, ustar,
-               battery_curve, photo_fit, card_gate, class_stats
+               battery_curve, photo_fit, card_gate, class_stats, progress,
+               sha256, credential
 src/services/  own hardware + SD, run FreeRTOS tasks: config, roster, rfid,
                battery, export, wifi_ap, file_server, face_detection, import
 src/storage/   SD modules: sd_card (mount), atomic_file (crash-safe replace),
@@ -262,7 +263,11 @@ These have each caused a real bug:
 - **Modals with textareas belong on the screen root, not `layer_top`,** so the
   shared keyboard floats above them.
 - **Overlays parented to the shell root need `LV_OBJ_FLAG_IGNORE_LAYOUT`,**
-  otherwise they are laid out as flex children and misrender.
+  otherwise they are laid out as flex children and misrender. Build them with
+  `ui/components/modal` (`ui_modal_create` + `ui_modal_title/body/actions`),
+  which sets that flag and the rest of the scrim for you — the pattern used to be
+  thirteen hand-copied lines at each of twelve sites, and three of them had
+  already lost the flag.
 - **Watch the LVGL heap.** `LV_MEM_SIZE` is 512 KB (in PSRAM, see §Memory
   budget) and `LV_USE_ASSERT_MALLOC=1` turns exhaustion into a silent infinite
   loop on the UI thread — a freeze with no panic and no reboot. Prefer updating
@@ -277,6 +282,73 @@ These have each caused a real bug:
   turns the gaps into phantom releases — one tap arriving as two clicks. The
   indev is read every 10 ms (for scroll smoothness), so `gt911_touch::getTouch()`
   holds the last point for `TOUCH_HOLD_US` before reporting a release.
+
+## Stored credentials
+
+Card ids and professor passwords are never at rest on the SD card. Both are
+stored as `HMAC-SHA256(device key, value)` in a `v1:<hex>` form
+(`app/credential.h`), keyed by 32 random bytes that live in **NVS on the internal
+flash and never touch the card** (`services/device_secret.h`). Pulling the card,
+or reading it through the unauthenticated debug file manager, therefore yields
+nothing that can be replayed onto a blank card or typed into the keypad.
+
+A keyed hash, not a slow KDF: PBKDF2 exists for the case where the attacker holds
+the hash *and* its salt, which is exactly what keeping the key off the card
+prevents. The `v1:` prefix leaves that reversible if the threat model changes.
+
+Three things follow, and each has bitten or nearly bitten:
+
+- **Plaintext is the authoring format.** The config-builder cannot know the key,
+  so it writes both fields in the clear and the device converts them on the first
+  load that sees them, rewriting the file (CONFIG_IMPORT.md §6). Rejecting
+  instead would silently unbind every imported card. The conversion is idempotent
+  by construction — re-hashing on the next boot would lock everyone out
+  permanently, so `credential_is_fingerprint()` is what stands between the device
+  and that.
+- **Fingerprints are device-bound.** Move a card to a second device, or erase
+  NVS, and nothing on it is recognised. Recovery is Admin → debug → clear cards,
+  then re-enrol.
+- **Compare at the boundary, never store the input.** Every comparison
+  fingerprints the *scanned* value and does a plain `strcmp` against the stored
+  one; `uid_fingerprint()` normalizes internally so reader formatting does not
+  matter. Anything that copies a raw uid into a `teacher_t`/`student_t` is a bug —
+  `rfid_uid` doubles as an identity key for accounts without an email, so a raw
+  copy there makes the next password change fail to find the account.
+
+## Long blocking operations
+
+Config import/revert, CSV export and the two debug wipes run **synchronously on
+the LVGL thread** for seconds to minutes. Nothing returns to
+`lv_timer_handler()` while they do, so without help the screen sits on its last
+frame and reads as a crash — which for a wipe invites a power-cycle half way
+through.
+
+They do not trip the watchdog: `loopTaskWDTEnabled` is false by default,
+loopTask runs on core 1, and the task WDT only watches core 0's idle task. And
+the service tasks are priority 2 against loopTask's 1, so they keep preempting
+normally — no yield is needed.
+
+The fix is `app/progress.h`: one `progress_t {stage, detail, done, total}` and a
+`progress_cb_t` that each of those operations takes as a trailing, optional
+parameter. `ui/components/progress` renders it on `lv_layer_top()` and forces the
+repaint itself with `lv_refr_now()` — the same trick `scr_wifi_editor` uses
+around the blocking `WiFi.softAP()` call.
+
+Two things make it work rather than cost more than it saves:
+
+- **The repaint is throttled** to ~100 ms, keyed on the *stage* rather than the
+  detail. The detail changes every iteration, so throttling on it would force a
+  full redraw per file — more expensive than the import. The tick source is
+  `millis()` (`lvgl_port.cpp`), which keeps advancing while the thread is
+  blocked; a tick driven from the LVGL loop would freeze and defeat the throttle.
+- **The overlay must always be closed.** It is full-screen and `CLICKABLE` on a
+  layer that survives screen changes, so one left behind swallows every touch
+  everywhere until reboot. Every caller closes it unconditionally, and
+  `scr_idle`/`scr_admin`/`scr_export` also close it defensively in `on_hide`.
+
+The screen therefore **updates but is not interactive** — touch is not sampled
+while the caller is blocked. That is why there is no Cancel: it could not be
+pressed, and interrupting an apply or a wipe half way is the outcome to avoid.
 
 ## Theme
 

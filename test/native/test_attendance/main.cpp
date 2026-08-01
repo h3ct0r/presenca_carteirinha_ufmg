@@ -140,7 +140,7 @@ static void test_clear_removes_all_sessions(void) {
     TEST_ASSERT_TRUE(mocksd_exists("/classes/CS101-M1/attendance/2026-07-14.jsonl"));
 
     int failed = -1;
-    int removed = attendance_clear(DIR, &failed);
+    int removed = attendance_clear(DIR, &failed, nullptr, nullptr);
     TEST_ASSERT_EQUAL_INT(2, removed);
     TEST_ASSERT_EQUAL_INT(0, failed);  // nothing left behind
     TEST_ASSERT_FALSE(mocksd_exists("/classes/CS101-M1/attendance/2026-07-14.jsonl"));
@@ -149,7 +149,7 @@ static void test_clear_removes_all_sessions(void) {
 
     char dates[8][12];
     TEST_ASSERT_EQUAL_INT(0, attendance_list_dates(DIR, dates, 8));
-    TEST_ASSERT_EQUAL_INT(0, attendance_clear(DIR, nullptr));  // idempotent; NULL out-param ok
+    TEST_ASSERT_EQUAL_INT(0, attendance_clear(DIR, nullptr, nullptr, nullptr));  // idempotent; NULL out-param ok
 }
 
 // --- timed (double-tap) attendance ------------------------------------------
@@ -358,7 +358,7 @@ static void test_clear_drops_the_cache(void) {
     mocksd_add_file("/classes/CS101-M1/attendance/2026-07-20.jsonl",
                     "{\"id\":\"a\",\"present\":true}\n");
     TEST_ASSERT_EQUAL_INT(1, attendance_present_for(DIR, "2026-07-20"));
-    attendance_clear(DIR, nullptr);
+    attendance_clear(DIR, nullptr, nullptr, nullptr);
     TEST_ASSERT_EQUAL_INT(0, attendance_present_for(DIR, "2026-07-20"));
 }
 
@@ -442,6 +442,37 @@ static void test_timed_tap_reports_success_when_written(void) {
     TEST_ASSERT_TRUE(s.saved);
 }
 
+// The debug wipe deletes every session file of every class with the UI blocked,
+// so it needs to report movement — an operator who reads the frozen screen as a
+// crash and power-cycles it gets a half-wiped card.
+static void test_clear_reports_one_item_per_file(void) {
+    mocksd_reset();
+    attendance_open(DIR, "2026-07-14");
+    attendance_set("a", true);
+    attendance_open(DIR, "2026-07-16");
+    attendance_set("b", true);
+    attendance_open(DIR, "2026-07-18");
+    attendance_set("c", true);
+    attendance_close();
+
+    struct rec_t {
+        int calls, last_done, last_total;
+    } rec = {0, 0, 0};
+    auto cb = [](const progress_t* p, void* ctx) {
+        rec_t* r = (rec_t*)ctx;
+        r->calls++;
+        r->last_done = p->done;
+        r->last_total = p->total;
+    };
+
+    TEST_ASSERT_EQUAL_INT(3, attendance_clear(DIR, nullptr, cb, &rec));
+    // The dates are listed before anything is deleted, so this one knows its
+    // total up front and the bar can be determinate.
+    TEST_ASSERT_EQUAL_INT(3, rec.calls);
+    TEST_ASSERT_EQUAL_INT(3, rec.last_total);
+    TEST_ASSERT_EQUAL_INT(3, rec.last_done);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_fresh_session_is_empty);
@@ -469,5 +500,6 @@ int main(int, char**) {
     RUN_TEST(test_set_reports_write_failure);
     RUN_TEST(test_timed_tap_reports_write_failure);
     RUN_TEST(test_timed_tap_reports_success_when_written);
+    RUN_TEST(test_clear_reports_one_item_per_file);
     return UNITY_END();
 }

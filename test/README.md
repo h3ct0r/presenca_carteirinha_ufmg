@@ -21,15 +21,15 @@ native-only).
 
 ## Suites
 
-19 suites, 241 cases. This table is the only place those numbers are recorded —
+19 suites, 256 cases. This table is the only place those numbers are recorded —
 other docs link here rather than restating them.
 
 | Suite | Cases | Covers |
 |---|--:|---|
-| `native/test_roster` | 31 | `students.json` / `class.json` validation and the exact on-screen error messages; enroll; clear-uids |
-| `native/test_auth_config` | 29 | `config.json` parsing, UID→teacher lookup, password write + length floor, statuses, blank-card bootstrap |
-| `native/test_sd_tree` | 18 | recursive delete, in-place rename, whole-card wipe sparing `config.json` |
-| `native/test_attendance` | 25 | session JSONL fold, date listing, timed (arrival + confirm) taps, write-failure reporting |
+| `native/test_roster` | 34 | `students.json` / `class.json` validation and the exact on-screen error messages; enroll; clear-uids; card-id fingerprinting |
+| `native/test_auth_config` | 34 | `config.json` parsing, UID→teacher lookup, password write + length floor, statuses, blank-card bootstrap, credential conversion + idempotency |
+| `native/test_sd_tree` | 19 | recursive delete, in-place rename, whole-card wipe sparing `config.json`, wipe progress |
+| `native/test_attendance` | 26 | session JSONL fold, date listing, timed (arrival + confirm) taps, write-failure reporting, wipe progress |
 | `native/test_ustar` | 14 | tar reading and the import path whitelist |
 | `native/test_atomic_file` | 12 | crash-safe file replacement: recovery from an interrupted write, full-card failure leaves the original |
 | `native/test_crypto` | 19 | SHA-256 / HMAC-SHA256 against FIPS 180-2 + RFC 4231 vectors; keyed UID and password fingerprints |
@@ -37,8 +37,8 @@ other docs link here rather than restating them.
 | `native/test_photo_fit` | 11 | aspect-preserving avatar scale/size arithmetic |
 | `native/test_card_gate` | 16 | RFID tap decisions: confirm-before-accept, multi-card detection |
 | `native/test_class_stats` | 9 | turma breakdown shared by the class and stats screens |
-| `native/test_export` | 6 | CSV export: FREQ tallying, overwrite, session snapshot/restore |
-| `native/test_import` | 6 | `config.tar` staging, validation, apply and rollback |
+| `native/test_export` | 7 | CSV export: FREQ tallying, overwrite, session snapshot/restore, per-date progress |
+| `native/test_import` | 10 | `config.tar` staging, validation, apply and rollback, stage-by-stage progress |
 | `native/test_photo` | 8 | photo capture pipeline: JPEG write, BMP fallback, file numbering, buffer resize between frames |
 | `native/test_battery_log` | 6 | drain-log CSV header and append behaviour |
 | `native/test_checkin` | 5 | check-in photo path and per-day counter |

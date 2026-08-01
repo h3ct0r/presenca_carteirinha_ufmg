@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { LIMITS } from '../src/validate.js';
+import { APP_VERSION, BUILD_SHA, versionLabel } from '../src/version.js';
 
 // Schema drift guard. The firmware is the source of truth for the on-card
 // format (docs/software/CONFIG_IMPORT.md restates it; this tool validates against it).
@@ -17,6 +18,7 @@ const rootOpt = (p) => { try { return root(p); } catch { return null; } };
 const rosterH = root('include/app/roster.h');
 const teacherH = root('include/app/teacher.h');
 const configH = root('include/services/config_service.h');
+const versionH = root('include/app/version.h');
 // The contract doc is the sync target but may be relocated (docs/ is being
 // restructured). Treat it as optional: if it isn't found, the doc-mirror check
 // skips instead of crashing the whole suite — the firmware↔validate.js checks
@@ -53,11 +55,16 @@ const student = structBlock(rosterH, 'student_t');
 const klass = structBlock(rosterH, 'class_rec_t');
 
 // LIMIT key  ->  firmware buffer size (max chars = buffer - 1).
+//
+// TEACHER_PASSWORD is deliberately NOT here. teacher_t::password holds a stored
+// fingerprint ("v1:" + 64 hex), so its buffer no longer says anything about how
+// long a password may be — the authoring limit is its own constant, checked in
+// COUNTS below. Pinning it to the buffer would have let the builder author a
+// 67-character password.
 const LENGTHS = {
   TEACHER_NAME: charBuf(teacher, 'name'),
   TEACHER_EMAIL: charBuf(teacher, 'email'),
   TEACHER_UID: charBuf(teacher, 'rfid_uid'),
-  TEACHER_PASSWORD: charBuf(teacher, 'password'),
   STUDENT_ID: charBuf(student, 'id'),
   STUDENT_NAME: charBuf(student, 'name'),
   STUDENT_UID: charBuf(student, 'rfid_uid'),
@@ -70,6 +77,9 @@ const LENGTHS = {
 // LIMIT key  ->  firmware cap constant (equal).
 const COUNTS = {
   MAX_TEACHERS: constInt(configH, 'CONFIG_MAX_TEACHERS'),
+  // The longest plaintext password the device accepts. Its own constant since
+  // teacher_t::password was widened to hold the stored fingerprint instead.
+  TEACHER_PASSWORD: constInt(configH, 'CONFIG_MAX_PASSWORD_PLAINTEXT'),
   MAX_STUDENTS: constInt(rosterH, 'ROSTER_MAX_STUDENTS'),
   MAX_CLASSES: constInt(rosterH, 'ROSTER_MAX_CLASSES'),
   MAX_CLASS_ROSTER: constInt(rosterH, 'ROSTER_MAX_CLASS_STUDENTS'),
@@ -80,6 +90,24 @@ const COUNTS = {
   FACE_VERIFY_SECONDS_MAX: constInt(rosterH, 'FACE_VERIFY_SECONDS_MAX'),
   FACE_VERIFY_SECONDS_DEFAULT: constInt(rosterH, 'FACE_VERIFY_SECONDS_DEFAULT'),
 };
+
+// The builder shows its own build id in the header, and APP_VERSION there is
+// hand-kept because the tool has no build step. That is only safe if drift is
+// caught, so pin it to the firmware's APP_VERSION the same way the LIMITS are.
+test('version.js APP_VERSION matches include/app/version.h', () => {
+  const m = versionH.match(/#define\s+APP_VERSION\s+"([^"]+)"/);
+  assert.ok(m, 'APP_VERSION not found in include/app/version.h');
+  assert.equal(APP_VERSION, m[1],
+    `version.js says ${APP_VERSION} but the firmware says ${m[1]}. ` +
+    'Bump tools/config-builder/src/version.js when you bump the firmware version.');
+});
+
+// BUILD_SHA is stamped at deploy time (DEPLOY.md); committing a value would
+// publish a hash that describes whoever last edited the line, not the deployment.
+test('version.js ships with no build hash committed', () => {
+  assert.equal(BUILD_SHA, '', 'BUILD_SHA must stay empty in the repo — it is stamped on deploy');
+  assert.equal(versionLabel(), APP_VERSION);
+});
 
 // A class can't reference more professors than the device can hold, so the two
 // caps must stay equal (roster.h says so; assert it rather than trusting a comment).
