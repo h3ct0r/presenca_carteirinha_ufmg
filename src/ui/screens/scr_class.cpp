@@ -254,6 +254,16 @@ static void register_recognized(int idx) {
         char text[56];
         switch (s.status) {
             case ATT_PRESENT:
+                // Only ATT_PRESENT writes, so it is the only state that can come
+                // back unsaved. Same treatment as the single-tap path below: the
+                // student is marked in RAM, but say plainly it did not persist.
+                if (!s.saved) {
+                    color = THEME_WARNING;
+                    icon = LV_SYMBOL_WARNING;
+                    snprintf(text, sizeof(text), "Marked (save failed) - %d min", s.minutes);
+                    beeper_error();
+                    break;
+                }
                 color = THEME_SUCCESS;
                 snprintf(text, sizeof(text), "Presence registered - %d min", s.minutes);
                 beeper_beep();

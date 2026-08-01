@@ -24,6 +24,13 @@ void keyboard_show(lv_obj_t* ta, lv_keyboard_mode_t mode);
 void keyboard_set_ready_cb(lv_event_cb_t cb);
 
 // Creates a themed one-line textarea wired to the shared keyboard.
+//
+// The textarea releases the keyboard on its own LV_EVENT_DELETE, so deleting one
+// (lv_obj_clean(), screen teardown) while the keyboard points at it is safe —
+// LVGL does not clear lv_keyboard_t::ta itself, and the next
+// lv_keyboard_set_textarea() would otherwise touch freed memory. Calling
+// keyboard_hide() first is still good practice for the visible behaviour, but it
+// is no longer what stands between the UI and a use-after-free.
 lv_obj_t* keyboard_make_textarea(lv_obj_t* parent, const char* placeholder,
                                  uint32_t max_len, lv_keyboard_mode_t mode);
 

@@ -115,7 +115,11 @@ static void test_full_roster_of_one_turma(void) {
     }
     char out[160];
     TEST_ASSERT_TRUE(class_turma_breakdown(&c, out, sizeof(out)));
-    TEST_ASSERT_EQUAL_STRING("TE1: 100", out);
+    // Derived, not literal: the roster above is sized from the cap, so the
+    // expectation has to track it or this goes stale the next time it moves.
+    char expect[32];
+    snprintf(expect, sizeof(expect), "TE1: %d", ROSTER_MAX_CLASS_STUDENTS);
+    TEST_ASSERT_EQUAL_STRING(expect, out);
 }
 
 int main(int, char**) {

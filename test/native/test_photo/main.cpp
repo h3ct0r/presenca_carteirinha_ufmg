@@ -99,6 +99,32 @@ static void test_capture_rejects_null_frame(void) {
     TEST_ASSERT_FALSE(photo_store_capture(nullptr, 8, 8));
 }
 
+static void test_capture_rejects_degenerate_dimensions(void) {
+    TEST_ASSERT_FALSE(photo_store_capture((const uint8_t*)s_frame, 0, 8));
+    TEST_ASSERT_FALSE(photo_store_capture((const uint8_t*)s_frame, 8, -1));
+}
+
+// The frame buffers used to be sized by the FIRST capture and then memcpy'd at
+// the caller's size forever after — a heap overflow the moment a larger frame
+// arrived, held off only by the camera resolution being a compile-time
+// constant. A bigger frame after a smaller one is the case that used to smash
+// the heap; run it under whatever hardening the host build has.
+static uint16_t s_big_frame[16 * 16];
+
+static void test_capture_resizes_buffers_between_frames(void) {
+    for (int i = 0; i < 16 * 16; i++) s_big_frame[i] = (uint16_t)(0xA000 | i);
+
+    // Small -> large: the buffer must grow, not be written past.
+    TEST_ASSERT_TRUE(photo_store_capture((const uint8_t*)s_frame, 8, 8));
+    TEST_ASSERT_TRUE(wait_for_file("/photos/IMG_0043.jpg", 2000));
+    TEST_ASSERT_TRUE(photo_store_capture((const uint8_t*)s_big_frame, 16, 16));
+    TEST_ASSERT_TRUE(wait_for_file("/photos/IMG_0044.jpg", 2000));
+
+    // And back down again, so the shrink path is exercised too.
+    TEST_ASSERT_TRUE(photo_store_capture((const uint8_t*)s_frame, 8, 8));
+    TEST_ASSERT_TRUE(wait_for_file("/photos/IMG_0045.jpg", 2000));
+}
+
 // photo_store is initialized (mounted + JPEG engine) from the JPEG test above.
 static void test_encode_to_writes_given_path(void) {
     const char* path = "/students/checkins/2023-0142/2026-07-28_CS101-M1_01.jpg";
@@ -119,5 +145,7 @@ int main(int, char**) {
     RUN_TEST(test_jpeg_path_and_numbering_continues);
     RUN_TEST(test_encode_to_writes_given_path);  // after init (mounted + engine)
     RUN_TEST(test_capture_rejects_null_frame);
+    RUN_TEST(test_capture_rejects_degenerate_dimensions);
+    RUN_TEST(test_capture_resizes_buffers_between_frames);
     return UNITY_END();
 }

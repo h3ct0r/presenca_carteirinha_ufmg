@@ -768,7 +768,8 @@ function classCard(c, i) {
       el('label', { class: 'field' }, ['Professors', teacherBox]),
     ]),
     checkinField(c),
-    el('label', { class: 'field roster-field' }, [`Roster (${c.roster.length}/100)`, roster]),
+    el('label', { class: 'field roster-field' },
+      [`Roster (${c.roster.length}/${LIMITS.MAX_CLASS_ROSTER})`, roster]),
   ]);
 }
 

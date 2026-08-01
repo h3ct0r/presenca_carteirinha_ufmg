@@ -216,28 +216,32 @@ static void test_set_password_adds_when_absent(void) {
     mocksd_reset();
     mocksd_add_file(
         "/config.json",
+        // Prof B keeps a 4-digit password on purpose: it is shorter than
+        // CONFIG_MIN_PASSWORD_DIGITS and must still authenticate, because the
+        // floor applies to what the device writes, not to what it reads.
         "{ \"teachers\": [\n"
         "  { \"name\": \"Prof A\", \"email\": \"a@x\", \"rfid_uid\": \"AA:00\" },\n"
-        "  { \"name\": \"Prof B\", \"email\": \"b@x\", \"rfid_uid\": \"BB:00\", \"password\": \"1234\" }\n"
+        "  { \"name\": \"Prof B\", \"email\": \"b@x\", \"rfid_uid\": \"BB:00\", \"password\": \"1234\" },\n"
+        "  { \"name\": \"Prof C\", \"email\": \"c@x\", \"rfid_uid\": \"CC:00\", \"password\": \"123456\" }\n"
         "] }");
     config_service_start();
     TEST_ASSERT_EQUAL(CONFIG_OK, config_get_status());
-    TEST_ASSERT_FALSE(auth_lookup_password("5678", nullptr));
+    TEST_ASSERT_FALSE(auth_lookup_password("567890", nullptr));
 
-    config_result_t r = config_set_password("a@x", "AA:00", "5678");
+    config_result_t r = config_set_password("a@x", "AA:00", "567890");
     TEST_ASSERT_TRUE(r.ok);
     // Reloaded and persisted: the new password now identifies Prof A.
     teacher_t who = {};
-    TEST_ASSERT_TRUE(auth_lookup_password("5678", &who));
+    TEST_ASSERT_TRUE(auth_lookup_password("567890", &who));
     TEST_ASSERT_EQUAL_STRING("Prof A", who.name);
 }
 
 static void test_set_password_rejects_duplicate(void) {
-    // Prof B already uses 1234; Prof A must not be allowed to take it.
-    config_result_t r = config_set_password("a@x", "AA:00", "1234");
+    // Prof C already uses 123456; Prof A must not be allowed to take it.
+    config_result_t r = config_set_password("a@x", "AA:00", "123456");
     TEST_ASSERT_FALSE(r.ok);
     TEST_ASSERT_NOT_NULL(strstr(r.message, "another professor"));
-    TEST_ASSERT_TRUE(auth_lookup_password("5678", nullptr));  // A's password unchanged
+    TEST_ASSERT_TRUE(auth_lookup_password("567890", nullptr));  // A's password unchanged
 }
 
 static void test_set_password_rejects_non_numeric(void) {
@@ -245,12 +249,29 @@ static void test_set_password_rejects_non_numeric(void) {
     TEST_ASSERT_FALSE(r.ok);
 }
 
-static void test_change_password_replaces_old(void) {
-    config_result_t r = config_set_password("a@x", "AA:00", "9999");
-    TEST_ASSERT_TRUE(r.ok);
-    TEST_ASSERT_FALSE(auth_lookup_password("5678", nullptr));  // old one gone
+// The length floor applies to what the device WRITES.
+static void test_set_password_rejects_too_short(void) {
+    config_result_t r = config_set_password("a@x", "AA:00", "1234");
+    TEST_ASSERT_FALSE(r.ok);
+    TEST_ASSERT_NOT_NULL(strstr(r.message, "at least"));
+    TEST_ASSERT_TRUE(auth_lookup_password("567890", nullptr));  // unchanged
+}
+
+// ...but NOT to what it reads. Prof B's 4-digit password was authored into
+// config.json and must keep working: raising the floor must never lock a
+// professor out of a device that was already set up.
+static void test_short_password_already_on_the_card_still_works(void) {
     teacher_t who = {};
-    TEST_ASSERT_TRUE(auth_lookup_password("9999", &who));
+    TEST_ASSERT_TRUE(auth_lookup_password("1234", &who));
+    TEST_ASSERT_EQUAL_STRING("Prof B", who.name);
+}
+
+static void test_change_password_replaces_old(void) {
+    config_result_t r = config_set_password("a@x", "AA:00", "999900");
+    TEST_ASSERT_TRUE(r.ok);
+    TEST_ASSERT_FALSE(auth_lookup_password("567890", nullptr));  // old one gone
+    teacher_t who = {};
+    TEST_ASSERT_TRUE(auth_lookup_password("999900", &who));
     TEST_ASSERT_EQUAL_STRING("Prof A", who.name);
 }
 
@@ -362,14 +383,19 @@ static void test_first_teacher_bootstraps_blank_card(void) {
     config_service_start();
     TEST_ASSERT_EQUAL(CONFIG_NO_FILE, config_get_status());
 
-    config_result_t r = config_create_first_teacher("Prof Setup", "4321");
+    // Too short is refused before anything is written — the bootstrap runs the
+    // same check_password() the Admin editor does.
+    TEST_ASSERT_FALSE(config_create_first_teacher("Prof Setup", "4321").ok);
+    TEST_ASSERT_FALSE(mocksd_exists("/config.json"));
+
+    config_result_t r = config_create_first_teacher("Prof Setup", "432100");
     TEST_ASSERT_TRUE(r.ok);
 
     // Written, reloaded, and immediately usable to unlock the device.
     TEST_ASSERT_TRUE(mocksd_exists("/config.json"));
     TEST_ASSERT_EQUAL(CONFIG_OK, config_get_status());
     teacher_t who = {};
-    TEST_ASSERT_TRUE(auth_lookup_password("4321", &who));
+    TEST_ASSERT_TRUE(auth_lookup_password("432100", &who));
     TEST_ASSERT_EQUAL_STRING("Prof Setup", who.name);
     // No email: a setup account sees every class (roster_class_matches_teacher).
     TEST_ASSERT_EQUAL_STRING("", who.email);
@@ -379,13 +405,13 @@ static void test_first_teacher_refused_when_config_exists(void) {
     // Chains from the test above: the card now holds a valid config.
     TEST_ASSERT_EQUAL(CONFIG_OK, config_get_status());
 
-    config_result_t r = config_create_first_teacher("Intruder", "1111");
+    config_result_t r = config_create_first_teacher("Intruder", "111100");
     TEST_ASSERT_FALSE(r.ok);
     TEST_ASSERT_NOT_NULL(strstr(r.message, "already has a configuration"));
 
     // Nothing overwritten: the bootstrap professor is still the only one.
-    TEST_ASSERT_FALSE(auth_lookup_password("1111", nullptr));
-    TEST_ASSERT_TRUE(auth_lookup_password("4321", nullptr));
+    TEST_ASSERT_FALSE(auth_lookup_password("111100", nullptr));
+    TEST_ASSERT_TRUE(auth_lookup_password("432100", nullptr));
 }
 
 static void test_first_teacher_rejects_bad_input(void) {
@@ -436,6 +462,8 @@ int main(int, char**) {
     RUN_TEST(test_set_password_adds_when_absent);  // chain: loads its own config
     RUN_TEST(test_set_password_rejects_duplicate);
     RUN_TEST(test_set_password_rejects_non_numeric);
+    RUN_TEST(test_set_password_rejects_too_short);
+    RUN_TEST(test_short_password_already_on_the_card_still_works);
     RUN_TEST(test_change_password_replaces_old);
     RUN_TEST(test_set_rfid_changes_card);      // chain continues from the password tests
     RUN_TEST(test_set_rfid_rejects_duplicate);

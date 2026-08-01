@@ -4,6 +4,7 @@
 #include <SD_MMC.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "storage/sd_card.h"
@@ -313,16 +314,39 @@ bool photo_store_encode_to(const char* path, const uint8_t* rgb565, int w, int h
 }
 
 bool photo_store_capture(const uint8_t* rgb565, int w, int h) {
-    if (!s_mounted || s_busy || rgb565 == NULL) return false;
+    if (!s_mounted || s_busy || rgb565 == NULL || w <= 0 || h <= 0) return false;
+
+    // Reallocate when the frame size changes. The buffers used to be sized by
+    // the FIRST capture and then memcpy'd at the CALLER's size on every later
+    // one — a heap overflow the moment a different resolution arrived. Only the
+    // fixed camera resolution kept that safe; photo_store_encode_to() has always
+    // tracked its size this way, so the two paths now agree.
+    // free(), not heap_caps_free(): matches photo_store_encode_to() below, and
+    // ESP-IDF's free() handles heap_caps/aligned allocations from the same heap.
+    const size_t px = (size_t)w * h;
+    if (s_frame != NULL && px != (size_t)s_w * s_h) {
+        free(s_frame);
+        s_frame = NULL;
+        // The output buffers are sized from s_w/s_h too, so they go with it.
+        if (s_jpg_out != NULL) {
+            free(s_jpg_out);
+            s_jpg_out = NULL;
+            s_jpg_out_cap = 0;
+        }
+        if (s_bgr != NULL) {
+            free(s_bgr);
+            s_bgr = NULL;
+        }
+    }
 
     if (s_frame == NULL) {
         if (s_jpeg != NULL) {
             // JPEG DMA reads this buffer: let the driver pick the alignment
             jpeg_encode_memory_alloc_cfg_t mc = {.buffer_direction = JPEG_ENC_ALLOC_INPUT_BUFFER};
             size_t got = 0;
-            s_frame = (uint8_t*)jpeg_alloc_encoder_mem((size_t)w * h * 2, &mc, &got);
+            s_frame = (uint8_t*)jpeg_alloc_encoder_mem(px * 2, &mc, &got);
         } else {
-            s_frame = (uint8_t*)heap_caps_aligned_alloc(64, (size_t)w * h * 2, MALLOC_CAP_SPIRAM);
+            s_frame = (uint8_t*)heap_caps_aligned_alloc(64, px * 2, MALLOC_CAP_SPIRAM);
         }
     }
     if (s_frame == NULL) {
@@ -332,7 +356,7 @@ bool photo_store_capture(const uint8_t* rgb565, int w, int h) {
 
     s_w = w;
     s_h = h;
-    memcpy(s_frame, rgb565, (size_t)w * h * 2);
+    memcpy(s_frame, rgb565, px * 2);
     s_busy = true;
     set_status("saving...");
     xTaskNotifyGive(s_writer);

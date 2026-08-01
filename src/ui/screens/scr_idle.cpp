@@ -69,12 +69,17 @@ static void hide_denied_cb(lv_timer_t* t) {
     s_denied_timer = nullptr;
 }
 
-static void deny(void) {
+// Shows the transient pill with `msg`. Always sets the text, so a throttle
+// notice never lingers into the next plain denial (or the reverse).
+static void deny_msg(const char* msg) {
     beeper_error();  // wrong card or password
+    lv_label_set_text(lv_obj_get_child(s_denied, 0), msg);
     lv_obj_remove_flag(s_denied, LV_OBJ_FLAG_HIDDEN);
     if (s_denied_timer) lv_timer_delete(s_denied_timer);
     s_denied_timer = lv_timer_create(hide_denied_cb, 2500, nullptr);
 }
+
+static void deny(void) { deny_msg(LV_SYMBOL_CLOSE "  Access denied"); }
 
 // Starts a session for the given professor and opens the app. t is copied by
 // session_set, so a stack local is fine.
@@ -100,6 +105,51 @@ void scr_idle_handle_scan(const char* uid_hex) {
     }
 }
 
+// ---- password throttle ----------------------------------------------------
+//
+// Passwords are digits-only and typed on a keypad that is always available, so
+// without a cost per guess the whole space is walkable by hand. After
+// PW_FREE_TRIES consecutive wrong ones the modal refuses to open for a doubling
+// interval, capped so a professor is never locked out for long.
+//
+// Only WRONG PASSWORDS count. A wrong *card* deliberately does not: students tap
+// their cards on the idle screen all the time, and letting that lock the keypad
+// would hand any passer-by a denial of service against the professor.
+static constexpr int PW_FREE_TRIES = 3;
+static constexpr uint32_t PW_BACKOFF_BASE_MS = 5000;    // after the 4th failure
+static constexpr uint32_t PW_BACKOFF_MAX_MS = 300000;   // 5 min ceiling
+
+static int s_pw_fails = 0;
+static uint32_t s_pw_locked_until = 0;  // lv_tick_get() timestamp
+
+// Whole seconds still to wait, 0 when the keypad is available.
+static uint32_t pw_lockout_remaining_s(void) {
+    if (s_pw_locked_until == 0) return 0;
+    // lv_tick_elaps handles the 32-bit tick wrap; a lock whose deadline has
+    // passed reads as elapsed >= 0 only while it is still in the future.
+    uint32_t now = lv_tick_get();
+    if ((int32_t)(s_pw_locked_until - now) <= 0) {
+        s_pw_locked_until = 0;
+        return 0;
+    }
+    return (s_pw_locked_until - now + 999) / 1000;
+}
+
+static void pw_note_failure(void) {
+    if (s_pw_fails < 32) s_pw_fails++;  // don't overflow the shift below
+    if (s_pw_fails <= PW_FREE_TRIES) return;
+    const int over = s_pw_fails - PW_FREE_TRIES - 1;  // 0 on the first locked try
+    uint32_t wait = PW_BACKOFF_BASE_MS;
+    for (int i = 0; i < over && wait < PW_BACKOFF_MAX_MS; i++) wait *= 2;
+    if (wait > PW_BACKOFF_MAX_MS) wait = PW_BACKOFF_MAX_MS;
+    s_pw_locked_until = lv_tick_get() + wait;
+}
+
+static void pw_reset_throttle(void) {
+    s_pw_fails = 0;
+    s_pw_locked_until = 0;
+}
+
 // ---- password modal -------------------------------------------------------
 
 static void pw_cancel_cb(lv_event_t*) { close_pw_modal(); }
@@ -109,15 +159,27 @@ static void pw_ok_cb(lv_event_t*) {
     teacher_t who;
     if (auth_lookup_password(txt, &who)) {
         // Each password is unique, so it identifies the professor directly.
+        pw_reset_throttle();
         enter_app(&who);  // closes the modal on the way
     } else {
         close_pw_modal();
+        pw_note_failure();
         deny();
     }
 }
 
 static void open_pw_modal(lv_event_t*) {
     if (s_pw_modal || config_get_status() != CONFIG_OK) return;
+
+    // Throttled: say how long, so it reads as a wait and not a broken button.
+    uint32_t wait_s = pw_lockout_remaining_s();
+    if (wait_s > 0) {
+        char msg[64];
+        snprintf(msg, sizeof(msg), LV_SYMBOL_WARNING "  Too many attempts - wait %us",
+                 (unsigned)wait_s);
+        deny_msg(msg);
+        return;
+    }
 
     s_pw_modal = lv_obj_create(s_root);
     lv_obj_remove_style_all(s_pw_modal);
@@ -202,7 +264,8 @@ static void open_import_confirm(lv_event_t*) {
     lv_obj_t* hint = ui_make_label(
         card,
         "A config.tar was found on the SD card. Import it to set up this device? Any existing "
-        "configuration is backed up first.",
+        "configuration is backed up first — one backup is kept, and importing again "
+        "replaces it.",
         THEME_MUTED, &lv_font_montserrat_14);
     lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(hint, LV_PCT(100));

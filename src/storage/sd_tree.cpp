@@ -51,24 +51,43 @@ bool sd_tree_is_dir(const char* path) {
     return is_dir;
 }
 
-// Full path of the first entry in `dir`, or false when it is empty/unreadable.
-// The directory handle is closed before returning: deleting entries while a
+// How many child NAMES one directory scan collects before we start deleting.
+// Taking a single name per scan made emptying a directory O(entries^2):
+// /students/photos with 600 avatars cost ~180,000 directory-entry reads for one
+// wipe. A batch amortises the scan while still never holding a directory handle
+// across a removal — which is the part that is actually unsafe.
+//
+// Names, not full paths, and a modest batch, because this buffer is per
+// recursion level: CHILD_BATCH * MAX_NAME * MAX_DEPTH is the worst-case stack
+// (12 * 64 * 8 ≈ 6 KB) and this runs on the 16 KB LVGL thread.
+static constexpr int CHILD_BATCH = 12;
+
+// Up to CHILD_BATCH child names of `dir`; returns how many were filled. The
+// directory handle is closed before returning: deleting entries while a
 // directory is open is unsafe on this core (same reason attendance_clear lists
 // its dates before removing any file).
-static bool first_child(const char* dir, char* out, size_t cap) {
+static int next_children(const char* dir, char out[][MAX_NAME], int max) {
     File d = SD_MMC.open(dir);
     if (!d || !d.isDirectory()) {
         if (d) d.close();
-        return false;
+        return 0;
     }
-    File e = d.openNextFile();
-    bool got = false;
-    if (e) {
-        got = join(dir, e.name(), out, cap);  // name() is a basename on this core
+    int n = 0;
+    File e;
+    while (n < max && (e = d.openNextFile())) {
+        const char* name = e.name();  // basename on this core
+        // Skip rather than truncate: a truncated name is a path pointing at
+        // something else. A directory of only such names yields 0 here, and the
+        // caller's rmdir then fails and reports it — no infinite loop.
+        if (strlen(name) < MAX_NAME) {
+            snprintf(out[n++], MAX_NAME, "%s", name);
+        } else {
+            ESP_LOGE(TAG, "entry name too long to delete under %s: %s", dir, name);
+        }
         e.close();
     }
     d.close();
-    return got;
+    return n;
 }
 
 static bool remove_tree(const char* path, int depth, sd_tree_stats_t* st) {
@@ -88,13 +107,25 @@ static bool remove_tree(const char* path, int depth, sd_tree_stats_t* st) {
         return false;
     }
 
-    // Empty the directory one entry at a time, re-opening it for each: the
+    // Empty the directory a batch at a time, re-opening it for each batch: the
     // child list changes under us as we delete, so we never hold an open
     // directory across a removal. A child that won't go stops the pass instead
     // of looping forever on the same entry.
-    char child[MAX_PATH];
-    while (first_child(path, child, sizeof(child))) {
-        if (!remove_tree(child, depth + 1, st)) return false;
+    //
+    // The batch is what keeps this linear; see CHILD_BATCH for the stack budget.
+    for (;;) {
+        char names[CHILD_BATCH][MAX_NAME];
+        const int n = next_children(path, names, CHILD_BATCH);
+        if (n == 0) break;  // empty, unreadable, or nothing usable left
+        for (int i = 0; i < n; i++) {
+            char child[MAX_PATH];
+            if (!join(path, names[i], child, sizeof(child))) {
+                ESP_LOGE(TAG, "path too long to delete: %s/%s", path, names[i]);
+                st->failed++;
+                return false;
+            }
+            if (!remove_tree(child, depth + 1, st)) return false;
+        }
     }
 
     if (SD_MMC.rmdir(path)) {

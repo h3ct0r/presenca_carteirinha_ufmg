@@ -15,6 +15,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "services/config_service.h"
+#include "storage/atomic_file.h"
 #include "storage/sd_card.h"
 
 static const char* TAG = "roster";
@@ -53,11 +54,20 @@ static int find_student(const char* id) {
     return -1;
 }
 
-static roster_status_t load_students(const char* root) {
+// Normalized-UID scratch, parallel to s_students, used only while parsing.
+// Deliberately NOT a static array: 600 * 32 B would be another 19 KB of the
+// internal pool that is already the scarce one (BACKLOG.md), and it is dead
+// weight the instant the load finishes. Over 4 KB, so malloc lands it in PSRAM.
+typedef char uid_norm_t[32];
+
+static roster_status_t load_students_into(const char* root, uid_norm_t* s_uid_norm) {
     s_student_count = 0;
 
     char path[64];
     snprintf(path, sizeof(path), "%s%s", root, STUDENTS_PATH);
+    // An enroll write interrupted by a power cut leaves the roster at
+    // <path>.bak; restore it before deciding the file is missing.
+    atomic_file_recover(path);
     if (!SD_MMC.exists(path)) {
         return fail(ROSTER_NO_STUDENTS_FILE, "Missing %s", path);
     }
@@ -109,22 +119,38 @@ static roster_status_t load_students(const char* root) {
         snprintf(dst->rfid_uid, sizeof(dst->rfid_uid), "%s", uid);
 
         // One card belongs to exactly one student; catch copy-paste slips.
+        // Compare against the normalized forms cached as we go: re-normalizing
+        // every earlier student for every new one made this ~180,000
+        // uid_normalize() calls at the 600-student cap, on a load that reruns
+        // every 3 s while the card is invalid.
         if (dst->rfid_uid[0]) {
-            char a[32], b[32];
-            uid_normalize(dst->rfid_uid, a, sizeof(a));
+            uid_normalize(dst->rfid_uid, s_uid_norm[s_student_count],
+                          sizeof(s_uid_norm[0]));
+            const char* a = s_uid_norm[s_student_count];
             for (int i = 0; i < s_student_count; i++) {
-                if (!s_students[i].rfid_uid[0]) continue;
-                uid_normalize(s_students[i].rfid_uid, b, sizeof(b));
-                if (strcmp(a, b) == 0) {
+                if (!s_uid_norm[i][0]) continue;
+                if (strcmp(a, s_uid_norm[i]) == 0) {
                     return fail(ROSTER_BAD_STUDENTS,
                                 "students.json: %s and %s share RFID uid %s",
                                 s_students[i].id, dst->id, dst->rfid_uid);
                 }
             }
+        } else {
+            s_uid_norm[s_student_count][0] = '\0';
         }
         s_student_count++;
     }
     return ROSTER_OK;
+}
+
+// Owns the scratch buffer so load_students_into() can return from anywhere
+// without a cleanup path at each of its many failure exits.
+static roster_status_t load_students(const char* root) {
+    uid_norm_t* norm = (uid_norm_t*)malloc(sizeof(uid_norm_t) * ROSTER_MAX_STUDENTS);
+    if (!norm) return fail(ROSTER_BAD_STUDENTS, "students.json: out of memory parsing");
+    roster_status_t st = load_students_into(root, norm);
+    free(norm);
+    return st;
 }
 
 static roster_status_t load_one_class(const char* root, const char* dname) {
@@ -439,6 +465,7 @@ int roster_class_index(const char* code) {
 // Both helpers log the failing step + path: every caller only propagates a
 // bool, so without this a failure is invisible in the serial log too.
 static bool read_json_file(const char* path, JsonDocument& doc) {
+    atomic_file_recover(path);  // a write cut short last boot left it at .bak
     File f = SD_MMC.open(path, FILE_READ);
     if (!f) {
         ESP_LOGE(TAG, "read %s: cannot open (missing file or SD not mounted)", path);
@@ -453,10 +480,10 @@ static bool read_json_file(const char* path, JsonDocument& doc) {
     return true;
 }
 
-// Writes doc to a temp file then renames over path, so a power cut leaves
-// either the old file or the new one — never a half-written file. Serializes
-// to a heap buffer first (one write() call), which keeps this portable
-// between the device's Print-based File and the native test mock.
+// Replaces `path` with doc, crash-safely (see storage/atomic_file.h — the old
+// remove-then-rename here had a window in which students.json did not exist at
+// all). Serializes to a heap buffer first (one write() call), which keeps this
+// portable between the device's Print-based File and the native test mock.
 static bool write_json_file(const char* path, JsonDocument& doc) {
     size_t need = measureJsonPretty(doc);
     char* buf = (char*)malloc(need + 1);
@@ -465,33 +492,9 @@ static bool write_json_file(const char* path, JsonDocument& doc) {
         return false;
     }
     size_t len = serializeJsonPretty(doc, buf, need + 1);
-
-    char tmp[112];
-    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
-    File f = SD_MMC.open(tmp, FILE_WRITE, true);
-    if (!f) {
-        free(buf);
-        ESP_LOGE(TAG, "write %s: cannot create %s (SD not mounted or write-protected)", path,
-                 tmp);
-        return false;
-    }
-    size_t written = f.write((const uint8_t*)buf, len);
-    f.close();
+    bool ok = atomic_file_write(path, (const uint8_t*)buf, len, path);
     free(buf);
-    if (written != len) {
-        // Short write on FAT almost always means the card is full.
-        ESP_LOGE(TAG, "write %s: short write (%u of %u bytes) — SD card full?", path,
-                 (unsigned)written, (unsigned)len);
-        SD_MMC.remove(tmp);  // don't leave a truncated .tmp behind
-        return false;
-    }
-
-    SD_MMC.remove(path);  // FAT rename requires the target to be absent
-    if (!SD_MMC.rename(tmp, path)) {
-        ESP_LOGE(TAG, "write %s: rename from %s failed", path, tmp);
-        return false;
-    }
-    return true;
+    return ok;
 }
 
 // Is this normalized UID already assigned to a student other than `except`?

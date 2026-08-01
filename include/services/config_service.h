@@ -24,6 +24,13 @@
 
 constexpr int CONFIG_MAX_TEACHERS = 8;
 
+// Minimum digits for a password SET ON THE DEVICE (first-run setup, Admin →
+// change password). Deliberately not applied when parsing config.json: a shorter
+// password already on a card keeps working, so raising this can never lock a
+// professor out of their own device. The config-builder validates what it
+// authors. See check_password() in config_service.cpp.
+constexpr int CONFIG_MIN_PASSWORD_DIGITS = 6;
+
 typedef enum : uint8_t {
     CONFIG_OK = 0,              // SD mounted, config.json parsed and valid
     CONFIG_NO_SD,              // no card, mount failed, or not FAT32

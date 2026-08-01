@@ -9,7 +9,10 @@
 
 constexpr int ROSTER_MAX_STUDENTS = 600;   // global registry cap (see the RAM note below)
 constexpr int ROSTER_MAX_CLASSES = 12;
-constexpr int ROSTER_MAX_CLASS_STUDENTS = 100;
+// Per-class roster cap. Raising this is not free: it widens class_rec_t (which
+// is held ROSTER_MAX_CLASSES times) AND attendance_store's present/tap-in sets,
+// all in internal RAM. See the RAM note below for the measured cost.
+constexpr int ROSTER_MAX_CLASS_STUDENTS = 200;
 // A class can be co-taught. Mirrors CONFIG_MAX_TEACHERS (config_service.h) —
 // a class can't reference more professors than the device can hold. The
 // config-builder's schema-sync test asserts the two stay equal.
@@ -22,9 +25,23 @@ constexpr int FACE_VERIFY_SECONDS_DEFAULT = 15;
 // Timed attendance: minutes a student must wait before the confirming tap
 // counts. class.json's optional "min_attendance_min".
 constexpr int MIN_ATTENDANCE_MIN_DEFAULT = 45;
-// NOTE: s_students[ROSTER_MAX_STUDENTS] is a static array — at 600 that is
-// 600 * sizeof(student_t) (~92 B) ≈ 54 KB of internal RAM (~+27 KB vs 300).
-// Fine on the P4's SRAM budget, but re-check free heap on device.
+// NOTE: these caps are paid for in INTERNAL RAM, the scarce pool
+// (docs/software/ARCHITECTURE.md §Memory budget). Measured on the v0.2.0 build
+// with `riscv32-esp-elf-nm --size-sort -S`:
+//
+//   s_students[600]  55,200 B   600 * sizeof(student_t) (92 B)
+//   s_classes[12]    51,216 B   12 * sizeof(class_rec_t) (4,268 B)
+//   attendance_store 10,400 B   present + tap-in sets, sized by the class cap
+//
+// Raising ROSTER_MAX_CLASS_STUDENTS from 100 to 200 cost 26,808 B of that:
+// +21,600 in s_classes (roster_turma is ~75% of it) and +5,208 in
+// attendance_store. Total static internal is 160 KB, up from 134 KB.
+//
+// There is headroom, but this is the budget the face-detection model check
+// (128 KB free / 64 KB largest block) and every sdmmc DMA transfer draw from.
+// Before raising these again, either measure free internal RAM on device or take
+// the lever BACKLOG.md names: move s_students/s_classes to PSRAM at
+// roster_service_start().
 
 typedef struct {
     char id[20];        // university ID, the stable key

@@ -7,6 +7,10 @@
 // tests use these helpers to seed card contents and inspect written files.
 void mocksd_reset(void);                    // empty card, begin() succeeds
 void mocksd_set_begin_result(bool ok);      // simulate missing/unreadable card
+// Simulate a full (or write-protected) card: opens still succeed, but every
+// File::write stores nothing and reports 0 bytes — the short write that
+// production code checks for. Cleared by mocksd_reset().
+void mocksd_set_card_full(bool full);
 void mocksd_add_file(const char* path, const char* contents);  // + parent dirs
 void mocksd_add_dir(const char* path);
 bool mocksd_exists(const char* path);

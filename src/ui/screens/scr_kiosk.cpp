@@ -160,16 +160,27 @@ static void kiosk_photo(lv_obj_t* parent, const student_t* st) {
     lv_obj_center(g);
 }
 
-static void show_success(const student_t* st, bool already) {
-    beeper_beep();
-    lv_obj_t* p = make_result(THEME_SUCCESS);
+// `saved` false means the append to the SD card failed: the student is present
+// in RAM only. Amber instead of green, because a student who sees the green
+// panel has no reason to ever mention it to anyone.
+static void show_success(const student_t* st, bool already, bool saved) {
+    if (saved) {
+        beeper_beep();
+    } else {
+        beeper_error();
+    }
+    lv_obj_t* p = make_result(saved ? THEME_SUCCESS : THEME_WARNING);
     kiosk_photo(p, st);
-    kiosk_label(p, already ? "Already checked in" : "Checked in", &lv_font_montserrat_32);
+    kiosk_label(p, !saved              ? "Not saved"
+                : already              ? "Already checked in"
+                                       : "Checked in",
+                &lv_font_montserrat_32);
     kiosk_label(p, st->name, &lv_font_montserrat_32);
     char line[64];
     snprintf(line, sizeof(line), "ID %s", st->id);
     kiosk_label(p, line, &lv_font_montserrat_20);
-    kiosk_label(p, attendance_date(), &lv_font_montserrat_20);
+    kiosk_label(p, saved ? attendance_date() : "Tell your professor",
+                &lv_font_montserrat_20);
     s_timer = lv_timer_create(result_timer_cb, RESULT_MS, nullptr);
 }
 
@@ -193,6 +204,16 @@ static void show_timed_result(const student_t* st, att_state_t s) {
     char sub[48];
     switch (s.status) {
         case ATT_PRESENT:
+            // The only state that writes, so the only one that can fail to save.
+            // Amber, not green: the student must not walk away believing a tap
+            // was recorded when nothing reached the card.
+            if (!s.saved) {
+                bg = THEME_WARNING;
+                head = "Not saved";
+                snprintf(sub, sizeof(sub), "%d minutes - tell your professor", s.minutes);
+                beeper_error();
+                break;
+            }
             bg = THEME_SUCCESS;
             head = "Presence registered";
             snprintf(sub, sizeof(sub), "%d minutes", s.minutes);
@@ -236,8 +257,9 @@ static void kiosk_register(const student_t* st) {
         return;
     }
     bool already = attendance_is_present(st->id);
-    if (!already) attendance_set(st->id, true);
-    show_success(st, already);
+    // An already-present student writes nothing, so there is nothing to fail.
+    bool saved = already || attendance_set(st->id, true);
+    show_success(st, already, saved);
 }
 
 static const student_t* s_verify_st = nullptr;  // student awaiting a face-verify

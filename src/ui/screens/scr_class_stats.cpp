@@ -41,6 +41,18 @@ static lv_obj_t* s_swatches[PALETTE_N] = {};
 
 static void back_cb(lv_event_t*) { scr_mgr_show(SCREEN_CLASSES, nullptr); }
 
+// EVERY static pointing into s_content, dropped together before it is cleaned —
+// same discipline as scr_class's forget_view_widgets(). save_cb() checks all six
+// at once, so leaving them dangling is what would let a stale pointer through.
+static void forget_settings_widgets(void) {
+    s_name_ta = nullptr;
+    s_sched_ta = nullptr;
+    s_capture_sw = nullptr;
+    s_fv_ta = nullptr;
+    s_timed_sw = nullptr;
+    s_min_ta = nullptr;
+}
+
 // The shared keyboard floats over the body, so reserve its height as bottom
 // padding — but only while it is up, or the settings list ends in dead space.
 // Same approach as the class screen's apply_keyboard_pad().
@@ -227,6 +239,7 @@ static void on_show(void* arg) {
     ui_sd_resync_light();
     keyboard_set_visibility_cb(kb_visibility_cb);
     keyboard_hide();  // release before cleaning the keyboard textareas (UAF guard)
+    forget_settings_widgets();
     lv_obj_clean(s_content);
     if (!s_cls) return;
     lv_label_set_text(s_sh.title, s_cls->name);

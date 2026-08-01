@@ -61,6 +61,20 @@ static void textarea_focus_cb(lv_event_t* e) {
     keyboard_show(ta, (lv_keyboard_mode_t)(uintptr_t)lv_event_get_user_data(e));
 }
 
+// The keyboard holds a raw pointer to its target (lv_keyboard_t::ta) and LVGL
+// never clears it when that target is deleted — so the next
+// lv_keyboard_set_textarea() would call lv_obj_remove_state() on freed memory.
+// That is the use-after-free every screen used to have to prevent by hand, by
+// calling keyboard_hide() before each lv_obj_clean().
+//
+// Letting the textarea announce its own death makes the rule structural: by the
+// time LV_EVENT_DELETE fires the object is still valid, so releasing it here is
+// safe, and no caller has to remember anything.
+static void textarea_delete_cb(lv_event_t* e) {
+    lv_obj_t* ta = (lv_obj_t*)lv_event_get_target(e);
+    if (s_kbd && lv_keyboard_get_textarea(s_kbd) == ta) keyboard_hide();
+}
+
 void keyboard_create(void) {
     s_kbd = lv_keyboard_create(lv_layer_top());
     lv_obj_set_size(s_kbd, LV_PCT(100), 300);
@@ -100,5 +114,8 @@ lv_obj_t* keyboard_make_textarea(lv_obj_t* parent, const char* placeholder,
     lv_obj_add_flag(ta, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
     lv_obj_add_event_cb(ta, textarea_focus_cb, LV_EVENT_FOCUSED, (void*)(uintptr_t)mode);
     lv_obj_add_event_cb(ta, textarea_focus_cb, LV_EVENT_CLICKED, (void*)(uintptr_t)mode);
+    // Self-releasing: see textarea_delete_cb. This is what makes deleting a
+    // field the keyboard is pointing at safe on its own.
+    lv_obj_add_event_cb(ta, textarea_delete_cb, LV_EVENT_DELETE, nullptr);
     return ta;
 }

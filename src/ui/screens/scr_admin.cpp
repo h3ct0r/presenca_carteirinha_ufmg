@@ -752,7 +752,8 @@ static void do_revert(void) {
 static void import_btn_cb(lv_event_t*) {
     open_confirm("Import configuration?",
                  "This replaces the current configuration with the config.tar on the SD card. "
-                 "The previous configuration is backed up first.",
+                 "The current configuration is backed up first — replacing the one backup "
+                 "already kept, so only the configuration in use right now can be restored.",
                  do_import);
 }
 
@@ -773,7 +774,8 @@ static void build_import(void) {
         lv_obj_t* m = ui_make_label(
             card,
             "A config.tar is on the SD card. Importing replaces the current configuration; the "
-            "previous one is backed up first.",
+            "current one is backed up first. Only one backup is kept — importing again "
+            "replaces it.",
             THEME_TEXT, &lv_font_montserrat_14);
         lv_label_set_long_mode(m, LV_LABEL_LONG_WRAP);
         lv_obj_set_width(m, LV_PCT(100));
@@ -873,6 +875,10 @@ static void on_hide(void) {
     close_reader_modal();
     close_confirm();
     close_wipe_confirm();
+    // Every overlay on this screen, without exception: they are parented to
+    // s_root, so one left open survives the hide as a full-screen CLICKABLE
+    // layer AND wedges its own opener (which returns early on a live pointer).
+    close_card_wipe_confirm();
 }
 
 const screen_t scr_admin = {

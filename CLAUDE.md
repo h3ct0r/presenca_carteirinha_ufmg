@@ -50,8 +50,8 @@ src/ui/        LVGL screens/components/theme — the ONLY code that includes lvg
 src/app/       pure logic, no hardware: event_bus, auth, session, uid, ustar,
                battery_curve, photo_fit — this is what the native tests compile
 src/services/  own hardware + SD, run FreeRTOS tasks (never touch LVGL)
-src/storage/   SD modules: sd_card, attendance_store, photo_store, checkin_store,
-               backup_store, sd_tree, battery_log
+src/storage/   SD modules: sd_card, atomic_file, attendance_store, photo_store,
+               checkin_store, backup_store, sd_tree, battery_log
 src/camera/    OV02C10 sensor, csi_pipeline, auto_exposure
 src/lcd/  src/touch/  src/rfid/  src/audio/     device drivers
 ```
@@ -68,9 +68,15 @@ src/lcd/  src/touch/  src/rfid/  src/audio/     device drivers
 
 ## Gotchas that cause real bugs
 
-- **Every `lv_obj_clean()` that deletes keyboard textareas must call
-  `keyboard_hide()` FIRST** — otherwise the next `keyboard_hide()` touches freed
-  memory (a fixed UAF). See `enroll_goto` / `rebuild_content`.
+- **The keyboard textarea UAF is now handled structurally.** LVGL never clears
+  `lv_keyboard_t::ta` when its target is deleted, so `lv_keyboard_set_textarea()`
+  used to dereference freed memory. `keyboard_make_textarea()` now registers an
+  `LV_EVENT_DELETE` handler that releases the keyboard, so deleting a field it
+  points at is safe. Screens still call `keyboard_hide()` before an
+  `lv_obj_clean()` for the visible behaviour — but forgetting it is no longer a
+  crash. **Textareas created directly with `lv_textarea_create()` do not get this
+  protection**; use `keyboard_make_textarea()` for anything the shared keyboard
+  will serve.
 - **Modals with textareas live on the screen root, not `layer_top`**, so the
   shared keyboard floats above them. Overlays parented to the shell root need
   `LV_OBJ_FLAG_IGNORE_LAYOUT` (they're otherwise laid out as flex children).

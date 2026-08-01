@@ -212,7 +212,7 @@ test('more than 12 classes is flagged', () => {
   assert.ok(has(validate(m), `more than ${LIMITS.MAX_CLASSES} classes`));
 });
 
-test('over-length roster (>100) is flagged', () => {
+test('over-length roster (> MAX_CLASS_ROSTER) is flagged', () => {
   const m = clone(FIXTURE);
   m.students = Array.from({ length: LIMITS.MAX_CLASS_ROSTER + 1 }, (_, i) => ({ id: `s-${i}`, name: `S${i}` }));
   m.classes = [{

@@ -380,6 +380,68 @@ static void test_more_dates_than_the_cache_holds(void) {
     }
 }
 
+// --- write failures must be reported, not swallowed --------------------------
+//
+// On a full card the student is still marked present in RAM (the UI stays
+// consistent), but nothing reaches the JSONL. If that comes back as success the
+// kiosk shows a green "Checked in" and a whole session goes missing unnoticed —
+// so both entry points have to say the write failed.
+
+static void test_set_reports_write_failure(void) {
+    mocksd_reset();
+    attendance_open(DIR, "2026-07-25");
+    mocksd_set_card_full(true);
+
+    TEST_ASSERT_FALSE(attendance_set("2023-0142", true));
+    // RAM still reflects the tap, so the roll call does not lie about what the
+    // professor just did — only persistence failed.
+    TEST_ASSERT_TRUE(attendance_is_present("2023-0142"));
+
+    mocksd_set_card_full(false);
+    char buf[128];
+    read_file("/classes/CS101-M1/attendance/2026-07-25.jsonl", buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_STRING("", buf);  // nothing was persisted
+}
+
+static void test_timed_tap_reports_write_failure(void) {
+    mocksd_reset();
+    attendance_open(DIR, "2026-07-26");
+
+    // Arrival writes nothing, so it succeeds even on a full card.
+    mocksd_set_card_full(true);
+    att_state_t s = attendance_tap("2023-0142", 0, 45);
+    TEST_ASSERT_EQUAL_INT(ATT_IN_PROGRESS, s.status);
+    TEST_ASSERT_TRUE(s.saved);
+
+    // The confirming tap is the one that appends — and it must report failure.
+    s = attendance_tap("2023-0142", 50 * MIN_US, 45);
+    TEST_ASSERT_EQUAL_INT(ATT_PRESENT, s.status);
+    TEST_ASSERT_EQUAL_INT(50, s.minutes);
+    TEST_ASSERT_FALSE(s.saved);
+    TEST_ASSERT_TRUE(attendance_is_present("2023-0142"));
+
+    mocksd_set_card_full(false);
+    char buf[128];
+    read_file("/classes/CS101-M1/attendance/2026-07-26.jsonl", buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_STRING("", buf);
+}
+
+// The happy path must keep reporting saved==true, or the warning UI would fire
+// on every normal check-in.
+static void test_timed_tap_reports_success_when_written(void) {
+    mocksd_reset();
+    attendance_open(DIR, "2026-07-27");
+    attendance_tap("2023-0142", 0, 45);
+    att_state_t s = attendance_tap("2023-0142", 50 * MIN_US, 45);
+    TEST_ASSERT_EQUAL_INT(ATT_PRESENT, s.status);
+    TEST_ASSERT_TRUE(s.saved);
+
+    // Non-writing states report saved==true so callers can branch on it alone.
+    s = attendance_tap("2023-0142", 80 * MIN_US, 45);
+    TEST_ASSERT_EQUAL_INT(ATT_ALREADY_PRESENT, s.status);
+    TEST_ASSERT_TRUE(s.saved);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_fresh_session_is_empty);
@@ -404,5 +466,8 @@ int main(int, char**) {
     RUN_TEST(test_switching_class_does_not_leak_counts);
     RUN_TEST(test_clear_drops_the_cache);
     RUN_TEST(test_more_dates_than_the_cache_holds);
+    RUN_TEST(test_set_reports_write_failure);
+    RUN_TEST(test_timed_tap_reports_write_failure);
+    RUN_TEST(test_timed_tap_reports_success_when_written);
     return UNITY_END();
 }

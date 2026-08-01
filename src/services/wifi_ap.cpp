@@ -36,7 +36,10 @@ static void generate_once(void) {
     snprintf(s_ssid, sizeof(s_ssid), "CARTEIRINHA-%04X", (unsigned)(esp_random() & 0xFFFF));
     for (int i = 0; i < 8; i++) s_pass[i] = (char)('0' + (esp_random() % 10));
     s_pass[8] = '\0';
-    ESP_LOGI(TAG, "generated AP creds: %s / %s", s_ssid, s_pass);
+    // SSID only: the password is shown on scr_wifi_editor, where the professor
+    // who started the AP is standing, and does not also need to be on the serial
+    // console for the rest of the boot.
+    ESP_LOGI(TAG, "generated AP creds for %s (password shown on screen)", s_ssid);
 }
 
 void wifi_ap_credentials(char* ssid, size_t ssid_cap, char* pass, size_t pass_cap) {

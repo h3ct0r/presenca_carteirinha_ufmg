@@ -19,6 +19,7 @@ struct Store {
     std::set<std::string> dirs;
     bool begin_ok = true;
     bool mounted = false;
+    bool card_full = false;
 };
 
 // Heap-allocated and intentionally never destroyed: detached mock tasks
@@ -69,12 +70,19 @@ void mocksd_reset(void) {
     s.dirs.clear();
     s.begin_ok = true;
     s.mounted = false;
+    s.card_full = false;
 }
 
 void mocksd_set_begin_result(bool ok) {
     Store& s = S();
     std::lock_guard<std::mutex> lk(s.m);
     s.begin_ok = ok;
+}
+
+void mocksd_set_card_full(bool full) {
+    Store& s = S();
+    std::lock_guard<std::mutex> lk(s.m);
+    s.card_full = full;
 }
 
 void mocksd_add_file(const char* path, const char* contents) {
@@ -155,6 +163,9 @@ size_t File::write(const uint8_t* buf, size_t len) {
     if (!valid_ || !writable_) return 0;
     Store& s = S();
     std::lock_guard<std::mutex> lk(s.m);
+    // A full card takes the bytes nowhere and reports a short write — the
+    // signal production code checks (w == len) to notice it ran out of room.
+    if (s.card_full) return 0;
     s.files[path_].append((const char*)buf, len);
     return len;
 }

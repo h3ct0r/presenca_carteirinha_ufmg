@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 
 // Per-class, per-day attendance in append-only JSONL files:
@@ -59,6 +60,12 @@ typedef struct {
     att_status_t status;
     int minutes;    // elapsed so far (IN_PROGRESS/TOO_EARLY) or measured (PRESENT/ALREADY_PRESENT)
     int remaining;  // whole minutes left before a tap can register (IN_PROGRESS/TOO_EARLY; else 0)
+    // False only when this call tried to append and the write failed — i.e. the
+    // student reads as present in RAM but nothing reached the card. The UI MUST
+    // surface that: a green "Presence registered" over a failed write is how a
+    // whole session goes missing without anyone noticing. States that write
+    // nothing (IN_PROGRESS, TOO_EARLY, ALREADY_PRESENT, ABSENT) report true.
+    bool saved;
 } att_state_t;
 
 // Handles a timed tap for a student in the open session. The first tap records

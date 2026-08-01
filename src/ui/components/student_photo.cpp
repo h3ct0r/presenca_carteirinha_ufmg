@@ -187,7 +187,7 @@ static avatar_bitmap_t* avatar_decode(const char* src) {
     const uint32_t stride = (uint32_t)w * 2;
     const size_t bytes = (size_t)stride * h;
     // One PSRAM block holds the descriptor and the pixels: the LVGL pool
-    // (LV_MEM_SIZE, 256 KB, and a silent freeze when exhausted) never sees any
+    // (LV_MEM_SIZE, 512 KB, and a silent freeze when exhausted) never sees any
     // of this, and there is a single allocation to fail and a single to free.
     uint8_t* block = (uint8_t*)heap_caps_malloc(sizeof(avatar_bitmap_t) + bytes, MALLOC_CAP_SPIRAM);
     if (!block) {

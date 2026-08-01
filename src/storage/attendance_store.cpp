@@ -7,12 +7,19 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "app/roster.h"
 #include "esp32-hal-log.h"
 
 static const char* TAG = "attend";
 
-static constexpr int MAX_PRESENT = 100;  // == ROSTER_MAX_CLASS_STUDENTS
+static constexpr int MAX_PRESENT = ROSTER_MAX_CLASS_STUDENTS;
+// The two must agree: present_set() silently drops anyone past MAX_PRESENT, so a
+// larger class cap would lose students from every session with no error anywhere.
+static_assert(MAX_PRESENT == ROSTER_MAX_CLASS_STUDENTS,
+              "attendance capacity must track the class roster cap");
 static constexpr int ID_LEN = 20;
+static_assert(ID_LEN == sizeof(student_t::id),
+              "attendance ids must hold a full student_t::id");
 static constexpr long long MINUTE_US = 60000000LL;
 
 static char s_dir[24] = "";
@@ -179,10 +186,13 @@ static bool fold_file(const char* path, char set[][ID_LEN], int* count) {
     buf[n] = '\0';
     f.close();
 
+    // One document reused across every line: deserializeJson() clears it, and
+    // hoisting it out keeps the allocator's blocks instead of building and
+    // tearing one down per record. A busy session is hundreds of lines.
+    JsonDocument doc;
     char* save = nullptr;
     for (char* line = strtok_r(buf, "\n", &save); line; line = strtok_r(nullptr, "\n", &save)) {
         if (line[0] != '{') continue;
-        JsonDocument doc;
         if (deserializeJson(doc, line)) continue;
         const char* id = doc["id"] | "";
         bool present = doc["present"] | false;
@@ -211,10 +221,10 @@ static bool fold_open(const char* path) {
     buf[n] = '\0';
     f.close();
 
+    JsonDocument doc;  // reused per line; see fold_file
     char* save = nullptr;
     for (char* line = strtok_r(buf, "\n", &save); line; line = strtok_r(nullptr, "\n", &save)) {
         if (line[0] != '{') continue;
-        JsonDocument doc;
         if (deserializeJson(doc, line)) continue;
         const char* id = doc["id"] | "";
         bool present = doc["present"] | false;
@@ -301,7 +311,7 @@ static long long tapin_elapsed(int t, long long now_us) {
 }
 
 att_state_t attendance_tap(const char* id, long long now_us, int threshold_min) {
-    att_state_t r = {ATT_ABSENT, 0, 0};
+    att_state_t r = {ATT_ABSENT, 0, 0, true};
     if (!s_open || !id || !id[0]) return r;
 
     int p = present_find(id);
@@ -330,17 +340,19 @@ att_state_t attendance_tap(const char* id, long long now_us, int threshold_min) 
         return r;
     }
 
-    // Threshold met: register the presence and close out the arrival.
+    // Threshold met: register the presence and close out the arrival. The append
+    // result is carried out to the caller — RAM says present either way, so this
+    // flag is the only thing that can tell the student it did not reach the card.
     tapin_remove(t);
     present_set(id, true, minutes);
-    append_record(id, true, minutes, true);
+    r.saved = append_record(id, true, minutes, true);
     r.status = ATT_PRESENT;
     r.minutes = minutes;
     return r;
 }
 
 att_state_t attendance_tap_state(const char* id, long long now_us, int threshold_min) {
-    att_state_t r = {ATT_ABSENT, 0, 0};
+    att_state_t r = {ATT_ABSENT, 0, 0, true};
     if (!s_open || !id || !id[0]) return r;
     int t = tapin_find(id);
     if (t >= 0) {
@@ -406,22 +418,41 @@ int attendance_present_for(const char* class_dir, const char* date) {
     int cached = 0;
     if (cache_get(class_dir, date, &cached)) return cached;
 
-    static char tmp[MAX_PRESENT][ID_LEN];  // read-only fold, avoids big stack
+    // Heap, not a static: 2 KB of the internal pool (the scarce one — see
+    // BACKLOG.md) held permanently for a fold that is memoised anyway, so on the
+    // common path it is not even reached. Too small to force PSRAM, but it is
+    // transient either way — and off the stack, which is the point.
+    char (*tmp)[ID_LEN] = (char(*)[ID_LEN])malloc(sizeof(char[MAX_PRESENT][ID_LEN]));
+    if (!tmp) {
+        ESP_LOGE(TAG, "present_for %s %s: out of memory", class_dir, date);
+        return 0;  // not cached: a memory blip must not become a sticky wrong count
+    }
     int count = 0;
     char path[80];
     att_path(class_dir, date, path, sizeof(path));
-    fold_file(path, tmp, &count);
-    cache_put(class_dir, date, count);
+    bool ok = fold_file(path, tmp, &count);
+    free(tmp);
+    // Only memoise a count we actually managed to read; caching a 0 from a
+    // failed read would make it stick until something invalidated the entry.
+    if (ok) cache_put(class_dir, date, count);
     return count;
 }
 
 int attendance_clear(const char* class_dir, int* out_failed) {
     attendance_close();  // never leave a session open on files we're deleting
     if (cache_is(class_dir)) cache_flush();
-    // List the dates first (static buffer, not stack), then delete — removing
-    // files while iterating the directory would be unsafe.
-    static char dates[512][12];
-    int n = attendance_list_dates(class_dir, dates, 512);
+    // List the dates first, then delete — removing files while iterating the
+    // directory would be unsafe. Heap, not a static: this is a debug-only wipe,
+    // and 6 KB is the single largest reclaimable block in the internal pool that
+    // BACKLOG.md calls constrained. Over 4 KB, so it lands in PSRAM.
+    static constexpr int MAX_CLEAR_DATES = 512;
+    char (*dates)[12] = (char(*)[12])malloc(sizeof(char[MAX_CLEAR_DATES][12]));
+    if (!dates) {
+        ESP_LOGE(TAG, "clear %s: out of memory listing sessions", class_dir);
+        if (out_failed) *out_failed = -1;  // "unknown", not "none failed"
+        return 0;
+    }
+    int n = attendance_list_dates(class_dir, dates, MAX_CLEAR_DATES);
     int removed = 0;
     for (int i = 0; i < n; i++) {
         char path[80];
@@ -433,6 +464,7 @@ int attendance_clear(const char* class_dir, int* out_failed) {
             ESP_LOGE(TAG, "clear %s: could not delete %s", class_dir, path);
         }
     }
+    free(dates);
     if (out_failed) *out_failed = n - removed;
     return removed;
 }

@@ -1,8 +1,13 @@
 #include "app/battery_curve.h"
 
-// mV -> %, high to low. Linear from 4.2 V (100%) to 3.2 V (0%), with an anchor
-// every 5% (each 50 mV) so the mapping is easy to tweak per-anchor later;
+// mV -> %, high to low. Linear from 3.75 V (100%) to 2.70 V (0%), with an anchor
+// every 5% (52.5 mV apart) so the mapping is easy to tweak per-anchor later;
 // battery_mv_to_pct() interpolates linearly between adjacent anchors.
+//
+// These are post-calibration volts, i.e. what battery_service reports after
+// BAT_CAL_SCALE — not raw cell volts. The endpoints have NOT been checked
+// against a real discharge; build with BATTERY_DRAIN_LOG (platformio.ini) to
+// collect that data. See BACKLOG.md §Q4.
 struct volt_pct_t {
     uint16_t mv;
     uint8_t pct;

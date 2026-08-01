@@ -15,6 +15,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "services/roster_service.h"
+#include "storage/atomic_file.h"
 #include "storage/sd_card.h"
 
 static const char* TAG = "config";
@@ -47,8 +48,8 @@ static config_status_t cfg_fail(char* err, size_t cap, config_status_t st, const
 // (s_config / s_error), so both the live loader and config_validate_tree() can
 // call it. Reads into a heap buffer (not a 2 KB stack array) because validation
 // runs deep inside the import call chain on the LVGL thread, where an extra 2 KB
-// on the stack plus a JsonDocument would risk the loopTask stack. Logs the raw
-// file contents on the way (the boot-time debug aid). Returns the status.
+// on the stack plus a JsonDocument would risk the loopTask stack. Returns the
+// status.
 static config_status_t parse_config_file(const char* path, device_config_t* out, char* err,
                                          size_t errcap) {
     if (out) *out = device_config_t{};
@@ -57,6 +58,10 @@ static config_status_t parse_config_file(const char* path, device_config_t* out,
         return cfg_fail(err, errcap, CONFIG_NO_SD,
                         "No SD card, or card not readable (FAT32 required)");
     }
+    // A password/card write interrupted by a power cut leaves the config at
+    // <path>.bak. Restore it before concluding the device has no configuration —
+    // that conclusion offers to overwrite it with a fresh first-run setup.
+    atomic_file_recover(path);
     if (!SD_MMC.exists(path)) {
         return cfg_fail(err, errcap, CONFIG_NO_FILE, "config.json not found on the SD card root");
     }
@@ -73,8 +78,12 @@ static config_status_t parse_config_file(const char* path, device_config_t* out,
     buf[n] = '\0';
     f.close();
 
-    // Boot-time debug: dump exactly what's on the card.
-    ESP_LOGI(TAG, "%s (%u bytes):\n%s", path, (unsigned)n, buf);
+    // Deliberately NOT dumping `buf`: config.json carries every professor's
+    // password in cleartext, and this runs at boot and on every 3 s retry, so a
+    // raw dump puts them on the serial console for anyone with the USB port.
+    // The per-teacher lines below report the same structure with the password
+    // reduced to "set"/"(none)", which is what the debugging actually needs.
+    ESP_LOGI(TAG, "%s: %u bytes read", path, (unsigned)n);
 
     JsonDocument doc;
     DeserializationError jerr = deserializeJson(doc, buf);
@@ -299,28 +308,17 @@ bool config_teacher_has_password(const char* email, const char* rfid_uid) {
     return has;
 }
 
-// Serializes doc to a temp file then renames over /config.json, so a power cut
-// leaves either the old file or the new one — never a half-written one. Mirrors
-// roster_service's write_json_file (kept local: services own their own files).
+// Replaces /config.json with doc, crash-safely (storage/atomic_file.h). The old
+// remove-then-rename here had a window in which config.json did not exist at
+// all — and without it the device cannot be unlocked by anyone.
 static bool write_config_file(JsonDocument& doc) {
     size_t need = measureJsonPretty(doc);
     char* buf = (char*)malloc(need + 1);
     if (!buf) return false;
     size_t len = serializeJsonPretty(doc, buf, need + 1);
-
-    const char* tmp = "/config.json.tmp";
-    File f = SD_MMC.open(tmp, FILE_WRITE, true);
-    if (!f) {
-        free(buf);
-        return false;
-    }
-    size_t written = f.write((const uint8_t*)buf, len);
-    f.close();
+    bool ok = atomic_file_write(CONFIG_PATH, (const uint8_t*)buf, len, "config.json");
     free(buf);
-    if (written != len) return false;
-
-    SD_MMC.remove(CONFIG_PATH);  // FAT rename requires the target to be absent
-    return SD_MMC.rename(tmp, CONFIG_PATH);
+    return ok;
 }
 
 static config_result_t result(bool ok, const char* fmt, ...) {
@@ -335,10 +333,20 @@ static config_result_t result(bool ok, const char* fmt, ...) {
 // Shared by the bootstrap and the password editor so both enforce the same
 // rules with the same wording. Returns an empty message when the password is
 // acceptable.
+//
+// The length floor is enforced on WRITE only, never on parse: raising it must
+// not lock out a professor whose shorter password is already in config.json, and
+// an imported config.tar is the config-builder's business to validate. It exists
+// because the password is the whole unlock credential and the keypad is numeric
+// — a 4-digit PIN is 10^4 candidates, which only the login throttle in scr_idle
+// makes expensive.
 static config_result_t check_password(const char* pw) {
     if (!pw || pw[0] == '\0') return result(false, "Enter a password");
     for (const char* c = pw; *c; c++) {
         if (!isdigit((unsigned char)*c)) return result(false, "Digits only");
+    }
+    if (strlen(pw) < CONFIG_MIN_PASSWORD_DIGITS) {
+        return result(false, "Use at least %d digits", CONFIG_MIN_PASSWORD_DIGITS);
     }
     if (strlen(pw) >= sizeof(((teacher_t*)0)->password)) {
         return result(false, "Password too long");
@@ -386,6 +394,7 @@ config_result_t config_set_password(const char* email, const char* rfid_uid,
     // buffer is heap-allocated (not a 2 KB stack array): this runs deep inside
     // an LVGL event callback and then calls load_config(), whose own 2 KB
     // buffer would otherwise stack on top of it and overflow loopTask.
+    atomic_file_recover(CONFIG_PATH);
     File f = SD_MMC.open(CONFIG_PATH, FILE_READ);
     if (!f) return result(false, "Could not open config.json");
     char* buf = (char*)malloc(2048);
@@ -465,6 +474,7 @@ config_result_t config_set_rfid(const char* email, const char* rfid_uid, const c
     // Re-read the file so we preserve any fields we don't model. Heap buffer
     // (not a 2 KB stack array) for the same reason as config_set_password: this
     // runs inside an LVGL callback and load_config() adds another 2 KB below.
+    atomic_file_recover(CONFIG_PATH);
     File f = SD_MMC.open(CONFIG_PATH, FILE_READ);
     if (!f) return result(false, "Could not open config.json");
     char* buf = (char*)malloc(2048);
@@ -518,9 +528,17 @@ config_result_t config_set_rfid(const char* email, const char* rfid_uid, const c
 bool config_validate_tree(const char* root, char* msg, size_t cap) {
     char path[96];
     snprintf(path, sizeof(path), "%s/config.json", root ? root : "");
-    device_config_t scratch;
+    // Heap, not stack, for the same reason load_config() does it: a
+    // device_config_t is ~1.5 kB and parse_config_file() keeps one of its own,
+    // and this runs deep inside the import chain on the LVGL thread.
+    device_config_t* scratch = (device_config_t*)malloc(sizeof(device_config_t));
+    if (!scratch) {
+        if (msg && cap) snprintf(msg, cap, "Out of memory reading config.json");
+        return false;
+    }
     char err[128];
-    config_status_t st = parse_config_file(path, &scratch, err, sizeof(err));
+    config_status_t st = parse_config_file(path, scratch, err, sizeof(err));
+    free(scratch);
     if (msg && cap) snprintf(msg, cap, "%s", st == CONFIG_OK ? "" : err);
     return st == CONFIG_OK;
 }

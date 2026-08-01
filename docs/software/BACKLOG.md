@@ -16,13 +16,27 @@ unnoticed because the sample rosters are ASCII-only. The fix and a ready-to-run
 `lv_font_conv` command are in the "Known gap" callout of
 [CUSTOM_FONT_GENERATION.md](CUSTOM_FONT_GENERATION.md).
 
-**Internal RAM is still the constrained pool.** Moving the LVGL heap to PSRAM
-returned 255 KB, but 81 KB of it is still `s_students` (53 KB) and `s_classes`
-(28 KB) as static arrays, sized for the 600-student / 12-class caps regardless of
-what the card holds. Making them PSRAM allocations at `roster_service_start()`
-is the next lever if the budget gets tight again; see
-[ARCHITECTURE.md](ARCHITECTURE.md) §Memory budget for what the pool is spent on
-and how to measure it.
+**Internal RAM is still the constrained pool, and the roster caps now dominate
+it.** Moving the LVGL heap to PSRAM returned 255 KB, and moving
+`attendance_clear`/`attendance_present_for`/`load_students` scratch off `.bss`
+returned another 8 KB — but raising `ROSTER_MAX_CLASS_STUDENTS` to 200 then spent
+26,808 B, so static internal is back up to 160 KB. Of that, **104 KB** is
+`s_students` (55,200 B) and `s_classes` (51,216 B): fixed-size arrays holding the
+600-student / 12-class / 200-per-class caps regardless of what the card actually
+contains.
+
+Two levers, in order of value:
+- **Move `s_students`/`s_classes` to PSRAM** at `roster_service_start()`. Returns
+  ~104 KB and removes the coupling between "how many students can we hold" and
+  "is there room for the face model". This is the one to take before raising any
+  cap again.
+- **`class_rec_t::roster_turma[200][16]` is 3,200 B of the 4,268 B per class**
+  — 38 KB across 12 classes for a tag ARCHITECTURE.md describes as
+  "display/statistics only". Storing turmas as indices into a small per-class
+  string table, or dropping the in-RAM copy entirely, would reclaim most of it.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) §Memory budget for what the pool is spent
+on and how to measure it.
 
 **The face-model memory thresholds are set by argument, not measurement.**
 `MIN_INTERNAL_FREE` (128 KB) and `MIN_INTERNAL_BLOCK` (64 KB) in
@@ -33,10 +47,13 @@ the model's SD read actually needs. The `log_heap()` lines in `wifi_ap` and
 load; one session with the AP up settles whether these are too tight, too loose,
 or right.
 
-**Q4 — `battery_curve.cpp`'s comment is wrong.** It says "linear from 4.2 V (100%)
-to 3.2 V (0%) … every 5% (each 50 mV)"; the table actually runs 4.0 V → 2.7 V in
-65 mV steps. The ADC divider and the 2.7 V cutoff are also unverified against a
-real discharge — the `BATTERY_DRAIN_LOG` build flag exists to collect that data.
+**Q4 — `battery_curve.cpp`'s endpoints are unverified.** The comment was wrong
+(it claimed 4.2 V → 3.2 V in 50 mV steps, and this entry previously mis-stated the
+correction as 4.0 V → 2.7 V in 65 mV steps); the table runs **3.75 V → 2.70 V in
+52.5 mV steps** and the comment now says so. What remains open: the ADC divider
+and the 2.70 V cutoff have never been checked against a real discharge, and
+2.70 V is below a LiPo's usual usable floor. The `BATTERY_DRAIN_LOG` build flag
+exists to collect that data.
 
 ## Security
 
@@ -50,6 +67,16 @@ The background switch (`scr_wifi_editor`) widens the window: the AP can now stay
 up while the professor is on another screen, so nobody is necessarily looking at
 it. It is bounded on both sides — off at every boot, never persisted, and the
 idle gate stops the AP on sign-out — but it is one more reason to add auth.
+
+**S3 — RFID card IDs and professor passwords are stored in cleartext.**
+`students.json` holds every bound card UID and `config.json` holds every
+password, both on a removable FAT32 card that the debug file manager also serves
+unauthenticated (**S1**). Reading either file is enough to clone a student's card
+— or a professor's, which is also the device-unlock credential. In progress: the
+values become `HMAC-SHA256` fingerprints keyed by a per-device secret in NVS, so
+the card carries nothing usable on its own. A bare hash would not do: a 4-byte
+UID space is 2^32 and a 4-digit password 10^4, both exhaustible instantly without
+a secret the card does not carry.
 
 **S2 — neither debug wipe takes a backup.** "Delete all cards & attendance" and
 "Erase the whole SD card" are immediate and unrecoverable, gated only by the

@@ -14,8 +14,9 @@ src/app/       pure logic, no hardware: event_bus, auth, session, uid, ustar,
                battery_curve, photo_fit, card_gate, class_stats
 src/services/  own hardware + SD, run FreeRTOS tasks: config, roster, rfid,
                battery, export, wifi_ap, file_server, face_detection, import
-src/storage/   SD modules: sd_card (mount), attendance_store, photo_store,
-               checkin_store, backup_store, sd_tree, battery_log
+src/storage/   SD modules: sd_card (mount), atomic_file (crash-safe replace),
+               attendance_store, photo_store, checkin_store, backup_store,
+               sd_tree, battery_log
 src/camera/    OV02C10 sensor, csi_pipeline, auto_exposure
 src/lcd/  src/touch/  src/rfid/  src/audio/     device drivers
 ```
@@ -183,22 +184,41 @@ buffer and asserts in `transport_drv_ap_tx`. That is the failure signature to
 recognise — a wall of `sdmmc_read_sectors: not enough mem` is a memory report,
 not a card problem.
 
-The permanent occupants, measured with `nm --size-sort` on `firmware.elf`:
+The permanent occupants. Re-measure with:
+
+```sh
+riscv32-esp-elf-size -A -d .pio/build/esp32p4/firmware.elf   # per section
+riscv32-esp-elf-nm --size-sort -S -td .pio/build/esp32p4/firmware.elf | tail   # per symbol
+```
 
 | What | Size | Where |
 |---|---|---|
 | LVGL heap (`LV_MEM_SIZE`) | 512 KB | **PSRAM** via `LV_MEM_POOL_ALLOC` |
 | LVGL draw buffers (2 × 480×800×2) | 1.5 MB | PSRAM |
-| `s_students` (600 × `student_t`) | 53 KB | internal `.bss` |
-| `s_classes` (12 × `class_rec_t`) | 28 KB | internal `.bss` |
-| everything else static | ~47 KB | internal `.bss` |
+| `s_students` (600 × `student_t`) | 55,200 B | internal `.dram1.bss` |
+| `s_classes` (12 × `class_rec_t`) | 51,216 B | internal `.dram1.bss` |
+| `attendance_store` present + tap-in sets | 10,400 B | internal `.dram0.bss` |
+| everything else static | ~46 KB | internal `.dram0.bss` + `.data` |
+| **total static internal** | **163,736 B (160 KB)** | `.dram0.data` 13,812 + `.dram0.bss` 59,948 + `.dram1.bss` 89,976 |
 | task stacks (loopTask 16 K, face_detect 16 K, fileserv 8 K, …) | ~68 KB | internal |
 | WiFi + ESP-Hosted, once started | tens of KB | internal, **never freed** |
+| face-detection task + loaded model, once the camera has been opened | 16 KB stack + model | internal, **never freed** (`face_detection_stop()` pauses, it does not tear down) |
+
+Figures above are from the v0.2.0 build; the two commands are there so they can
+be re-taken rather than trusted.
+
+Two rules that follow from this table: **prefer a transient heap allocation over
+a static buffer** for anything only some screens or a debug action need (`malloc`
+over 4 KB lands in PSRAM — `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096`), and
+**move big structs off task stacks onto the heap** rather than growing the stack.
+`attendance_clear()`, `attendance_present_for()` and `load_students()` all
+allocate their scratch this way; between them that is ~27 KB that used to sit in
+`.bss` or on the LVGL stack.
 
 LVGL's pool is the reason `LV_MEM_POOL_ALLOC` exists in `lv_conf.h`: left to
 itself LVGL declares it as a static array, which put 256 KB of the 768 KB out of
 reach and left too little for SD DMA once WiFi came up. Static internal use is
-128 KB with it in PSRAM, against 384 KB before — and the pool has since been
+160 KB with it in PSRAM, against ~416 KB before — and the pool has since been
 doubled to 512 KB, which costs PSRAM only (TLSF's control block lives inside the
 pool, and `FL_INDEX_MAX` sizes itself from `LV_MEM_SIZE`). `update_roll_call()`
 logs a line whenever the pool hits a new high-water mark, which is the number to
@@ -229,10 +249,16 @@ buffers, decoded avatars (20 KB each). Nothing here has been close to the limit.
 
 These have each caused a real bug:
 
-- **`keyboard_hide()` before any `lv_obj_clean()` that deletes a textarea.** The
-  shared keyboard holds a pointer to its target; cleaning the widget without
-  hiding it first leaves a dangling `->ta` that the next `keyboard_hide()`
-  dereferences. See `enroll_goto()` and `rebuild_content()`.
+- **The shared keyboard holds a raw pointer to its target** (`lv_keyboard_t::ta`)
+  and LVGL never clears it when that target is deleted —
+  `lv_keyboard_set_textarea()` calls `lv_obj_remove_state()` on the *old* one, so
+  a cleaned textarea meant the next `keyboard_hide()` touched freed memory. This
+  is now prevented at the source: `keyboard_make_textarea()` registers an
+  `LV_EVENT_DELETE` handler that releases the keyboard while the object is still
+  valid. Screens still call `keyboard_hide()` before an `lv_obj_clean()` (see
+  `enroll_goto()`, `rebuild_content()`) because dismissing the keyboard when a
+  view changes is the behaviour you want — but it is no longer load-bearing.
+  A textarea built with a bare `lv_textarea_create()` gets none of this.
 - **Modals with textareas belong on the screen root, not `layer_top`,** so the
   shared keyboard floats above them.
 - **Overlays parented to the shell root need `LV_OBJ_FLAG_IGNORE_LAYOUT`,**
@@ -268,8 +294,15 @@ on `layer_top` with a reduced numeric keymap.
 
 Students are a **global registry** keyed by university id; classes reference
 students by index, and each student has one record and at most one card binding.
-`roster_service` loads and strictly validates the tree, and writes atomically
-(measure → heap buffer → temp file → remove + rename).
+`roster_service` loads and strictly validates the tree, and writes through
+`storage/atomic_file` (measure → heap buffer → `.tmp` → move the original to
+`.bak` → rename → drop `.bak`).
+
+The `.bak` step is the point: the obvious remove-then-rename has a window in
+which the file does not exist at all, and the two files written this way are the
+entire roster and the only credential store. Every reader calls
+`atomic_file_recover()` first, which restores a file left behind at `.bak` by an
+interrupted write and clears a stale one. `config_service` uses the same module.
 
 Validation of a staged import reuses the same loader under a single lock hold:
 load from the staging root, capture the result, reload from the live root to

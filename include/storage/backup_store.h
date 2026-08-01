@@ -1,5 +1,11 @@
 #pragma once
 
+// ONE backup deep. backup_store_create() overwrites /backup/previous every time,
+// so after two imports the pre-first-import configuration is gone and "Restore
+// previous configuration" restores the one that was live before the *last*
+// import. The UI wording says so; do not promise more than one generation
+// without rotating the directory here first.
+
 // A one-slot snapshot of the device's *authored* config surface, taken right
 // before a config-import overwrites it so the operator can revert. See
 // docs/software/CONFIG_IMPORT.md §5 and docs/software/SD_CARD.md.

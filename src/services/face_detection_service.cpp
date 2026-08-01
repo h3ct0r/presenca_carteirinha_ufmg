@@ -113,12 +113,18 @@ static const char* FMT_NAMES[3] = {"565LE", "565BE", "888"};
 
 // Runs the two-stage detector on the preview frame. The pixel format the model
 // wants isn't known up front, so we try three interpretations — RGB565 little-
-// and big-endian, and a manual RGB565->RGB888 unpack — and the one that last
-// found a face is tried first (steady state = one inference per frame).
+// and big-endian, and a manual RGB565->RGB888 unpack.
+//
+// The probe runs ONCE. Retrying all three on every frame that finds nothing was
+// exactly backwards: a face-present frame cost one inference and an empty frame
+// cost three, and empty frames are what the face-verify countdown spends almost
+// all of its budget on. The first format that ever detects is the right one for
+// this build+model, so lock to it and never pay for the others again.
 // `*out_fmt` reports the format that detected (or "none").
 static int run_detection(HumanFaceDetect* detect, uint8_t* preview, face_box_t* out,
                          uint32_t* infer_ms, const char** out_fmt) {
-    static int fmt_first = 0;  // sticky: 0=565LE, 1=565BE, 2=888
+    static int fmt_first = 0;      // sticky: 0=565LE, 1=565BE, 2=888
+    static bool fmt_locked = false;  // set once a format has actually detected
     static uint8_t* rgb888 = nullptr;
     if (!rgb888) {
         rgb888 = (uint8_t*)heap_caps_aligned_calloc(64, 1, FACE_PREVIEW_W * FACE_PREVIEW_H * 3,
@@ -133,7 +139,9 @@ static int run_detection(HumanFaceDetect* detect, uint8_t* preview, face_box_t* 
 
     int64_t t0 = esp_timer_get_time();
     std::list<dl::detect::result_t> results;
-    for (int oi = 0; oi < 3; oi++) {
+    // Locked: one inference per frame, whether or not there is a face in it.
+    const int tries = fmt_locked ? 1 : 3;
+    for (int oi = 0; oi < tries; oi++) {
         int fmt = order[oi];
         if (fmt == 2) {
             if (!rgb888) continue;
@@ -158,6 +166,10 @@ static int run_detection(HumanFaceDetect* detect, uint8_t* preview, face_box_t* 
             results = detect->run(img);
         }
         if (!results.empty()) {
+            if (!fmt_locked) {
+                fmt_locked = true;
+                ESP_LOGI(TAG, "pixel format locked to %s after first detection", FMT_NAMES[fmt]);
+            }
             fmt_first = fmt;
             break;
         }
