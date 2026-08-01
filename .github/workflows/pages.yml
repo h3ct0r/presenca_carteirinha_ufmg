@@ -59,6 +59,13 @@ jobs:
               -D _site/bins --clobber; then
               downloaded=$((downloaded + 1))
               echo "OK: $tag"
+              # Face-detection models, fetched separately and allowed to fail:
+              # releases from before the models moved into flash have no such
+              # asset, and they must keep installing without one.
+              gh release download "$tag" --repo "${{ github.repository }}" \
+                -p 'rfid-attendance-*-models.bin' \
+                -D _site/bins --clobber \
+                || echo "note: $tag has no models bin (pre-flash-models release)"
             else
               echo "WARN: incomplete bins for $tag (skipped)"
             fi

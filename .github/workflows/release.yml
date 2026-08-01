@@ -76,6 +76,11 @@ jobs:
           if [ -f "${BUILD_DIR}/partitions.bin" ]; then
             cp "${BUILD_DIR}/partitions.bin" "${OUT}/rfid-attendance-${TAG}-partitions.bin"
           fi
+          # Face-detection models (tools/build/pack_models.py). Without this image
+          # a fresh device detects nothing until .espdl files are put on the card.
+          if [ -f "${BUILD_DIR}/human_face_det.bin" ]; then
+            cp "${BUILD_DIR}/human_face_det.bin" "${OUT}/rfid-attendance-${TAG}-models.bin"
+          fi
 
           {
             echo "### Firmware ${TAG}"
@@ -85,6 +90,7 @@ jobs:
             echo "  - bootloader \`0x2000\`"
             echo "  - partitions \`0x8000\`"
             echo "  - app \`0x10000\`"
+            echo "  - face-detection models \`0x610000\`"
             echo "- Git SHA baked into build: \`$(git rev-parse --short=7 HEAD)\`"
             echo ""
             echo "### Flash"
@@ -98,7 +104,8 @@ jobs:
             echo "  write_flash --flash_mode dio --flash_freq 80m --flash_size 16MB \\"
             echo "  0x2000 rfid-attendance-${TAG}-bootloader.bin \\"
             echo "  0x8000 rfid-attendance-${TAG}-partitions.bin \\"
-            echo "  0x10000 rfid-attendance-${TAG}-firmware.bin"
+            echo "  0x10000 rfid-attendance-${TAG}-firmware.bin \\"
+            echo "  0x610000 rfid-attendance-${TAG}-models.bin"
             echo '```'
             echo ""
             echo "Native unit tests and config-builder tests passed in this workflow before the build."
@@ -117,6 +124,7 @@ jobs:
             dist/rfid-attendance-*-firmware.bin
             dist/rfid-attendance-*-bootloader.bin
             dist/rfid-attendance-*-partitions.bin
+            dist/rfid-attendance-*-models.bin
           fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

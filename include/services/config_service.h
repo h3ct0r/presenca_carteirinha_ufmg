@@ -86,6 +86,23 @@ typedef struct {
     char message[96];
 } config_result_t;
 
+// Writes a fresh /config.json holding a single professor — the on-device
+// bootstrap for a card that has no configuration at all. Without it a device
+// handed over with a blank card cannot be set up on its own: unlocking needs a
+// professor, and the WiFi file manager that would receive a config.tar sits
+// behind the unlock gate.
+//
+// Refuses unless the status is exactly CONFIG_NO_FILE, so it can never
+// overwrite a valid config nor paper over a broken one — a malformed
+// config.json must be repaired, not silently replaced. The new professor gets
+// no email and no card: an empty email sees every class
+// (roster_class_matches_teacher), which is what a setup account needs, and the
+// real professors arrive with the config.tar that overwrites this file.
+//
+// Returns {ok,message} — on failure nothing is written. Call on the UI/LVGL
+// thread (does SD I/O).
+config_result_t config_create_first_teacher(const char* name, const char* password);
+
 // Sets (or adds, if absent) the password for the professor identified by
 // `email` (falls back to `rfid_uid` when email is empty), rewriting
 // /config.json atomically and reloading. The new password must be non-empty,

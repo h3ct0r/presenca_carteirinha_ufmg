@@ -162,3 +162,11 @@ uint32_t ulTaskNotifyTake(BaseType_t clear_on_exit, TickType_t timeout) {
     pthread_mutex_unlock(&task->m);
     return val;
 }
+
+UBaseType_t uxTaskGetStackHighWaterMark(TaskHandle_t) {
+    // Host tasks are pthreads on the default (8 MB) stack, so there is no
+    // FreeRTOS high-water mark to report. Answer "plenty": production code only
+    // logs this or checks it against a floor, and a small number here would be a
+    // lie that could fail a test for a condition the host cannot have.
+    return 4096;  // words
+}

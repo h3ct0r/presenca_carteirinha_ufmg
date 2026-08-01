@@ -21,6 +21,10 @@ static const char* TAG = "config";
 
 static constexpr const char* CONFIG_PATH = "/config.json";
 static constexpr uint32_t RETRY_PERIOD_MS = 3000;
+// The deep path here is a *failed* load: parse_config_file's ~1.7 kB frame plus
+// newlib's ~1.1 kB vfprintf frame for the ESP_LOG that reports the failure.
+// config_task logs its real headroom once, so shrinking this is not guesswork.
+static constexpr uint32_t TASK_STACK_BYTES = 5120;
 
 static SemaphoreHandle_t s_lock = nullptr;  // guards s_config + s_error
 static config_status_t s_status = CONFIG_NO_SD;
@@ -136,19 +140,32 @@ static config_status_t parse_config_file(const char* path, device_config_t* out,
 }
 
 // Live loader: parse the on-card /config.json and publish it into shared state.
+//
+// `parsed` is heap-allocated, not a local: a device_config_t is ~1.5 kB and
+// parse_config_file() keeps one of its own, so two on the stack plus newlib's
+// 1.1 kB vfprintf frame (any ESP_LOG on the failure path) overflowed the 5 kB
+// "config" task — a stack-protection panic on every boot with no config.json.
+// Same reasoning as the read buffer inside parse_config_file().
 static config_status_t load_config(void) {
-    device_config_t parsed;
+    device_config_t* parsed = (device_config_t*)malloc(sizeof(device_config_t));
     char err[128];
-    config_status_t st = parse_config_file(CONFIG_PATH, &parsed, err, sizeof(err));
+    if (!parsed) {
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        snprintf(s_error, sizeof(s_error), "Out of memory reading config.json");
+        xSemaphoreGive(s_lock);
+        return CONFIG_BAD_JSON;
+    }
+    config_status_t st = parse_config_file(CONFIG_PATH, parsed, err, sizeof(err));
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (st == CONFIG_OK) {
-        s_config = parsed;
+        s_config = *parsed;
         s_error[0] = '\0';
     } else {
         snprintf(s_error, sizeof(s_error), "%s", err);
     }
     xSemaphoreGive(s_lock);
+    free(parsed);
     return st;
 }
 
@@ -164,9 +181,21 @@ static void publish(config_status_t st) {
 // up. Publishes only on change to keep the event bus quiet, then exits once
 // the config is valid.
 static void config_task(void*) {
+    bool logged_stack = false;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(RETRY_PERIOD_MS));
         config_status_t st = load_config();
+        // Once, after a full load has run: this task's headroom used to be
+        // negative on the no-config path (a stack-protection panic, not a
+        // message), so report the real margin instead of leaving it invisible
+        // until it overflows again. The failure path is the deep one — it stacks
+        // newlib's ~1.1 kB vfprintf frame on top of the parse.
+        if (!logged_stack) {
+            logged_stack = true;
+            ESP_LOGI(TAG, "config task stack: %u B unused of %u",
+                     (unsigned)(uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t)),
+                     (unsigned)TASK_STACK_BYTES);
+        }
         if (st != s_status) publish(st);
         if (st == CONFIG_OK) break;
     }
@@ -180,7 +209,7 @@ bool config_service_start(void) {
     publish(load_config());  // first attempt, synchronous, sets initial state
 
     if (s_status != CONFIG_OK) {
-        xTaskCreate(config_task, "config", 5120, nullptr, 2, nullptr);
+        xTaskCreate(config_task, "config", TASK_STACK_BYTES, nullptr, 2, nullptr);
     }
     return true;
 }
@@ -303,17 +332,52 @@ static config_result_t result(bool ok, const char* fmt, ...) {
     return r;
 }
 
-config_result_t config_set_password(const char* email, const char* rfid_uid,
-                                    const char* new_password) {
-    if (!new_password || new_password[0] == '\0') {
-        return result(false, "Enter a password");
-    }
-    for (const char* c = new_password; *c; c++) {
+// Shared by the bootstrap and the password editor so both enforce the same
+// rules with the same wording. Returns an empty message when the password is
+// acceptable.
+static config_result_t check_password(const char* pw) {
+    if (!pw || pw[0] == '\0') return result(false, "Enter a password");
+    for (const char* c = pw; *c; c++) {
         if (!isdigit((unsigned char)*c)) return result(false, "Digits only");
     }
-    if (strlen(new_password) >= sizeof(((teacher_t*)0)->password)) {
+    if (strlen(pw) >= sizeof(((teacher_t*)0)->password)) {
         return result(false, "Password too long");
     }
+    return result(true, "");
+}
+
+config_result_t config_create_first_teacher(const char* name, const char* password) {
+    // The guard, not the caller, is what makes this safe: CONFIG_NO_FILE is the
+    // only state where there is nothing to lose. CONFIG_OK would be overwritten,
+    // a parse failure would be papered over instead of fixed, and CONFIG_NO_SD
+    // has nowhere to write.
+    if (config_get_status() != CONFIG_NO_FILE) {
+        return result(false, "This device already has a configuration");
+    }
+    if (!name || name[0] == '\0') return result(false, "Enter a name");
+    if (strlen(name) >= sizeof(((teacher_t*)0)->name)) return result(false, "Name too long");
+    config_result_t pw = check_password(password);
+    if (!pw.ok) return pw;
+
+    JsonDocument doc;
+    JsonObject t = doc["teachers"].add<JsonObject>();
+    t["name"] = name;
+    t["email"] = "";
+    t["rfid_uid"] = "";
+    t["password"] = password;
+
+    if (!write_config_file(doc)) return result(false, "Could not save to SD card");
+
+    config_status_t st = load_config();
+    publish(st);
+    if (st != CONFIG_OK) return result(false, "Saved, but the config did not load");
+    return result(true, "Device set up - unlock with your password");
+}
+
+config_result_t config_set_password(const char* email, const char* rfid_uid,
+                                    const char* new_password) {
+    config_result_t pw = check_password(new_password);
+    if (!pw.ok) return pw;
     if (config_get_status() != CONFIG_OK) {
         return result(false, "Fix config.json first");
     }

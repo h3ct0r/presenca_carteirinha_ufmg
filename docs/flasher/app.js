@@ -22,6 +22,7 @@ const FLASH_MAP = {
   bootloader: 0x2000,
   partitions: 0x8000,
   firmware: 0x10000,
+  models: 0x610000, // human_face_det partition (partitions_model.csv)
 };
 const MONITOR_BAUD = 115200;
 const DEFAULT_FLASH_BAUD = 115200;
@@ -303,8 +304,13 @@ async function fetchReleases() {
     if (!asset) continue;
     const bootName = companionName(asset.name, "bootloader");
     const partName = companionName(asset.name, "partitions");
+    const modelsName = companionName(asset.name, "models");
     const boot = (rel.assets || []).find((a) => a.name === bootName);
     const part = (rel.assets || []).find((a) => a.name === partName);
+    // Face-detection models. Absent from releases built before they moved into
+    // flash — those still install, they just detect nothing until an .espdl is
+    // copied to the card, exactly as they did when published.
+    const models = (rel.assets || []).find((a) => a.name === modelsName);
     releases.push({
       tag,
       name: rel.name || tag,
@@ -316,6 +322,8 @@ async function fetchReleases() {
       bootloaderUrl: boot ? localBinUrl(boot.name) : null,
       partitionsName: part ? part.name : null,
       partitionsUrl: part ? localBinUrl(part.name) : null,
+      modelsName: models ? models.name : null,
+      modelsUrl: models ? localBinUrl(models.name) : null,
     });
   }
 
@@ -451,11 +459,19 @@ async function downloadFlashImages(rel) {
   const bootloader = await downloadBin(rel.bootloaderUrl, rel.bootloaderName);
   const partitions = await downloadBin(rel.partitionsUrl, rel.partitionsName);
   const firmware = await downloadBin(rel.url, rel.fileName);
-  return [
+  const images = [
     { data: bootloader, address: FLASH_MAP.bootloader },
     { data: partitions, address: FLASH_MAP.partitions },
     { data: firmware, address: FLASH_MAP.firmware },
   ];
+  // Optional, and deliberately not fatal: older releases have no models image.
+  if (rel.modelsUrl) {
+    const models = await downloadBin(rel.modelsUrl, rel.modelsName);
+    images.push({ data: models, address: FLASH_MAP.models });
+  } else {
+    log("No models image in this release — face detection will need /models on the SD card.");
+  }
+  return images;
 }
 
 function portPid(port) {

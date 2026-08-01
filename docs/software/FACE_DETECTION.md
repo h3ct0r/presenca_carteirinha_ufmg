@@ -56,27 +56,54 @@ wiring lives in `platformio.ini`:
 The `human_face_detect` model wrapper is still guarded so the camera preview
 alone builds if `USE_FACE_DETECT` is removed.
 
-### Models load from the SD card
+### Models ship in flash
 
-The two `.espdl` models are loaded at runtime from **`/models/` on the SD card**
-(`CONFIG_HUMAN_FACE_DETECT_MODEL_IN_SDCARD`), so there is nothing to pack or
-flash:
+The two `.espdl` models are packed into the **`human_face_det` flash partition**
+(`CONFIG_HUMAN_FACE_DETECT_MODEL_IN_FLASH_PARTITION`), so a freshly flashed
+device detects faces with nothing on the SD card. The sources live in
+[`models/`](../../models/) and [`tools/build/pack_models.py`](../../tools/build/pack_models.py)
+builds `$BUILD_DIR/human_face_det.bin` on every build and registers it as a
+`FLASH_EXTRA_IMAGES` entry, so **`pio run -t upload` writes it** along with the
+app; the web installer and the release notes do the same at **`0x610000`**. The
+offset and size come from `partitions_model.csv`, so the image, the flash address
+and the table cannot drift apart.
+
+> **An app-only flash is not enough.** Copying just `firmware.bin` to `0x10000`
+> leaves the partition erased; esp-dl then reads `0xFF…`, logs *"Model's
+> flatbuffers is empty or broken"* and **panics** on the null model. The service
+> now checks the partition's magic before constructing the detector, so that case
+> degrades to preview-only with `ERASED - not flashed` in the model panel.
+
+esp-dl's own `pack_models` tool is not vendored, so the packer generates the
+container itself. The format — `"PDL2"`, `model_num`, then `{data_offset,
+name_offset, name_len}` per model — is read straight out of the vendored loader,
+[`fbs_loader.cpp`](../../lib/esp-dl/fbs_loader/src/fbs_loader.cpp); **that file is
+the authority**, and the packer re-parses its own output against those rules and
+fails the build on a mismatch. Two constraints matter: model names must match the
+strings `load_model()` asks for exactly, and every `data_offset` must be 16-byte
+aligned or the loader drops to copying all parameters into PSRAM.
+
+The partition is 256 KB for a ~187 KB payload, not the 1 MB originally reserved:
+`FbsLoader` mmaps the *whole* partition and MSR and MNP each build their own
+loader, so it is mapped twice.
+
+**The SD card still wins if it has models.** Dropping the two files in `/models/`
+overrides the flash copy, which is the escape hatch for trying a different model
+without reflashing:
 
 ```
 /models/human_face_detect_msr_s8_v1.espdl
 /models/human_face_detect_mnp_s8_v1.espdl
 ```
 
-Copy them from [`sd_card_example/models/`](sd_card_example/models/) (originals in
-`lib/human_face_detect/models/p4/`). The file names are hard-coded in
-`human_face_detect.cpp`, so keep them exact. The detection task loads the model
-on startup (after the SD is mounted); if the files are missing, the status line
-shows the load error and no boxes appear.
+> **Local delta:** upstream esp-dl picks the model location at *compile* time, so
+> a partition build could never read the card. `make_model()` in
+> [`lib/human_face_detect/human_face_detect.cpp`](../../lib/human_face_detect/human_face_detect.cpp)
+> stats the SD path first and falls back to the partition. It is marked in the
+> file — re-apply it on the next esp-dl bump.
 
-> The `human_face_det` flash partition in `partitions_model.csv` is now unused
-> (SD loading replaces it); it's harmless reserved space. To use flash-partition
-> loading instead you'd need esp-dl's `pack_models` tool to build the partition
-> image — SD loading avoids that entirely.
+The camera screen's model panel names the source that was used, which is the
+first thing to check when detection misbehaves.
 
 ## Status / caveats
 
@@ -93,11 +120,15 @@ Working on hardware, including detection.
     right and what `luma` reads (healthy ≈ 60–160; ~0 or ~255 means the exposure
     or pipeline is broken), which points at CSI/ISP/AE rather than detection.
   - Image fine but still `[none]` — look at model input size and normalization.
-- **The model load is gated on free internal RAM.** Loading a model reads it off
-  the SD card, and `sdmmc` needs a DMA-capable *internal* buffer for that — the
-  pool the WiFi stack takes a large and permanent bite out of (`wifi_ap_stop()`
-  only drops the visible network and deliberately keeps the stack and the P4↔C6
-  link alive, so nothing reclaims that RAM before a reboot). Observed failure,
+- **The model load is gated on free internal RAM.** This gate exists for the
+  *SD* path, which the models no longer use by default — loading from the card
+  reads through `sdmmc`, which needs a DMA-capable *internal* buffer, the pool
+  the WiFi stack takes a large and permanent bite out of (`wifi_ap_stop()` only
+  drops the visible network and deliberately keeps the stack and the P4↔C6 link
+  alive, so nothing reclaims that RAM before a reboot). Loading from the flash
+  partition goes through `esp_partition_mmap` and takes no such buffer, so the
+  failure below should no longer be reachable unless the SD override is in use.
+  The gate is kept as-is until that is measured on hardware. Observed failure,
   with 46,976 B internal free:
 
   ```

@@ -723,7 +723,7 @@
                 ]
             },
             "defines": [
-                "APP_GIT_SHA=\"489c6db\"",
+                "APP_GIT_SHA=\"764b5f8\"",
                 "PLATFORMIO=60118",
                 "BOARD_HAS_PSRAM",
                 "BOARD_HAS_PSRAM",
@@ -749,7 +749,8 @@
                 "CONFIG_FLASH_HUMAN_FACE_DETECT_MSRMNP_S8_V1=1",
                 "CONFIG_HUMAN_FACE_DETECT_MSRMNP_S8_V1=1",
                 "CONFIG_DEFAULT_HUMAN_FACE_DETECT_MODEL=0",
-                "CONFIG_HUMAN_FACE_DETECT_MODEL_IN_SDCARD=1",
+                "CONFIG_HUMAN_FACE_DETECT_MODEL_IN_FLASH_PARTITION=1",
+                "CONFIG_HUMAN_FACE_DETECT_MODEL_LOCATION=1",
                 "CONFIG_HUMAN_FACE_DETECT_MODEL_SDCARD_DIR=\"models\"",
                 "USE_FACE_DETECT",
                 "ESP32_ARDUINO_LIB_BUILDER",

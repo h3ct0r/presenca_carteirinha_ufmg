@@ -58,7 +58,7 @@ The device **produces** data that was never authored on a laptop and must
 | `/students/checkins/**` | device (check-in snapshots) | **preserve** |
 | `/csv_export/**` | device | **preserve** |
 | `/backup/**` | device (pre-wipe snapshot) | **preserve** |
-| `/models/**` | provisioning (large) | **preserve** |
+| `/models/**` | optional model override (firmware ships its own) | **preserve** |
 
 An import is an **overlay of the authored files**, not a filesystem replace. Replacing the tree would erase attendance — the whole point of the
 device. The device importer enforces this via the path whitelist in §4; the
@@ -295,13 +295,17 @@ worse than the current file editor — do not ship one.
 ### New-device runbook
 
 1. On a laptop, format the SD card FAT32.
-2. Copy `/models/*.espdl` onto the card — only if the camera or photo check-in
-   is used ([FACE_DETECTION.md](FACE_DETECTION.md)).
-3. Drop the `config.tar` produced by the config-builder at the card root.
-4. Insert the card and boot. The idle screen detects the tar and offers
+2. Drop the `config.tar` produced by the config-builder at the card root.
+3. Insert the card and boot. The idle screen detects the tar and offers
    **"Import config from SD"** — no login needed, since there is no config yet.
-5. Tap it and confirm. The device backs up any prior config, validates, applies,
+4. Tap it and confirm. The device backs up any prior config, validates, applies,
    and reloads.
+
+Nothing else goes on the card. In particular the face-detection models are **not**
+part of a `config.tar` and never need copying: they ship in the firmware
+([FACE_DETECTION.md](FACE_DETECTION.md)). They are firmware-coupled binaries, so
+binding them to authored config would let an old tar reinstall a stale model
+after a firmware upgrade.
 
 ## 7. Versioning
 

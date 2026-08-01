@@ -9,6 +9,7 @@
 #include "driver/ppa.h"
 #include "esp32-hal-log.h"
 #include "esp_heap_caps.h"
+#include "esp_partition.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -43,8 +44,12 @@ static void log_heap(const char* when) {
 #define CAM_H ov02c10_camera::HEIGHT
 #define PREVIEW_BYTES (FACE_PREVIEW_W * FACE_PREVIEW_H * 2)
 
-// SD_MMC-relative model paths (the card is VFS-mounted at /sdcard, so esp-dl
-// opens them as /sdcard/models/..., which is the same file).
+// The models ship in a flash partition (tools/build/pack_models.py builds its
+// image), so a freshly flashed device detects faces with nothing on the card.
+#define MODEL_PARTITION "human_face_det"
+
+// SD_MMC-relative paths of the optional override (the card is VFS-mounted at
+// /sdcard, so esp-dl opens them as /sdcard/models/..., which is the same file).
 #define MODEL_MSR "/models/human_face_detect_msr_s8_v1.espdl"
 #define MODEL_MNP "/models/human_face_detect_mnp_s8_v1.espdl"
 
@@ -185,7 +190,9 @@ static void detection_task(void*) {
     }
 
 #ifdef USE_FACE_DETECT
-    // Probe the model files (size 0 / MISSING when absent or unreadable).
+    // Probe the SD override (size 0 / MISSING when absent or unreadable). The
+    // models normally come from the flash partition; a card-dropped .espdl wins
+    // when present, which is what human_face_detect.cpp's make_model() checks.
     bool have_msr = SD_MMC.exists(MODEL_MSR), have_mnp = SD_MMC.exists(MODEL_MNP);
     size_t sz_msr = 0, sz_mnp = 0;
     {
@@ -203,12 +210,38 @@ static void detection_task(void*) {
 
     // esp-dl does NOT check its own model-load failure — it dereferences the
     // broken model and hard-faults (a device reset). So only construct the
-    // detector when both model files are present AND non-empty; a 0-byte or
-    // truncated file (a failed SD copy) is the common way this crashes.
+    // detector when a usable source exists.
     // NOTE: a genuinely corrupt but full-size model still faults inside esp-dl —
     // that is an esp-dl limitation we can't guard from here.
     static constexpr size_t MIN_MODEL_BYTES = 1024;  // any real model is far larger
-    bool files_ok = have_msr && have_mnp && sz_msr >= MIN_MODEL_BYTES && sz_mnp >= MIN_MODEL_BYTES;
+    // A 0-byte or truncated file (a failed SD copy) is the common way the card
+    // path crashes. Both files have to be sane for the override to count: MSR
+    // and MNP resolve their source independently, so one good file on the card
+    // would mix a card model with a partition one.
+    const bool sd_override =
+        have_msr && have_mnp && sz_msr >= MIN_MODEL_BYTES && sz_mnp >= MIN_MODEL_BYTES;
+    // The partition existing is not enough: an app-only flash (or an older
+    // release) leaves it erased, esp-dl reads 0xFF... as an unknown container,
+    // logs "Model's flatbuffers is empty or broken" and then dereferences the
+    // null model — an unguardable panic inside esp-dl. So check the magic here,
+    // where a bad answer is just preview-only.
+    const esp_partition_t* model_part = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, MODEL_PARTITION);
+    bool part_ok = false;
+    if (model_part) {
+        char magic[5] = {};
+        if (esp_partition_read(model_part, 0, magic, 4) == ESP_OK) {
+            // The container formats fbs_loader.cpp's get_model_format() knows.
+            part_ok = strcmp(magic, "PDL2") == 0 || strcmp(magic, "PDL1") == 0 ||
+                      strcmp(magic, "PDL3") == 0 || strcmp(magic, "EDL1") == 0 ||
+                      strcmp(magic, "EDL2") == 0;
+        }
+        if (!part_ok) {
+            ESP_LOGW(TAG, "'%s' partition holds no model (magic %02x %02x %02x %02x)",
+                     MODEL_PARTITION, magic[0], magic[1], magic[2], magic[3]);
+        }
+    }
+    const bool files_ok = sd_override || part_ok;
 
     // The other way the load fails is running out of DMA-capable internal RAM
     // for the SD read, which ends in the same unguardable esp-dl fault. Both
@@ -251,22 +284,37 @@ static void detection_task(void*) {
                  "skipping model load: %u B internal free (need %u), largest block %u (need %u)",
                  (unsigned)internal_free, (unsigned)MIN_INTERNAL_FREE, (unsigned)internal_block,
                  (unsigned)MIN_INTERNAL_BLOCK);
-    } else if (have_msr && have_mnp) {
-        set_status("model file empty/truncated - preview only");
-        ESP_LOGW(TAG, "model file too small (msr=%uB mnp=%uB); preview only", (unsigned)sz_msr,
-                 (unsigned)sz_mnp);
     } else {
-        set_status("no model on SD (put .espdl in /models) - preview only");
-        ESP_LOGW(TAG, "model files missing on SD (%s / %s); preview only", MODEL_MSR, MODEL_MNP);
+        // Nothing usable anywhere. The common cause is an app-only flash: the
+        // models image lives at its own offset and is written by `pio run -t
+        // upload` or the web installer, not by copying firmware.bin alone.
+        set_status("no model in flash or on SD - reflash with the models image");
+        ESP_LOGW(TAG, "no model: '%s' partition %s, SD models %s; preview only", MODEL_PARTITION,
+                 model_part ? "present but empty/unreadable" : "not in the table",
+                 (have_msr || have_mnp) ? "incomplete" : "absent");
     }
     s_model_unavailable = (detect == nullptr);
 
+    // Which source won is the first question when detection misbehaves, so name
+    // it. make_model() prefers the card, so an override present means it was used.
     xSemaphoreTake(s_st.lock, portMAX_DELAY);
-    snprintf(s_st.model_info, sizeof(s_st.model_info),
-             "MSR /sdcard%s\n    %s%u KB\nMNP /sdcard%s\n    %s%u KB\nDetector: %s", MODEL_MSR,
-             have_msr ? "" : "MISSING  ", (unsigned)(sz_msr / 1024), MODEL_MNP,
-             have_mnp ? "" : "MISSING  ", (unsigned)(sz_mnp / 1024),
-             detect ? "LOADED" : "NOT loaded (preview only)");
+    if (sd_override) {
+        snprintf(s_st.model_info, sizeof(s_st.model_info),
+                 "Source: SD override\nMSR /sdcard%s\n    %u KB\nMNP /sdcard%s\n    %u KB\n"
+                 "Detector: %s",
+                 MODEL_MSR, (unsigned)(sz_msr / 1024), MODEL_MNP, (unsigned)(sz_mnp / 1024),
+                 detect ? "LOADED" : "NOT loaded (preview only)");
+    } else {
+        const char* part_state = !model_part  ? "NOT IN TABLE"
+                                 : part_ok    ? "packed model"
+                                              : "ERASED - not flashed";
+        snprintf(s_st.model_info, sizeof(s_st.model_info),
+                 "Source: flash partition '%s'\n    %s, %u KB\nSD override: %s\nDetector: %s",
+                 MODEL_PARTITION, part_state,
+                 (unsigned)(model_part ? model_part->size / 1024 : 0),
+                 (have_msr || have_mnp) ? "present but incomplete/empty" : "none",
+                 detect ? "LOADED" : "NOT loaded (preview only)");
+    }
     xSemaphoreGive(s_st.lock);
 #else
     set_status("preview (detection disabled)");

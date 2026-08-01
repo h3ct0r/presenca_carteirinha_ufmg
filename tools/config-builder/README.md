@@ -46,7 +46,12 @@ milestone record and what is deliberately left out.
    picker cannot — set that combination on the device.
 4. Click **Download config.tar** (enabled only when there are no errors).
 5. Connect to the device's WiFi AP and upload the tar via the device's web file
-   manager (see the contract for the import flow).
+   manager (see the contract for the import flow). That path needs the device
+   already configured — the file manager is behind the unlock gate. For a device
+   whose card is blank, either copy the tar to the card root directly (the idle
+   screen then offers **Import config from SD**) or use **Set up this device** on
+   the idle screen to create a first professor; see
+   [`SD_CARD.md`](../../docs/software/SD_CARD.md#preparing-a-new-card).
 
 ## Diário de Classe import
 The UFMG "Diário de Classe" export is a semicolon CSV with a header block

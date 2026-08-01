@@ -65,23 +65,37 @@ too large to copy. Restoring is "import from this directory"; see
 /import_staging/    unpacked tar, validated before anything live is touched
 ```
 
-## Optional — copied by hand
+## Optional — override, copied by hand
 
 ```
 /models/human_face_detect_msr_s8_v1.espdl
 /models/human_face_detect_mnp_s8_v1.espdl
 ```
 
-Required only for face detection and photo check-in. A missing model is handled:
-the camera runs preview-only rather than faulting. Staged copies are in
-[`sd_card_example/models/`](sd_card_example/models/); see
+**Not needed.** The face-detection models ship inside the firmware (the
+`human_face_det` flash partition), so a freshly flashed device detects faces with
+none of these files present. Put them here only to override the built-in copy —
+trying a different model without reflashing. Both files must be present for the
+override to take effect; sources are in [`models/`](../../models/), details in
 [FACE_DETECTION.md](FACE_DETECTION.md).
 
 ## Preparing a new card
 
 1. Format FAT32.
-2. Copy `/models/*.espdl` (only if using the camera).
-3. Drop the `config.tar` built by the config-builder at the root.
-4. Insert and boot — the idle screen offers **Import config from SD**.
+2. Drop the `config.tar` built by the config-builder at the root.
+3. Insert and boot — the idle screen offers **Import config from SD**.
 
 A complete sample tree is in [`sd_card_example/`](sd_card_example/).
+
+### With no computer to hand
+
+A card with no `config.json` at all leaves the device locked with no way in —
+unlocking needs a professor, and the WiFi file manager that would receive a
+`config.tar` sits behind the unlock gate. For that case only, the idle screen
+offers **Set up this device**: create one professor with a numeric password
+(`config_create_first_teacher()`), unlock with it, then upload and import a
+`config.tar` from the device itself. That account has no email, so it sees every
+class, and it is replaced by the first import.
+
+Offered **only** when `config.json` is absent. A config that exists but fails to
+parse has to be repaired — the device will not replace it.

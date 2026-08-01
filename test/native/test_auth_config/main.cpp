@@ -352,6 +352,70 @@ static void test_validate_tree_reports_missing_config(void) {
     TEST_ASSERT_NOT_NULL(strstr(msg, "not found"));
 }
 
+// --- config_create_first_teacher (blank-card bootstrap) ---------------------
+// The idle gate offers this only when config.json is absent; the guard inside
+// the service is what actually enforces it. These run self-contained (own
+// mocksd_reset) and chain in pairs.
+
+static void test_first_teacher_bootstraps_blank_card(void) {
+    mocksd_reset();  // empty card: mounts, but no config.json
+    config_service_start();
+    TEST_ASSERT_EQUAL(CONFIG_NO_FILE, config_get_status());
+
+    config_result_t r = config_create_first_teacher("Prof Setup", "4321");
+    TEST_ASSERT_TRUE(r.ok);
+
+    // Written, reloaded, and immediately usable to unlock the device.
+    TEST_ASSERT_TRUE(mocksd_exists("/config.json"));
+    TEST_ASSERT_EQUAL(CONFIG_OK, config_get_status());
+    teacher_t who = {};
+    TEST_ASSERT_TRUE(auth_lookup_password("4321", &who));
+    TEST_ASSERT_EQUAL_STRING("Prof Setup", who.name);
+    // No email: a setup account sees every class (roster_class_matches_teacher).
+    TEST_ASSERT_EQUAL_STRING("", who.email);
+}
+
+static void test_first_teacher_refused_when_config_exists(void) {
+    // Chains from the test above: the card now holds a valid config.
+    TEST_ASSERT_EQUAL(CONFIG_OK, config_get_status());
+
+    config_result_t r = config_create_first_teacher("Intruder", "1111");
+    TEST_ASSERT_FALSE(r.ok);
+    TEST_ASSERT_NOT_NULL(strstr(r.message, "already has a configuration"));
+
+    // Nothing overwritten: the bootstrap professor is still the only one.
+    TEST_ASSERT_FALSE(auth_lookup_password("1111", nullptr));
+    TEST_ASSERT_TRUE(auth_lookup_password("4321", nullptr));
+}
+
+static void test_first_teacher_rejects_bad_input(void) {
+    mocksd_reset();
+    config_service_start();
+    TEST_ASSERT_EQUAL(CONFIG_NO_FILE, config_get_status());
+
+    TEST_ASSERT_FALSE(config_create_first_teacher("", "1234").ok);          // no name
+    TEST_ASSERT_FALSE(config_create_first_teacher("Prof A", "").ok);        // no password
+    TEST_ASSERT_FALSE(config_create_first_teacher("Prof A", "12ab").ok);    // not digits
+    TEST_ASSERT_FALSE(config_create_first_teacher(nullptr, nullptr).ok);    // null-safe
+
+    // Every rejection is total: nothing written, the card still needs setup.
+    TEST_ASSERT_FALSE(mocksd_exists("/config.json"));
+    TEST_ASSERT_EQUAL(CONFIG_NO_FILE, config_get_status());
+}
+
+// A config.json that exists but does not parse must be repaired, never silently
+// replaced — otherwise the bootstrap becomes a way to discard a real config.
+static void test_first_teacher_refused_on_broken_config(void) {
+    mocksd_reset();
+    mocksd_add_file("/config.json", "{ not json");
+    config_service_start();
+    TEST_ASSERT_EQUAL(CONFIG_BAD_JSON, config_get_status());
+
+    config_result_t r = config_create_first_teacher("Prof A", "1234");
+    TEST_ASSERT_FALSE(r.ok);
+    TEST_ASSERT_EQUAL(CONFIG_BAD_JSON, config_get_status());
+}
+
 int main(int, char**) {
     // Park the services' background retry loops far beyond the test run.
     mock_freertos_set_delay_scale(1000);
@@ -379,6 +443,10 @@ int main(int, char**) {
     RUN_TEST(test_set_rfid_rejects_student_card);    // self-contained (own config + roster)
     RUN_TEST(test_validate_tree_accepts_good_staging);          // loads its own live + staging
     RUN_TEST(test_validate_tree_rejects_bad_staging_leaving_live_intact);  // chains from above
-    RUN_TEST(test_validate_tree_reports_missing_config);        // chains from above
+    RUN_TEST(test_validate_tree_reports_missing_config);
+    RUN_TEST(test_first_teacher_bootstraps_blank_card);   // self-contained (blank card)
+    RUN_TEST(test_first_teacher_refused_when_config_exists);  // chains from above
+    RUN_TEST(test_first_teacher_rejects_bad_input);
+    RUN_TEST(test_first_teacher_refused_on_broken_config);        // chains from above
     return UNITY_END();
 }

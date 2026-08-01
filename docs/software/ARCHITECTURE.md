@@ -210,6 +210,18 @@ the stack and the P4↔C6 link, so its memory is gone until a reboot. Three plac
 log the pool so this stays measurable — `main.cpp` at boot, `wifi_ap` around
 start/stop, and `face_detection_service` around the model load.
 
+**Task stacks are the other way to run out.** A service task gets a few KB, and
+two things eat it fast: a `device_config_t`/roster struct copied onto the stack
+(~1.5 KB each) and newlib's `vfprintf`, whose frame is **1152 bytes** — so any
+`ESP_LOG*` or `snprintf` on a deep path costs more than a kilobyte. That
+combination overflowed the 5 KB `config` task on every boot with no `config.json`
+(a *stack-protection panic*, which reports a task and an address but no message):
+`load_config` and `parse_config_file` each held a `device_config_t`, and the
+failure path logged from the bottom of both. `load_config` now heap-allocates
+its copy. When a task is near its limit, prefer moving big structs to the heap
+over growing the stack — internal RAM is the scarce pool. `config_task` logs its
+own high-water mark once, which is how to size it rather than guess.
+
 **PSRAM — 32 MB**, comfortable. Draw buffers, the LVGL heap, camera preview
 buffers, decoded avatars (20 KB each). Nothing here has been close to the limit.
 

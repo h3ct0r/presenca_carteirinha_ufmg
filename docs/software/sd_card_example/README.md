@@ -12,10 +12,11 @@ screen if a file is missing or malformed.
 /classes/
     <CLASS-CODE>/
         class.json              class metadata + roster (university ids)
-/models/                        ESP-DL face-detection models (only needed if the
-    human_face_detect_msr_s8_v1.espdl   camera / face detection feature is used)
-    human_face_detect_mnp_s8_v1.espdl
 ```
+
+The face-detection models are **not** here any more: they ship in the firmware.
+The sources live in [`models/`](../../../models/) and are only copied to a card to
+override the built-in copy — see [FACE_DETECTION.md](../FACE_DETECTION.md).
 
 These are the files you author. The device creates everything else itself —
 attendance logs, check-in photos, CSV exports, backups — and an import never

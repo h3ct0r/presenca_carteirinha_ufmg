@@ -1,28 +1,53 @@
 #include "human_face_detect.hpp"
 #include <filesystem>
+#include <sys/stat.h>
 
 #if CONFIG_HUMAN_FACE_DETECT_MODEL_IN_FLASH_RODATA
 extern const uint8_t human_face_detect_espdl[] asm("_binary_human_face_detect_espdl_start");
 static const char *path = (const char *)human_face_detect_espdl;
 #elif CONFIG_HUMAN_FACE_DETECT_MODEL_IN_FLASH_PARTITION
 static const char *path = "human_face_det";
-#else
+#endif
+
 #if !defined(CONFIG_BSP_SD_MOUNT_POINT)
 #define CONFIG_BSP_SD_MOUNT_POINT "/sdcard"
 #endif
-#endif
-namespace human_face_detect {
 
-MSR::MSR(const char *model_name, float score_thr, float nms_thr)
+// ---------------------------------------------------------------------------
+// LOCAL DELTA from upstream esp-dl (see docs/software/FACE_DETECTION.md).
+//
+// Upstream picks the model location at COMPILE time, so a build configured for
+// the flash partition can never read a model off the SD card. This project ships
+// the models in the `human_face_det` partition (so a freshly flashed device
+// works with a blank card) but still wants a card-dropped .espdl to win, as an
+// escape hatch for testing a different model without reflashing.
+//
+// make_model() keeps both: it stats the SD path first and falls back to the
+// compile-time location. Re-apply this on the next esp-dl bump.
+// ---------------------------------------------------------------------------
+static dl::Model *make_model(const char *model_name)
 {
 #if !CONFIG_HUMAN_FACE_DETECT_MODEL_IN_SDCARD
-    m_model = new dl::Model(
+    auto sd_path =
+        std::filesystem::path(CONFIG_BSP_SD_MOUNT_POINT) / CONFIG_HUMAN_FACE_DETECT_MODEL_SDCARD_DIR / model_name;
+    struct stat st;
+    if (stat(sd_path.c_str(), &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0) {
+        return new dl::Model(sd_path.c_str(), fbs::MODEL_LOCATION_IN_SDCARD);
+    }
+    return new dl::Model(
         path, model_name, static_cast<fbs::model_location_type_t>(CONFIG_HUMAN_FACE_DETECT_MODEL_LOCATION));
 #else
     auto sd_path =
         std::filesystem::path(CONFIG_BSP_SD_MOUNT_POINT) / CONFIG_HUMAN_FACE_DETECT_MODEL_SDCARD_DIR / model_name;
-    m_model = new dl::Model(sd_path.c_str(), fbs::MODEL_LOCATION_IN_SDCARD);
+    return new dl::Model(sd_path.c_str(), fbs::MODEL_LOCATION_IN_SDCARD);
 #endif
+}
+
+namespace human_face_detect {
+
+MSR::MSR(const char *model_name, float score_thr, float nms_thr)
+{
+    m_model = make_model(model_name);  // local delta: SD override, else compile-time location
     m_model->minimize();
     m_image_preprocessor = new dl::image::ImagePreprocessor(m_model, {0, 0, 0}, {1, 1, 1}, true);
     m_postprocessor =
@@ -36,14 +61,7 @@ MSR::MSR(const char *model_name, float score_thr, float nms_thr)
 
 MNP::MNP(const char *model_name, float score_thr, float nms_thr)
 {
-#if !CONFIG_HUMAN_FACE_DETECT_MODEL_IN_SDCARD
-    m_model = new dl::Model(
-        path, model_name, static_cast<fbs::model_location_type_t>(CONFIG_HUMAN_FACE_DETECT_MODEL_LOCATION));
-#else
-    auto sd_path =
-        std::filesystem::path(CONFIG_BSP_SD_MOUNT_POINT) / CONFIG_HUMAN_FACE_DETECT_MODEL_SDCARD_DIR / model_name;
-    m_model = new dl::Model(sd_path.c_str(), fbs::MODEL_LOCATION_IN_SDCARD);
-#endif
+    m_model = make_model(model_name);  // local delta: SD override, else compile-time location
     m_model->minimize();
     m_image_preprocessor = new dl::image::ImagePreprocessor(m_model, {0, 0, 0}, {1, 1, 1}, true);
     m_postprocessor = new dl::detect::MNPPostprocessor(
@@ -150,14 +168,7 @@ dl::Model *MSRMNP::get_raw_model(int idx)
 
 ESPDet::ESPDet(const char *model_name, float score_thr, float nms_thr)
 {
-#if !CONFIG_HUMAN_FACE_DETECT_MODEL_IN_SDCARD
-    m_model = new dl::Model(
-        path, model_name, static_cast<fbs::model_location_type_t>(CONFIG_HUMAN_FACE_DETECT_MODEL_LOCATION));
-#else
-    auto sd_path =
-        std::filesystem::path(CONFIG_BSP_SD_MOUNT_POINT) / CONFIG_HUMAN_FACE_DETECT_MODEL_SDCARD_DIR / model_name;
-    m_model = new dl::Model(sd_path.c_str(), fbs::MODEL_LOCATION_IN_SDCARD);
-#endif
+    m_model = make_model(model_name);  // local delta: SD override, else compile-time location
     m_model->minimize();
     m_image_preprocessor = new dl::image::ImagePreprocessor(m_model, {0, 0, 0}, {255, 255, 255});
     m_image_preprocessor->enable_letterbox({114, 114, 114});
