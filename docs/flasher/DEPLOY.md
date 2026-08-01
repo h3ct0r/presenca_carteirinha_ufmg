@@ -7,18 +7,20 @@ Static page on GitHub Pages. Firmware binaries come from **GitHub Releases**
 
 1. Repository should be **public** (`verlab/presenca_carteirinha_ufmg`).
 2. **Settings → Pages → Source: GitHub Actions** (no `gh-pages` branch).
-3. URL after first deploy:
-   **https://verlab.github.io/presenca_carteirinha_ufmg/**
+3. Site URLs after deploy:
+   - Hub: **https://verlab.github.io/presenca_carteirinha_ufmg/**
+   - Firmware (this app): **…/firmware/**
+   - Config builder: **…/config/**
 
 ## How downloads work
 
 Browsers cannot `fetch()` release files directly from `github.com` (CORS). The
-**Deploy flasher** workflow copies each release `.bin` into `bins/` on the Pages
-site at build time. The installer then downloads from the same origin
+**Deploy site** workflow copies each release `.bin` into `firmware/bins/` on the
+Pages site at build time. The installer then downloads from the same origin
 (`./bins/rfid-attendance-<tag>-firmware.bin`).
 
 After a new `v*` tag, Pages redeploys when the **Release** workflow finishes (or
-on push to `main`). Manual: **Actions → Deploy flasher → Run workflow**.
+on push to `main`). Manual: **Actions → Deploy site → Run workflow**.
 
 ## Browser requirements
 

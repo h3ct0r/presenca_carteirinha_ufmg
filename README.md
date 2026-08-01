@@ -30,9 +30,10 @@ the device → picks a class → opens a dated attendance session → takes roll
 (tap cards / tap names), enrolls students, or starts an unattended kiosk for
 students to self-check-in. Attendance exports to CSV.
 
-Classes and students are authored on a laptop with
-[`tools/config-builder/`](tools/config-builder/) and imported as a `config.tar`;
-the device never needs a keyboard for data entry.
+Classes and students are authored in the browser
+[**Config builder**](https://verlab.github.io/presenca_carteirinha_ufmg/config/)
+(source: [`tools/config-builder/`](tools/config-builder/)) and imported as a
+`config.tar`; the device never needs a keyboard for data entry.
 
 ## Hardware
 
@@ -50,13 +51,18 @@ are in [`docs/hardware/`](docs/hardware/).
   on battery it must be pressed to boot.
 - **No RTC:** session dates are chosen with a calendar picker.
 
-## Firmware update (USB)
+## Web tools (GitHub Pages)
 
-Web installer (Chrome / Edge, Web Serial):
 **[verlab.github.io/presenca_carteirinha_ufmg](https://verlab.github.io/presenca_carteirinha_ufmg/)**
 
-Tag `v*` → GitHub Release with `rfid-attendance-<tag>-firmware.bin` → Pages
-syncs the bins for same-origin download. See
+| Tab | URL | What it does |
+|-----|-----|----------------|
+| Config | [/config/](https://verlab.github.io/presenca_carteirinha_ufmg/config/) | Author `config.tar` (teachers, students, classes, photos) |
+| Firmware | [/firmware/](https://verlab.github.io/presenca_carteirinha_ufmg/firmware/) | USB flash (Chrome / Edge, Web Serial) |
+
+Download `config.tar` → place at SD root `/config.tar` (card reader or device
+Wi‑Fi **SD File Manager**) → import on device. Tag `v*` → GitHub Release bins →
+Pages syncs them for the installer. See [`docs/site/`](docs/site/) and
 [`docs/flasher/DEPLOY.md`](docs/flasher/DEPLOY.md).
 
 ## Build & test
@@ -110,14 +116,17 @@ tests against the mocks in `lib/hw_mocks/`). See [`test/README.md`](test/README.
 - [Downloading student photos from Moodle](docs/software/MOODLE_PHOTOS.md)
 - [Generating the custom fonts](docs/software/CUSTOM_FONT_GENERATION.md)
 - [Sample SD card](docs/software/sd_card_example/) — a complete card to copy.
-- [Web firmware installer](docs/flasher/) — browser USB flash (GitHub Pages).
+- [GitHub Pages hub](docs/site/) — Config + Firmware on
+  [verlab.github.io/…](https://verlab.github.io/presenca_carteirinha_ufmg/).
 
 **Tools**
-- [config-builder](tools/config-builder/README.md) — the offline browser tool that
-  authors `config.tar`. Also has a [spec](tools/config-builder/SPEC.md) and
-  [deployment notes](tools/config-builder/DEPLOY.md).
+- [config-builder](tools/config-builder/README.md) — browser tool that authors
+  `config.tar` ([live `/config/`](https://verlab.github.io/presenca_carteirinha_ufmg/config/);
+  [spec](tools/config-builder/SPEC.md), [deploy](tools/config-builder/DEPLOY.md)).
+- [Web firmware installer](docs/flasher/) —
+  [live `/firmware/`](https://verlab.github.io/presenca_carteirinha_ufmg/firmware/).
 - [Serving the builder from the device](docs/software/ONBOARD_CONFIG_BUILDER.md) —
-  designed, not built.
+  designed, not built (Pages hosting does not replace this).
 
 **Contributing**
 - [`CLAUDE.md`](CLAUDE.md) — build/test commands, layer rules, and the conventions

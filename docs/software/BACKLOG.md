@@ -47,13 +47,10 @@ the model's SD read actually needs. The `log_heap()` lines in `wifi_ap` and
 load; one session with the AP up settles whether these are too tight, too loose,
 or right.
 
-**Q4 — `battery_curve.cpp`'s endpoints are unverified.** The comment was wrong
-(it claimed 4.2 V → 3.2 V in 50 mV steps, and this entry previously mis-stated the
-correction as 4.0 V → 2.7 V in 65 mV steps); the table runs **3.75 V → 2.70 V in
-52.5 mV steps** and the comment now says so. What remains open: the ADC divider
-and the 2.70 V cutoff have never been checked against a real discharge, and
-2.70 V is below a LiPo's usual usable floor. The `BATTERY_DRAIN_LOG` build flag
-exists to collect that data.
+**Q4 — battery % vs real discharge.** The curve is linear **4.20 V (100%) → 2.70 V
+(0%)** in 75 mV / 5% steps (pack datasheet range; post-`BAT_CAL_SCALE` volts).
+The ADC divider and the shape under load are still unverified against a real
+discharge — the `BATTERY_DRAIN_LOG` build flag exists to collect that data.
 
 ## Security
 

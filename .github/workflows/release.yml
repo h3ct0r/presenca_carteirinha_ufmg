@@ -97,7 +97,8 @@ jobs:
             echo ""
             OWNER="${GITHUB_REPOSITORY_OWNER}"
             REPO_NAME="${GITHUB_REPOSITORY#*/}"
-            echo "- **Web installer** (Chrome/Edge): https://${OWNER}.github.io/${REPO_NAME}/"
+            echo "- **Web installer** (Chrome/Edge): https://${OWNER}.github.io/${REPO_NAME}/firmware/"
+            echo "- **Config builder**: https://${OWNER}.github.io/${REPO_NAME}/config/"
             echo "- esptool (full flash — app-only is not enough on a stock board):"
             echo '```'
             echo "esptool.py --chip esp32p4 --port /dev/ttyACM0 --before usb_reset \\"

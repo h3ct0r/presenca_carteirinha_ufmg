@@ -72,40 +72,39 @@ static void test_session_clear(void) {
 // ---- battery curve ---------------------------------------------------------
 
 static void test_battery_endpoints(void) {
-    TEST_ASSERT_EQUAL_UINT8(100, battery_mv_to_pct(4300));  // above 4.0 V clamps
-    TEST_ASSERT_EQUAL_UINT8(100, battery_mv_to_pct(4000));
-    TEST_ASSERT_EQUAL_UINT8(0, battery_mv_to_pct(2700));  // 2.7 V is the 0% anchor
-    TEST_ASSERT_EQUAL_UINT8(0, battery_mv_to_pct(2500));  // below clamps
+    TEST_ASSERT_EQUAL_UINT8(100, battery_mv_to_pct(4300));  // above 100% anchor clamps
+    TEST_ASSERT_EQUAL_UINT8(100, battery_mv_to_pct(4200));  // 4.20 V = 100%
+    TEST_ASSERT_EQUAL_UINT8(0, battery_mv_to_pct(2700));    // 2.70 V = 0%
+    TEST_ASSERT_EQUAL_UINT8(0, battery_mv_to_pct(2500));    // below clamps
 }
 
 static void test_battery_table_points(void) {
-    // Linear 2.7 V (0%) .. 3.75 V (100%), anchors every 5% (~52 mV).
-    TEST_ASSERT_EQUAL_UINT8(50, battery_mv_to_pct(3225));  // midpoint anchor
-    TEST_ASSERT_EQUAL_UINT8(75, battery_mv_to_pct(3488));
-    TEST_ASSERT_EQUAL_UINT8(25, battery_mv_to_pct(2963));
-    TEST_ASSERT_EQUAL_UINT8(60, battery_mv_to_pct(3330));
+    // Linear 4.20 V (100%) .. 2.70 V (0%), anchors every 5% (75 mV).
+    TEST_ASSERT_EQUAL_UINT8(50, battery_mv_to_pct(3450));
+    TEST_ASSERT_EQUAL_UINT8(75, battery_mv_to_pct(3825));
+    TEST_ASSERT_EQUAL_UINT8(25, battery_mv_to_pct(3075));
+    TEST_ASSERT_EQUAL_UINT8(60, battery_mv_to_pct(3600));
 }
 
 // The board has no charge-status line, so "charging" is inferred from the rail
-// reading higher than the pack alone can drive it.
+// reading strictly above the 4.20 V full anchor.
 static void test_battery_charging_threshold(void) {
-    TEST_ASSERT_FALSE(battery_is_charging(3990));  // exactly 3.99 V is not yet charging
-    TEST_ASSERT_TRUE(battery_is_charging(3991));
-    TEST_ASSERT_TRUE(battery_is_charging(4200));  // on the charger
+    TEST_ASSERT_FALSE(battery_is_charging(4200));  // exactly full is not charging
+    TEST_ASSERT_TRUE(battery_is_charging(4201));
+    TEST_ASSERT_TRUE(battery_is_charging(4300));   // USB topping
 }
 
 static void test_battery_full_pack_is_not_charging(void) {
-    // A full battery sits at the curve's 100% anchor, well under the threshold:
-    // the icon must not claim to be charging just because the pack is full.
-    TEST_ASSERT_FALSE(battery_is_charging(3750));
+    // A full pack at the 100% anchor must not show the charging icon.
+    TEST_ASSERT_FALSE(battery_is_charging(4200));
     TEST_ASSERT_FALSE(battery_is_charging(3000));
     TEST_ASSERT_FALSE(battery_is_charging(0));
 }
 
 static void test_battery_interpolates_between_points(void) {
-    // 3250 mV is 25/53 of the way from the 50% anchor (3225) to the 55% anchor
-    // (3278): 52.36 -> rounds to 52.
-    TEST_ASSERT_EQUAL_UINT8(52, battery_mv_to_pct(3250));
+    // 3400 mV sits between 3375 (45%) and 3450 (50%):
+    // 25/75 of the span → 45 + 1.67 → rounds to 47.
+    TEST_ASSERT_EQUAL_UINT8(47, battery_mv_to_pct(3400));
 }
 
 static void test_battery_monotonic(void) {

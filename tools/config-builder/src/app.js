@@ -851,11 +851,34 @@ function reviewSection() {
   const ok = errors.length === 0 && hasContent();
 
   const body = ok
-    ? el('div', { class: 'review-ready' }, ['✓ Everything checks out — download the config.tar and upload it to the device.'])
+    ? el('div', { class: 'review-ready' }, [
+        '✓ Everything checks out — download the config.tar, then put it on the device SD card.',
+      ])
     : errors.length
       ? el('ul', { class: 'errors' }, errors.map((e) =>
           el('li', {}, [el('span', { class: 'tag', text: e.scope }), el('span', { text: e.message })])))
       : el('p', { class: 'hint', text: 'Add teachers, students, and classes (or import a Diário) to get started.' });
+
+  const apply = ok
+    ? el('div', { class: 'apply-steps' }, [
+        el('strong', {}, ['Apply to the SD card']),
+        el('ol', {}, [
+          el('li', {}, [
+            'Download ',
+            el('code', {}, ['config.tar']),
+            ' (built only in this browser — nothing is uploaded to the server).',
+          ]),
+          el('li', {}, [
+            'Place it at the SD root as ',
+            el('code', {}, ['/config.tar']),
+            ': card reader, or device Wi‑Fi soft‑AP → Admin → SD File Manager → Upload.',
+          ]),
+          el('li', {}, [
+            'On the device: confirm import on idle, or Admin → Import config.',
+          ]),
+        ]),
+      ])
+    : null;
 
   return el('section', { id: 'review' }, [
     el('h2', {}, ['Review & export', errors.length ? el('span', { class: 'count', text: String(errors.length) }) : null]),
@@ -864,6 +887,7 @@ function reviewSection() {
       el('button', { class: 'primary', text: 'Download config.tar', onclick: downloadTar, disabled: !ok }),
       el('button', { class: 'small', text: 'Save model JSON', onclick: saveModel }),
     ]),
+    apply,
   ]);
 }
 

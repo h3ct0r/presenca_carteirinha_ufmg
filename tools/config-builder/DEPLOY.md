@@ -25,6 +25,16 @@ just the three items above if you want a minimal bundle.
 
 ---
 
+## GitHub Pages (canonical public host)
+
+The **Deploy site** workflow publishes this tool at:
+
+**https://verlab.github.io/presenca_carteirinha_ufmg/config/**
+
+alongside the firmware installer (`/firmware/`) and a small hub at `/`.
+See [`docs/site/README.md`](../../docs/site/README.md). Config still builds
+entirely in the browser — the Pages host only serves static files.
+
 ## Development — `python3 http.server`
 
 From this directory:
@@ -36,6 +46,7 @@ python3 -m http.server 8000
 
 Then open <http://localhost:8000>. Use a server (not `file://`) so the browser
 can `fetch()` the example roster and load the ES modules under the same origin.
+(Site-nav links to `../firmware/` only resolve in the assembled Pages tree.)
 
 ### Cache gotcha while iterating
 
