@@ -103,23 +103,31 @@ a.btn{text-decoration:none}
   </div>
 </div>
 <script>
-let cur='/', editing='', showHidden=false;
+let cur='/', editing='', showHidden=false, edPushed=false;
 const FOLDER='<svg viewBox="0 0 20 20" width="15" height="15" fill="#eab308" style="vertical-align:-2px"><path d="M2 6a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6z"/></svg>';
 const $=id=>document.getElementById(id);
 const esc=s=>encodeURIComponent(s);
 const q=s=>String(s).replace(/'/g,"\\'");
 const join=(d,n)=>d.endsWith('/')?d+n:d+'/'+n;
 const fmt=b=>b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB';
+// Only these open in the editor. An allowlist, not a blocklist: a card holds
+// .jpg/.tar/.espdl, and a textarea round-trip would corrupt any of them, so an
+// unknown (or missing) extension gets Download only.
+const TEXT_EXT=['json','jsonl','csv','tsv','txt','md','log','ini','cfg','conf','xml','yml','yaml','html','htm','js','css','sh'];
+const isText=n=>{const i=n.lastIndexOf('.');return i>0&&TEXT_EXT.includes(n.slice(i+1).toLowerCase());};
 async function load(){
   const d=await (await fetch('/api/list?path='+esc(cur))).json();
-  cur=d.path; $('crumb').textContent=cur;
+  cur=d.path;                       // the server normalizes; keep the URL honest
+  history.replaceState({p:cur},'','#'+encodeURI(cur));
+  crumb();
   const rows=$('rows'); rows.innerHTML='';
   let items=(d.entries||[]);
   if(!showHidden) items=items.filter(e=>!e.name.startsWith('.'));  // dotfiles hidden by default
   items.sort((a,b)=>(b.dir-a.dir)||a.name.localeCompare(b.name)).forEach(e=>{
     const full=join(cur,e.name);
     const nm=e.dir?`<span class="name" onclick="cd('${q(full)}')">${FOLDER} ${e.name}</span>`:e.name;
-    const fileAct=e.dir?'':`<button class="btn btn-slate" onclick="edit('${q(full)}')">Edit</button>
+    const editBtn=isText(e.name)?`<button class="btn btn-slate" onclick="edit('${q(full)}')">Edit</button>`:'';
+    const fileAct=e.dir?'':`${editBtn}
       <a class="btn btn-blue" href="/api/download?path=${esc(full)}">Download</a>`;
     const act=`${fileAct}
       <button class="btn btn-slate" onclick="ren('${q(full)}')">Rename</button>
@@ -129,12 +137,55 @@ async function load(){
     rows.appendChild(tr);
   });
 }
-function cd(p){cur=p;load();}
-function toggleHidden(v){showHidden=v;load();}
-function up(){if(cur==='/')return; cur=cur.replace(/\/[^/]*\/?$/,'')||'/'; load();}
-async function edit(p){$('editarea').value=await (await fetch('/api/read?path='+esc(p))).text();$('editname').textContent=p;editing=p;$('editor').classList.remove('hidden');}
-function closeEd(){$('editor').classList.add('hidden');}
-async function save(){await fetch('/api/save?path='+esc(editing),{method:'POST',body:$('editarea').value});closeEd();load();}
+// Built as DOM nodes, not a template literal: a folder name with a quote or a
+// '<' in it would break markup assembled by string (see q(), used by the rows).
+function crumb(){
+  const c=$('crumb'); c.innerHTML='';
+  const parts=cur.split('/').filter(Boolean);
+  const seg=(label,path,last)=>{
+    const s=document.createElement('span');
+    s.textContent=label;
+    if(last) s.style.color='#e2e8f0';        // the current folder: shown, not a link
+    else{s.className='name';s.addEventListener('click',()=>go(path));}
+    c.appendChild(s);
+  };
+  seg('/','/',parts.length===0);
+  parts.forEach((p,i)=>{
+    if(i) c.appendChild(document.createTextNode('/'));
+    seg(p,'/'+parts.slice(0,i+1).join('/'),i===parts.length-1);
+  });
+}
+// The path lives in the hash, never in the URL path: a reload of /classes/ABC
+// would hit the server's 404 handler.
+const hashPath=()=>{const h=decodeURIComponent(location.hash.slice(1));return h.startsWith('/')?h:'/';};
+function go(p){history.pushState({p},'','#'+encodeURI(p));cur=p;load();}
+function cd(p){go(p);}
+function toggleHidden(v){showHidden=v;load();}   // a filter, not a location
+function up(){if(cur==='/')return; go(cur.replace(/\/[^/]*\/?$/,'')||'/');}
+async function edit(p){
+  if(!isText(p.split('/').pop())){alert('Not a text file - use Download.');return;}
+  $('editarea').value=await (await fetch('/api/read?path='+esc(p))).text();
+  $('editname').textContent=p;editing=p;$('editor').classList.remove('hidden');
+  // One history entry at the same hash, so Back closes the modal instead of
+  // navigating the listing out from under it.
+  if(!edPushed){history.pushState({p:cur,ed:1},'',location.hash);edPushed=true;}
+}
+function hideEd(){edPushed=false;$('editor').classList.add('hidden');}
+function closeEd(){const pop=edPushed;hideEd();if(pop)history.back();}
+window.addEventListener('popstate',e=>{
+  if(editorOpen()){hideEd();return;}
+  const p=(e.state&&e.state.p)||hashPath();
+  if(p!==cur){cur=p;load();}        // unchanged path = the entry closeEd() consumed
+});
+// A failed write leaves the textarea holding the only copy of the edit, so the
+// editor stays open on error - closing it would throw the work away silently.
+async function save(){
+  let r;
+  try{r=await fetch('/api/save?path='+esc(editing),{method:'POST',body:$('editarea').value});}
+  catch(e){alert('Save failed: '+e.message);return;}
+  if(!r.ok){alert('Save failed: '+(await r.text()||r.status));return;}
+  closeEd();load();
+}
 async function post(u){const r=await fetch(u,{method:'POST'});const t=await r.text();if(!r.ok)alert(t);load();return r.ok;}
 async function del(p,isdir){
   const msg=isdir?'Delete the folder '+p+' AND EVERYTHING INSIDE IT?':'Delete '+p+'?';
@@ -210,7 +261,8 @@ document.addEventListener('drop',e=>{
   upload(files,dirs?`Skipped ${dirs} folder(s) — drop files, not folders.`:'');
 });
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeEd();});
-load();
+cur=hashPath(); load();      // load()'s replaceState seeds the first entry
+
 </script>
 </body></html>)HTMLDOC";
 
