@@ -4,10 +4,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "esp32-hal-log.h"
-
 #include "app/session.h"
+#include "app/version.h"
 #include "audio/beeper.h"
+#include "esp32-hal-log.h"
 #include "services/config_service.h"
 #include "services/import_service.h"
 #include "services/roster_service.h"
@@ -20,7 +20,6 @@
 #include "ui/components/progress.h"
 #include "ui/components/shell.h"
 #include "ui/components/toast.h"
-#include "app/version.h"
 #include "ui/screen_manager.h"
 #include "ui/theme/theme.h"
 #include "ui/ui.h"
@@ -41,8 +40,8 @@ static lv_obj_t* s_debug = nullptr;     // debug tools section
 
 // Debug wipe controls. Both buttons are destructive and hidden until the debug
 // toggle is on; the second one takes the whole card, not just the roster data.
-static lv_obj_t* s_wipe_btn = nullptr;      // destructive button, shown only in debug mode
-static lv_obj_t* s_wipe_confirm = nullptr;  // wipe confirmation overlay
+static lv_obj_t* s_wipe_btn = nullptr;           // destructive button, shown only in debug mode
+static lv_obj_t* s_wipe_confirm = nullptr;       // wipe confirmation overlay
 static lv_obj_t* s_card_wipe_btn = nullptr;      // "erase the whole card"
 static lv_obj_t* s_card_wipe_confirm = nullptr;  // its confirmation overlay
 
@@ -329,8 +328,9 @@ static void build_settings(void) {
     ui_make_label(card, "Camera", THEME_PRIMARY, &lv_font_montserrat_20);
 
     lv_obj_t* cap = ui_make_label(
-        card, "Photo check-in (face verify) is configured per class in its settings. Use the "
-              "preview to aim and test the camera.",
+        card,
+        "Photo check-in (face verify) is configured per class in its settings. Use the "
+        "preview to aim and test the camera.",
         THEME_MUTED, &lv_font_montserrat_14);
     lv_label_set_long_mode(cap, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(cap, LV_PCT(100));
@@ -722,10 +722,17 @@ static lv_obj_t* create(void) {
     s_card = ui_make_label(profile, "", THEME_MUTED, &lv_font_montserrat_14);
     ui_label_fit(s_card);
 
+    // Static sign-out button, built once (nothing to rebuild on show).
+    lv_obj_t* sign_out = ui_make_button(sh.body, "Sign Out", &theme_style_btn_danger,
+                                        sign_out_cb, nullptr);
+    lv_obj_set_width(sign_out, LV_PCT(100));
+
     // SD-card usage first, then settings (camera preview), password, then debug
     // tools. Settings sits above password so the "Camera preview" button comes
     // before "Change password".
     s_storage = make_section(sh.body);
+    lv_obj_set_style_margin_top(s_storage, 24, 0);  // separate it from the sections above
+
     s_settings = make_section(sh.body);
     s_security = make_section(sh.body);
     s_rfid = make_section(sh.body);
@@ -745,12 +752,6 @@ static lv_obj_t* create(void) {
                                          &theme_style_btn_outline, about_cb, nullptr);
     lv_obj_set_width(about_btn, LV_PCT(100));
     ui_make_label(about_card, APP_VERSION_FULL, THEME_MUTED, &lv_font_montserrat_14);
-
-    // Static sign-out button, built once (nothing to rebuild on show).
-    lv_obj_t* sign_out = ui_make_button(sh.body, "Sign Out", &theme_style_btn_danger,
-                                        sign_out_cb, nullptr);
-    lv_obj_set_width(sign_out, LV_PCT(100));
-    lv_obj_set_style_margin_top(sign_out, 24, 0);  // separate it from the sections above
 
     return sh.root;
 }
