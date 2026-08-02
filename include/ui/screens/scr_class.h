@@ -15,3 +15,8 @@ extern const screen_t scr_class;
 // class hub. Used when returning from kiosk mode so the professor drops straight
 // back into the running roll call. LVGL thread; call just before scr_mgr_show.
 void scr_class_request_session_view(void);
+
+// Same, for the enroll view: the student registry screen is opened from there
+// and returns into it rather than dropping the professor back on the class hub.
+// LVGL thread; call just before scr_mgr_show.
+void scr_class_request_enroll_view(void);

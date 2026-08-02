@@ -1,5 +1,7 @@
 #include "ui/theme/theme.h"
 
+#include <ctype.h>
+
 #include "audio/beeper.h"
 
 lv_style_t theme_style_card;
@@ -115,8 +117,12 @@ void theme_init(void) {
 
 static void beep_on_click_cb(lv_event_t*) { beeper_touch(); }
 
-void ui_add_press_feedback(lv_obj_t* obj) {
+void ui_add_press_style(lv_obj_t* obj) {
     lv_obj_add_style(obj, &theme_style_pressed, LV_STATE_PRESSED);
+}
+
+void ui_add_press_feedback(lv_obj_t* obj) {
+    ui_add_press_style(obj);
     // Audible tap feedback. Fires on a completed click (not on scroll), and
     // only for objects that opt in here, so the on-screen keyboard's keys —
     // which don't use this helper — stay silent.
@@ -160,6 +166,21 @@ void ui_label_fit(lv_obj_t* label) {
     } else {
         lv_obj_set_width(label, LV_PCT(100));
     }
+}
+
+bool ui_text_contains(const char* hay, const char* needle) {
+    if (!needle || !needle[0]) return true;
+    if (!hay) return false;
+    for (const char* h = hay; *h; h++) {
+        const char* a = h;
+        const char* b = needle;
+        while (*a && *b && tolower((unsigned char)*a) == tolower((unsigned char)*b)) {
+            a++;
+            b++;
+        }
+        if (!*b) return true;
+    }
+    return false;
 }
 
 lv_obj_t* ui_make_button(lv_obj_t* parent, const char* text, lv_style_t* style,

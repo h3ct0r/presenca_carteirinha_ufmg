@@ -642,14 +642,21 @@ static bool persist_student_uid(const char* student_id, const char* fp) {
     return false;
 }
 
-// `fp` as above: a fingerprint, not a card id.
+// `fp` as above: a fingerprint, not a card id. Empty/NULL means "no card yet"
+// and is written as JSON null — the authored form (CONFIG_IMPORT.md 3.2), so a
+// student added without a card is indistinguishable from an imported one and
+// binds on their first tap.
 static bool persist_new_student(const char* id, const char* name, const char* fp) {
     JsonDocument doc;
     if (!read_json_file(STUDENTS_PATH, doc)) return false;
     JsonObject o = doc["students"].add<JsonObject>();
     o["id"] = id;
     o["name"] = name;
-    o["rfid_uid"] = fp;
+    if (fp && fp[0]) {
+        o["rfid_uid"] = fp;
+    } else {
+        o["rfid_uid"] = nullptr;
+    }
     return write_json_file(STUDENTS_PATH, doc);
 }
 
@@ -686,6 +693,34 @@ static void ram_enroll(class_rec_t* cls, int student_idx, const char* turma) {
     }
 }
 
+// Whether this class can take the student. persist_enroll() appends to
+// class.json unconditionally while ram_enroll() silently drops the entry once
+// the cap is reached, so without this check a full class grows a file the next
+// load rejects wholesale ("more than N students in roster") — the class then
+// disappears from the UI. Already-enrolled is room enough: nothing gets added.
+static bool in_class(const class_rec_t* cls, int student_idx) {
+    for (int i = 0; i < cls->roster_count; i++) {
+        if (cls->roster[i] == student_idx) return true;
+    }
+    return false;
+}
+
+static bool class_has_room(const class_rec_t* cls, int student_idx) {
+    return in_class(cls, student_idx) || cls->roster_count < ROSTER_MAX_CLASS_STUDENTS;
+}
+
+// Shared field rules for a new registry student. The load path enforces the
+// same limits (CONFIG_IMPORT.md 3.2); rejecting here beats the snprintf
+// truncation that would otherwise store a DIFFERENT id than the one typed.
+// Returns NULL when the fields are acceptable, else the reason for the toast.
+static const char* new_student_field_error(const char* id, const char* name, const char* turma) {
+    if (!id || !id[0] || !name || !name[0]) return "Name and ID are required";
+    if (strlen(id) >= sizeof(s_students[0].id)) return "ID too long (max 19)";
+    if (strlen(name) >= sizeof(s_students[0].name)) return "Name too long (max 47)";
+    if (turma && strlen(turma) > 15) return "Turma too long (max 15)";  // per CONFIG_IMPORT.md 3.3
+    return nullptr;
+}
+
 static roster_result_t make_result(bool ok, const char* fmt, ...) {
     roster_result_t r = {ok, ""};
     va_list ap;
@@ -720,6 +755,8 @@ roster_result_t roster_enroll_existing(const char* class_code, int student_idx,
             r = make_result(false, "Card belongs to %s", prof);
         } else if (ci < 0) {
             r = make_result(false, "Unknown class");
+        } else if (!class_has_room(&s_classes[ci], student_idx)) {
+            r = make_result(false, "Class roster is full (max %d)", ROSTER_MAX_CLASS_STUDENTS);
         } else if (!persist_student_uid(s_students[student_idx].id, fp)) {
             r = make_result(false, "Could not save students.json");
         } else {
@@ -748,12 +785,11 @@ roster_result_t roster_enroll_new(const char* class_code, const char* id, const 
     int owner = uid_owner(fp, -1);
     char prof[48];
 
+    const char* field_err = new_student_field_error(id, name, turma);
     if (s_status != ROSTER_OK) {
         r = make_result(false, "Student data not loaded");
-    } else if (!id || !id[0] || !name || !name[0]) {
-        r = make_result(false, "Name and ID are required");
-    } else if (turma && strlen(turma) > 15) {  // per CONFIG_IMPORT.md §3.3
-        r = make_result(false, "Turma too long (max 15)");
+    } else if (field_err) {
+        r = make_result(false, "%s", field_err);
     } else if (find_student(id) >= 0) {
         r = make_result(false, "Student %s already exists", id);
     } else if (fp[0] == '\0') {
@@ -766,6 +802,8 @@ roster_result_t roster_enroll_new(const char* class_code, const char* id, const 
         r = make_result(false, "Unknown class");
     } else if (s_student_count >= ROSTER_MAX_STUDENTS) {
         r = make_result(false, "Student registry is full");
+    } else if (s_classes[ci].roster_count >= ROSTER_MAX_CLASS_STUDENTS) {
+        r = make_result(false, "Class roster is full (max %d)", ROSTER_MAX_CLASS_STUDENTS);
     } else if (!persist_new_student(id, name, fp)) {
         r = make_result(false, "Could not save students.json");
     } else {
@@ -773,6 +811,73 @@ roster_result_t roster_enroll_new(const char* class_code, const char* id, const 
         snprintf(s_students[idx].id, sizeof(s_students[idx].id), "%s", id);
         snprintf(s_students[idx].name, sizeof(s_students[idx].name), "%s", name);
         snprintf(s_students[idx].rfid_uid, sizeof(s_students[idx].rfid_uid), "%s", fp);
+        if (!persist_enroll(&s_classes[ci], id, turma)) {
+            r = make_result(false, "Student saved, but class.json failed");
+        } else {
+            ram_enroll(&s_classes[ci], idx, turma);
+            r = make_result(true, "Added %s", name);
+        }
+    }
+    xSemaphoreGive(s_lock);
+    return r;
+}
+
+roster_result_t roster_class_add_existing(const char* class_code, int student_idx,
+                                          const char* turma) {
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    roster_result_t r = {false, ""};
+
+    int ci = roster_class_index(class_code);
+    if (s_status != ROSTER_OK) {
+        r = make_result(false, "Student data not loaded");
+    } else if (student_idx < 0 || student_idx >= s_student_count) {
+        r = make_result(false, "Unknown student");
+    } else if (ci < 0) {
+        r = make_result(false, "Unknown class");
+    } else if (turma && strlen(turma) > 15) {  // per CONFIG_IMPORT.md 3.3
+        r = make_result(false, "Turma too long (max 15)");
+    } else if (!class_has_room(&s_classes[ci], student_idx)) {
+        r = make_result(false, "Class roster is full (max %d)", ROSTER_MAX_CLASS_STUDENTS);
+    } else if (!persist_enroll(&s_classes[ci], s_students[student_idx].id, turma)) {
+        r = make_result(false, "Could not save class.json");
+    } else {
+        // persist_enroll treats already-listed as success without writing, and
+        // ram_enroll is a no-op then too - say so rather than claiming an add.
+        bool already = in_class(&s_classes[ci], student_idx);
+        ram_enroll(&s_classes[ci], student_idx, turma);
+        r = make_result(true, already ? "%s is already in this class" : "Added %s",
+                        s_students[student_idx].name);
+    }
+    xSemaphoreGive(s_lock);
+    return r;
+}
+
+roster_result_t roster_class_add_new(const char* class_code, const char* id, const char* name,
+                                     const char* turma) {
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    roster_result_t r = {false, ""};
+
+    int ci = roster_class_index(class_code);
+    const char* field_err = new_student_field_error(id, name, turma);
+    if (s_status != ROSTER_OK) {
+        r = make_result(false, "Student data not loaded");
+    } else if (field_err) {
+        r = make_result(false, "%s", field_err);
+    } else if (find_student(id) >= 0) {
+        r = make_result(false, "Student %s already exists", id);
+    } else if (ci < 0) {
+        r = make_result(false, "Unknown class");
+    } else if (s_student_count >= ROSTER_MAX_STUDENTS) {
+        r = make_result(false, "Student registry is full");
+    } else if (s_classes[ci].roster_count >= ROSTER_MAX_CLASS_STUDENTS) {
+        r = make_result(false, "Class roster is full (max %d)", ROSTER_MAX_CLASS_STUDENTS);
+    } else if (!persist_new_student(id, name, "")) {  // no card: rfid_uid stays null
+        r = make_result(false, "Could not save students.json");
+    } else {
+        int idx = s_student_count++;
+        snprintf(s_students[idx].id, sizeof(s_students[idx].id), "%s", id);
+        snprintf(s_students[idx].name, sizeof(s_students[idx].name), "%s", name);
+        s_students[idx].rfid_uid[0] = '\0';  // binds on their first tap
         if (!persist_enroll(&s_classes[ci], id, turma)) {
             r = make_result(false, "Student saved, but class.json failed");
         } else {

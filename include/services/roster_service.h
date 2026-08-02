@@ -107,6 +107,24 @@ roster_result_t roster_enroll_existing(const char* class_code, int student_idx,
 roster_result_t roster_enroll_new(const char* class_code, const char* id, const char* name,
                                   const char* uid, const char* turma);
 
+// --- Registry writes, no card involved --------------------------------------
+//
+// The pair above binds a card as it enrolls; these two do not touch rfid_uid at
+// all, for the student registry screen (a late arrival who has no card on them,
+// or one already in the registry via another class). A student added this way is
+// stored exactly like an imported one - "rfid_uid": null - so their card binds
+// itself on the first tap. Call from the LVGL thread.
+
+// Adds an existing registry student to a class roster. Already being in the
+// class is success (nothing is written twice).
+roster_result_t roster_class_add_existing(const char* class_code, int student_idx,
+                                          const char* turma);
+
+// Creates a registry student with no card bound and enrolls them in class_code.
+// Rejects an id/name over the schema limits (19/47) rather than truncating.
+roster_result_t roster_class_add_new(const char* class_code, const char* id, const char* name,
+                                     const char* turma);
+
 // Whether photo check-in is enabled for this class (class.json "capture_photos";
 // a per-class option, there is no device-wide flag). False for a NULL class.
 bool class_capture_enabled(const class_rec_t* cls);

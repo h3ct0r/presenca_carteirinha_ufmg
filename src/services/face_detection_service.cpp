@@ -43,6 +43,7 @@ static void log_heap(const char* when) {
 #define CAM_W ov02c10_camera::WIDTH
 #define CAM_H ov02c10_camera::HEIGHT
 #define PREVIEW_BYTES (FACE_PREVIEW_W * FACE_PREVIEW_H * 2)
+#define SNAPSHOT_BYTES ((size_t)SNAPSHOT_W * SNAPSHOT_H * 2)
 
 // The models ship in a flash partition (tools/build/pack_models.py builds its
 // image), so a freshly flashed device detects faces with nothing on the card.
@@ -76,6 +77,9 @@ static bool s_running = false;
 // stream off, and start resumes it. Avoids the risky deinit/re-bring-up path.
 static volatile bool s_paused = false;
 static volatile bool s_capture_req = false;
+// Scaled snapshot handed to photo_store; allocated on the first capture and
+// reused. Owned by the detection task only.
+static uint8_t* s_snap = nullptr;
 // Set by the detection task once it knows the model is not coming. Stays false
 // while loading, so callers can't mistake "still loading" for "never".
 static volatile bool s_model_unavailable = false;
@@ -87,8 +91,10 @@ static void set_status(const char* s) {
     xSemaphoreGive(s_st.lock);
 }
 
-// Hardware downscale full-res RGB565 -> preview RGB565 via the PPA engine.
-static bool downscale(ppa_client_handle_t ppa, const uint8_t* src, uint8_t* dst) {
+// Hardware downscale full-res RGB565 -> out_w x out_h RGB565 via the PPA engine.
+// Used for both the detection preview and the saved snapshot.
+static bool downscale(ppa_client_handle_t ppa, const uint8_t* src, uint8_t* dst, int out_w,
+                      int out_h) {
     ppa_srm_oper_config_t op = {};
     op.in.buffer = src;
     op.in.pic_w = CAM_W;
@@ -97,13 +103,13 @@ static bool downscale(ppa_client_handle_t ppa, const uint8_t* src, uint8_t* dst)
     op.in.block_h = CAM_H;
     op.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
     op.out.buffer = dst;
-    op.out.buffer_size = PREVIEW_BYTES;
-    op.out.pic_w = FACE_PREVIEW_W;
-    op.out.pic_h = FACE_PREVIEW_H;
+    op.out.buffer_size = (uint32_t)out_w * out_h * 2;
+    op.out.pic_w = out_w;
+    op.out.pic_h = out_h;
     op.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
     op.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
-    op.scale_x = (float)FACE_PREVIEW_W / CAM_W;
-    op.scale_y = (float)FACE_PREVIEW_H / CAM_H;
+    op.scale_x = (float)out_w / CAM_W;
+    op.scale_y = (float)out_h / CAM_H;
     op.mode = PPA_TRANS_MODE_BLOCKING;
     return ppa_do_scale_rotate_mirror(ppa, &op) == ESP_OK;
 }
@@ -350,14 +356,28 @@ static void detection_task(void*) {
             continue;
         }
 
-        // Snapshot: hand the full-res frame to the SD writer (it copies).
+        // Snapshot: PPA-scale to SNAPSHOT_W x H and hand that to the SD writer
+        // (it copies during the call, so the buffer is free again next frame).
+        // Allocated on the first capture, not at start-up — a session that never
+        // takes a picture should not hold the megabyte.
         if (s_capture_req) {
             s_capture_req = false;
-            photo_store_capture(frame, CAM_W, CAM_H);
+            if (!s_snap) {
+                // 128, like the preview buffers: this is a PPA DMA destination.
+                s_snap = (uint8_t*)heap_caps_aligned_calloc(128, 1, SNAPSHOT_BYTES,
+                                                            MALLOC_CAP_SPIRAM);
+            }
+            if (s_snap && downscale(ppa, frame, s_snap, SNAPSHOT_W, SNAPSHOT_H)) {
+                photo_store_capture(s_snap, SNAPSHOT_W, SNAPSHOT_H);
+            } else {
+                // Losing the shot is worse than saving it oversized.
+                ESP_LOGW(TAG, "snapshot scale unavailable, saving full-res");
+                photo_store_capture(frame, CAM_W, CAM_H);
+            }
         }
 
         uint8_t* dst = s_st.preview[write_idx];
-        if (!downscale(ppa, frame, dst)) {
+        if (!downscale(ppa, frame, dst, FACE_PREVIEW_W, FACE_PREVIEW_H)) {
             set_status("PPA scale failed");
             continue;
         }

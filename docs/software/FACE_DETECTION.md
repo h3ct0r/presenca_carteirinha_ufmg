@@ -23,6 +23,8 @@ face-verified kiosk check-in described in [FACE_CHECKIN.md](FACE_CHECKIN.md).
 ```
 OV02C10 ──CSI──▶ ISP ──▶ csi_pipeline_get_frame()  (full-res RGB565, on the detection task)
                               │
+                              ├─ [capture requested] PPA 1920x1080 → 960x540 ──▶ photo_store
+                              │
                      PPA downscale 1920x1080 → 480x270
                               │
                      AutoExposure.update()  (nudges sensor + ISP)
@@ -165,7 +167,11 @@ Working on hardware, including detection.
   not stop it on exit, so streaming and inference keep running. `face_detection_stop()`
   exists and the kiosk does pause/resume around verification; the camera screen
   could do the same to save battery.
-- **Snapshots** go to `/photos/IMG_nnnn.jpg` via `photo_store` (P4 hardware JPEG
-  encoder, ~300–500 KB at 1080p; uncompressed `.bmp` only if the JPEG engine is
-  unavailable). These are the manual "Take picture" snapshots and are distinct
-  from check-in evidence photos — see [SD_CARD.md](SD_CARD.md).
+- **Snapshots** go to `/photos/IMG_nnnn.jpg` via `photo_store`, PPA-scaled to
+  `SNAPSHOT_W`x`SNAPSHOT_H` (960x540 — half the sensor in each axis, so a clean
+  2:1 and the same 16:9 framing) and then hardware-JPEG encoded: ~100–150 KB,
+  with the uncompressed `.bmp` fallback ~1.5 MB if the JPEG engine is
+  unavailable. `photo_store` writes whatever size it is handed; the scaling
+  decision lives here, in the detection task. These are the manual "Take
+  picture" snapshots and are distinct from check-in evidence photos — see
+  [SD_CARD.md](SD_CARD.md).

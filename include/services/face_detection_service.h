@@ -19,6 +19,14 @@ constexpr int FACE_PREVIEW_W = 480;
 constexpr int FACE_PREVIEW_H = 270;
 constexpr int FACE_MAX_BOXES = 5;
 
+// Saved size of a "Take picture" snapshot. Exactly half the sensor's 1920x1080
+// in each axis, so the PPA scale is a clean 2:1 and the 16:9 framing is
+// unchanged. Quarter the pixels of the full-res frame it replaces: a JPEG lands
+// around 100-150 KB instead of 300-500, and the .bmp fallback 1.5 MB instead
+// of 6.
+constexpr int SNAPSHOT_W = 960;
+constexpr int SNAPSHOT_H = 540;
+
 typedef struct {
     int x, y, w, h;  // in preview pixels (FACE_PREVIEW_W x FACE_PREVIEW_H)
     float score;
@@ -60,6 +68,6 @@ void face_detection_status(char* out, size_t cap);
 // SD models are found. Thread-safe.
 void face_detection_model_info(char* out, size_t cap);
 
-// Requests that the next full-resolution frame be saved (via photo_store).
-// Picked up by the detection task; returns immediately.
+// Requests that the next frame be saved, scaled to SNAPSHOT_W x SNAPSHOT_H
+// (via photo_store). Picked up by the detection task; returns immediately.
 void face_detection_request_capture(void);

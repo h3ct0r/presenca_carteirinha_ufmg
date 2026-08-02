@@ -22,6 +22,9 @@ static constexpr int LCD_BYTES_PER_PIXEL = 2;  // RGB565
 static constexpr uint32_t TOUCH_READ_PERIOD_MS = 10;
 // Scroll momentum decay, percent lost per throw step (LVGL default 10).
 static constexpr uint8_t SCROLL_THROW_PCT = 20;
+// Finger travel that turns a press into a scroll instead of a tap (LVGL default
+// 10 px). See the note in lvgl_port_init() — this is the tap-tolerance knob.
+static constexpr uint8_t SCROLL_LIMIT_PX = 24;
 
 // The drivers are owned by the caller; we keep references only so the LVGL
 // callbacks (which carry no user context of their own) can reach them.
@@ -105,4 +108,15 @@ void lvgl_port_init(st7701_lcd& lcd, gt911_touch& touch) {
     // it is tied to the refresh period: changing LV_DEF_REFR_PERIOD changes how
     // long the glide lasts in wall time.
     lv_indev_set_scroll_throw(indev, SCROLL_THROW_PCT);
+
+    // How far the finger may travel before the press is claimed by a scroller.
+    // Once it is, LVGL sends no LV_EVENT_CLICKED at all, so a tap that drifts
+    // past this is silently lost — and the stock 10 px is ~1 mm on this panel,
+    // with an unfiltered GT911 stream that easily wanders that far while the
+    // contact settles. 24 px is about the slop a phone allows and a third of a
+    // roll-call chip's height. The cost is a slightly longer drag before
+    // scrolling engages; there is no jump when it does, because LVGL subtracts
+    // the limit from the first applied delta. This is the knob to lower again if
+    // scrolling ever feels sticky.
+    lv_indev_set_scroll_limit(indev, SCROLL_LIMIT_PX);
 }

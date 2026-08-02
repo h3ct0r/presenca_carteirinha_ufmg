@@ -84,6 +84,12 @@ lv_obj_t* ui_make_button(lv_obj_t* parent, const char* text, lv_style_t* style,
 // already fit don't need it.
 void ui_label_fit(lv_obj_t* label);
 
+// Case-insensitive substring test, the rule behind every "search by name or ID"
+// box (the enroll search and the student registry). Shared so the two screens
+// cannot drift into filtering the same list differently. An empty needle
+// matches everything, which is what an empty search box should do.
+bool ui_text_contains(const char* hay, const char* needle);
+
 // Adds the standard press feedback (darken + dim on LV_STATE_PRESSED) AND the
 // click beep to any clickable object. ui_make_button() already calls this; use
 // it for other actionable items (cards, chips, rows) so feedback stays
@@ -94,4 +100,9 @@ void ui_label_fit(lv_obj_t* label);
 // result overlays — and flashing those on a stray tap looks broken. The
 // keyboard's silence also depends on the coupling: its keys don't call this.
 void ui_add_press_feedback(lv_obj_t* obj);
+
+// The visual half alone, for the rare control that plays its OWN sound and
+// would otherwise emit two: the roll-call chips, whose tone says whether the
+// student was marked present or un-marked, not merely that a chip was touched.
+void ui_add_press_style(lv_obj_t* obj);
 lv_obj_t* ui_make_card(lv_obj_t* parent);  // surface card, 100% wide, auto height

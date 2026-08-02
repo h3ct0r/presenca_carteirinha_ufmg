@@ -368,6 +368,178 @@ static void test_enroll_new_rejects_existing_id(void) {
     TEST_ASSERT_NOT_NULL(strstr(r.message, "already exists"));
 }
 
+// --- registry writes with no card (the student registry screen) -------------
+
+static void test_class_add_existing_without_card(void) {
+    setup_valid();
+    int lucas = find_idx("2024-0021");  // in the registry, not in CS101's roster
+    TEST_ASSERT_TRUE(lucas >= 0);
+    int ci = roster_class_index("CS101-M1");
+    int before = roster_class_at(ci)->roster_count;
+    char students_before[2048];
+    read_card("/students/students.json", students_before, sizeof(students_before));
+
+    roster_result_t r = roster_class_add_existing("CS101-M1", lucas, nullptr);
+    TEST_ASSERT_TRUE(r.ok);
+    TEST_ASSERT_NOT_NULL(strstr(r.message, "Lucas Ferreira"));
+    TEST_ASSERT_EQUAL_INT(before + 1, roster_class_at(ci)->roster_count);
+    // The card is untouched: still unbound, and students.json is byte-identical.
+    TEST_ASSERT_EQUAL_STRING("", roster_student_at(lucas)->rfid_uid);
+    char students_after[2048];
+    read_card("/students/students.json", students_after, sizeof(students_after));
+    TEST_ASSERT_EQUAL_STRING(students_before, students_after);
+
+    char buf[2048];
+    read_card("/classes/CS101-M1/class.json", buf, sizeof(buf));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "2024-0021"));
+}
+
+static void test_class_add_existing_twice_is_a_noop(void) {
+    setup_valid();
+    int maria = find_idx("2023-0142");  // already in CS101's roster
+    int ci = roster_class_index("CS101-M1");
+    int before = roster_class_at(ci)->roster_count;
+
+    roster_result_t r = roster_class_add_existing("CS101-M1", maria, nullptr);
+    TEST_ASSERT_TRUE(r.ok);  // success, but it says nothing was added
+    TEST_ASSERT_NOT_NULL(strstr(r.message, "already in this class"));
+    TEST_ASSERT_EQUAL_INT(before, roster_class_at(ci)->roster_count);
+
+    // And the id appears exactly once in the file.
+    char buf[2048];
+    read_card("/classes/CS101-M1/class.json", buf, sizeof(buf));
+    const char* first = strstr(buf, "2023-0142");
+    TEST_ASSERT_NOT_NULL(first);
+    TEST_ASSERT_NULL(strstr(first + 1, "2023-0142"));
+}
+
+// The point of the no-card path: the student is stored exactly like an imported
+// one ("rfid_uid": null) and their card binds itself on the first tap.
+static void test_class_add_new_without_card_binds_on_first_tap(void) {
+    setup_valid();
+    int before_students = roster_student_count();
+    int ci = roster_class_index("CS101-M1");
+    int before_roster = roster_class_at(ci)->roster_count;
+
+    roster_result_t r = roster_class_add_new("CS101-M1", "2025-0601", "Ana Prado", "TE4");
+    TEST_ASSERT_TRUE(r.ok);
+    TEST_ASSERT_EQUAL_INT(before_students + 1, roster_student_count());
+    TEST_ASSERT_EQUAL_INT(before_roster + 1, roster_class_at(ci)->roster_count);
+
+    char buf[2048];
+    read_card("/students/students.json", buf, sizeof(buf));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "2025-0601"));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"rfid_uid\": null"));
+    read_card("/classes/CS101-M1/class.json", buf, sizeof(buf));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "TE4"));
+
+    // Survives a reload as an unbound student...
+    roster_service_start();
+    TEST_ASSERT_EQUAL(ROSTER_OK, roster_get_status());
+    int idx = find_idx("2025-0601");
+    TEST_ASSERT_TRUE(idx >= 0);
+    TEST_ASSERT_EQUAL_STRING("", roster_student_at(idx)->rfid_uid);
+
+    // ...and the first tap binds the card to them.
+    TEST_ASSERT_TRUE(roster_enroll_existing("CS101-M1", idx, "11:22:33:44").ok);
+    char owner[48];
+    TEST_ASSERT_TRUE(roster_uid_belongs_to_student("11-22-33-44", owner, sizeof(owner)));
+    TEST_ASSERT_EQUAL_STRING("Ana Prado", owner);
+}
+
+static void test_class_add_new_rejects_bad_fields(void) {
+    setup_valid();
+    int before = roster_student_count();
+
+    roster_result_t r = roster_class_add_new("CS101-M1", "2023-0142", "Dup", nullptr);
+    TEST_ASSERT_FALSE(r.ok);
+    TEST_ASSERT_NOT_NULL(strstr(r.message, "already exists"));
+
+    r = roster_class_add_new("CS101-M1", "", "No Id", nullptr);
+    TEST_ASSERT_FALSE(r.ok);
+    TEST_ASSERT_NOT_NULL(strstr(r.message, "required"));
+
+    // Over-length is REJECTED, not truncated: a truncated id is a different
+    // student, silently.
+    r = roster_class_add_new("CS101-M1", "2025-0000-0000-0000-0000", "Long Id", nullptr);
+    TEST_ASSERT_FALSE(r.ok);
+    TEST_ASSERT_NOT_NULL(strstr(r.message, "ID too long"));
+
+    char long_name[80];
+    memset(long_name, 'A', sizeof(long_name) - 1);
+    long_name[sizeof(long_name) - 1] = '\0';
+    r = roster_class_add_new("CS101-M1", "2025-0602", long_name, nullptr);
+    TEST_ASSERT_FALSE(r.ok);
+    TEST_ASSERT_NOT_NULL(strstr(r.message, "Name too long"));
+
+    r = roster_class_add_new("CS101-M1", "2025-0603", "Long Turma", "THIS-TURMA-IS-TOO-LONG");
+    TEST_ASSERT_FALSE(r.ok);
+    TEST_ASSERT_NOT_NULL(strstr(r.message, "Turma"));
+
+    r = roster_class_add_new("NOPE-M9", "2025-0604", "No Class", nullptr);
+    TEST_ASSERT_FALSE(r.ok);
+    TEST_ASSERT_NOT_NULL(strstr(r.message, "Unknown class"));
+
+    TEST_ASSERT_EQUAL_INT(before, roster_student_count());  // nothing was written
+}
+
+// A full class must be refused by EVERY add path. persist_enroll() would
+// otherwise append to class.json while ram_enroll() dropped the entry, and the
+// next load would reject the oversized roster and skip the whole class.
+static void test_add_to_full_class_is_refused(void) {
+    char students[40960];
+    char cls[40960];
+    int sn = snprintf(students, sizeof(students), "{ \"version\": 1, \"students\": [");
+    int cn = snprintf(cls, sizeof(cls),
+                      "{ \"version\": 1, \"code\": \"FULL-M1\", \"name\": \"Full\","
+                      " \"teacher_emails\": [\"h@x.edu\"], \"roster\": [");
+    for (int i = 0; i < ROSTER_MAX_CLASS_STUDENTS; i++) {
+        sn += snprintf(students + sn, sizeof(students) - sn,
+                       "%s{ \"id\": \"F%03d\", \"name\": \"Full Student %03d\" }", i ? "," : "", i,
+                       i);
+        cn += snprintf(cls + cn, sizeof(cls) - cn, "%s{ \"id\": \"F%03d\" }", i ? "," : "", i);
+    }
+    // One spare student in the registry who is NOT in the class.
+    snprintf(students + sn, sizeof(students) - sn,
+             ", { \"id\": \"SPARE\", \"name\": \"Spare One\" } ] }");
+    snprintf(cls + cn, sizeof(cls) - cn, "] }");
+
+    mocksd_reset();
+    mocksd_add_file("/students/students.json", students);
+    mocksd_add_file("/classes/FULL-M1/class.json", cls);
+    roster_service_start();
+    TEST_ASSERT_EQUAL(ROSTER_OK, roster_get_status());
+    int ci = roster_class_index("FULL-M1");
+    TEST_ASSERT_EQUAL_INT(ROSTER_MAX_CLASS_STUDENTS, roster_class_at(ci)->roster_count);
+
+    char before[40960];
+    read_card("/classes/FULL-M1/class.json", before, sizeof(before));
+
+    int spare = find_idx("SPARE");
+    roster_result_t r = roster_class_add_existing("FULL-M1", spare, nullptr);
+    TEST_ASSERT_FALSE(r.ok);
+    TEST_ASSERT_NOT_NULL(strstr(r.message, "full"));
+
+    r = roster_class_add_new("FULL-M1", "F999", "Too Many", nullptr);
+    TEST_ASSERT_FALSE(r.ok);
+    TEST_ASSERT_NOT_NULL(strstr(r.message, "full"));
+
+    // The card-tap paths are gated by the same guard.
+    r = roster_enroll_existing("FULL-M1", spare, "AA:BB:CC:99");
+    TEST_ASSERT_FALSE(r.ok);
+    TEST_ASSERT_NOT_NULL(strstr(r.message, "full"));
+
+    r = roster_enroll_new("FULL-M1", "F998", "Too Many Too", "AA:BB:CC:98", nullptr);
+    TEST_ASSERT_FALSE(r.ok);
+    TEST_ASSERT_NOT_NULL(strstr(r.message, "full"));
+
+    // class.json is untouched, so the class still loads.
+    char after[40960];
+    read_card("/classes/FULL-M1/class.json", after, sizeof(after));
+    TEST_ASSERT_EQUAL_STRING(before, after);
+    TEST_ASSERT_NULL(strstr(after, "SPARE"));
+}
+
 // A student must never get a card that belongs to a professor. Loads a config
 // with a teacher card and confirms both enroll paths reject it (formatting
 // differences included). Runs last: it leaves config populated.
@@ -700,6 +872,11 @@ int main(int, char**) {
     RUN_TEST(test_enroll_new_adds_student_and_enrolls);
     RUN_TEST(test_enroll_new_rejects_existing_id);
     RUN_TEST(test_enroll_new_rejects_overlong_turma);
+    RUN_TEST(test_class_add_existing_without_card);
+    RUN_TEST(test_class_add_existing_twice_is_a_noop);
+    RUN_TEST(test_class_add_new_without_card_binds_on_first_tap);
+    RUN_TEST(test_class_add_new_rejects_bad_fields);
+    RUN_TEST(test_add_to_full_class_is_refused);  // self-contained (own fixture)
     RUN_TEST(test_clear_all_uids);
     RUN_TEST(test_clear_all_uids_reports_why_it_failed);
     RUN_TEST(test_authored_card_is_converted_and_still_matches);

@@ -11,6 +11,7 @@ typedef enum : uint8_t {
     SCREEN_CLASSES,      // class list
     SCREEN_CLASS,        // one class: hub -> session / history / enroll
     SCREEN_CLASS_STATS,  // one class: statistics + per-class settings
+    SCREEN_STUDENTS,     // student registry: search everyone, add to a class
     SCREEN_ADMIN,        // admin panel: profile, SD usage, password, debug
     SCREEN_KIOSK,         // unattended student self check-in
     SCREEN_EXPORT,        // per-class CSV attendance export

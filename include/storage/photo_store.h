@@ -10,9 +10,11 @@ bool photo_store_init();
 
 // Snapshots an RGB565 frame to /photos/IMG_nnnn.jpg on the card. Copies the
 // frame and returns immediately; the encode + SD write happen on the writer
-// task. Saved as JPEG via the P4 hardware encoder (quality 85, 4:2:0 — ~300-500
-// KB at 1080p); only if the JPEG engine is unavailable does it fall back to an
-// uncompressed .bmp. Returns false if the card is missing, a save is already
+// task. Saved as JPEG via the P4 hardware encoder (quality 85, 4:2:0 — ~100-150
+// KB at the 960x540 the camera screen sends); only if the JPEG engine is
+// unavailable does it fall back to an uncompressed .bmp. Whatever size the
+// caller passes is what gets written — this does not scale.
+// Returns false if the card is missing, a save is already
 // in flight, or the copy buffer can't be allocated. Safe to call from any
 // task (the caller must guarantee the frame stays valid during the call).
 bool photo_store_capture(const uint8_t* rgb565, int w, int h);

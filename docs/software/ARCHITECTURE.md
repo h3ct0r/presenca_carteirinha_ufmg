@@ -82,6 +82,7 @@ lazily; per-visit state belongs in `on_show`. Ids are in `include/ui/screen.h`.
 | `scr_classes` | The professor's class list | footer **Classes** |
 | `scr_class` | One class: hub → session / history / enroll | class card |
 | `scr_class_stats` | Per-class statistics + settings | ⚙ on a class card |
+| `scr_students` | Student registry: search every student, add one to this class (no card needed) | class **Enroll** view |
 | `scr_kiosk` | Unattended self check-in, professor-gated exit | class session |
 | `scr_export` | CSV attendance export | footer **Export** |
 | `scr_wifi_editor` | Soft-AP + web file manager | footer **WiFi File Editor** |
@@ -105,11 +106,21 @@ session. Back steps up the stack: enroll → session → hub → class list.
 ```
 Classes ──tap──▶ Hub (Session / History, + "Resume" when a session is open)
                   ├─Session──▶ date picker  ─open─▶ roll call ──▶ Kiosk / Enroll
+                  │                                                 └──▶ Student registry
                   └─History──▶ past sessions with attendance %
 ```
 
 Entering kiosk or enroll needs no password: the professor is already signed in,
 and kiosk has its own exit gate.
+
+**Two ways in for a student who is not on the roster.** Enroll's own search
+covers *this class's* roster and its "Add new student" ends on a card tap — the
+student is standing there with their card. The **Student registry**
+(`scr_students`) covers the rest: it searches every student in
+`students.json`, so one already registered through another class is one tap away,
+and its form creates a student with **no** `rfid_uid` at all
+(`roster_class_add_new`), stored exactly like an imported entry so the card binds
+on the first tap. Both paths check the student into the open session.
 
 ### Check-in modes
 
@@ -132,8 +143,34 @@ config-builder authors one mode at a time.
 
 Rendered alphabetically, filtered by a search box, and capped at `ROLL_MAX_ROWS`
 chips with a "Showing N of M" header — a chip costs ~5 LVGL objects and a large
-class would otherwise exhaust the pool. Taps rebuild only the chip container via
-`update_roll_call()`, not the whole view.
+class would otherwise exhaust the pool.
+
+**Layout: pinned strip + one inner scroller**, the same shape as the enroll
+search. `s_content` fills the body (overriding `rebuild_content()`'s
+`LV_SIZE_CONTENT`), the date/count/progress card and the search box stay fixed,
+and `s_roll_scroll` is the view's only scroller — holding the Kiosk/Enroll row,
+the banner, the session extras (photo count, turmas, **Close session**) and then
+the chips, so all of that scrolls away instead of costing pinned height. Two
+reasons it is not one scrolling body: LVGL claims a press for scrolling whenever
+an ancestor *has overflow* (`lv_indev_scroll.c`), and a full-body scroller always
+does — so taps were being eaten even on a short filtered list; and the body
+repaints per frame, which meant scrolling redrew the summary card and its shadow
+along with the list. Anything added above the chips should go inside the
+scroller unless it must stay readable mid-list.
+
+**A presence change never rebuilds the list.** `refresh_roll_chip()` restyles the
+one chip (`s_chips` remembers those drawn) and the summary; only a search change
+rebuilds the container via `update_roll_call()`. This is correctness, not just
+speed: rebuilding from a chip's own click handler deleted the object mid-dispatch,
+which cost the click its remaining event callbacks (so the tap was silent), reset
+the input device mid-gesture, and let LVGL's `lv_obj_readjust_scroll()` clamp the
+body — the "tap did nothing" and "list jumped to the bottom" reports. Presence
+never changes which chips are drawn, so nothing has to move.
+
+Chips use `ui_add_press_style()` rather than `ui_add_press_feedback()`, because
+the handler plays the tone that says which way the presence went: the card-tap
+confirmation when marked present, the plain tick when un-marked, the error
+pattern when the write did not reach the card.
 
 ### Cost of listing past sessions
 
@@ -272,6 +309,15 @@ These have each caused a real bug:
   budget) and `LV_USE_ASSERT_MALLOC=1` turns exhaustion into a silent infinite
   loop on the UI thread — a freeze with no panic and no reboot. Prefer updating
   changed widgets over full rebuilds on large lists.
+- **A layout wrapper inside a clickable card swallows the tap.**
+  `lv_obj_create()` sets `LV_OBJ_FLAG_CLICKABLE` by default and
+  `lv_obj_remove_style_all()` does **not** take it back, so a plain `lv_obj`
+  used only to stack two labels becomes the hit target — and events do not
+  bubble without `LV_OBJ_FLAG_EVENT_BUBBLE`. The row then responds on its
+  padding but not on its text, which reads as "the tap didn't register". Labels
+  and images are exempt (their constructors drop the flag), so the fix is one
+  `lv_obj_remove_flag(wrapper, LV_OBJ_FLAG_CLICKABLE)` per wrapper — see
+  `scr_classes.cpp`, the roll-call chips and the presence overlay.
 - **`lv_image` reports its untransformed size** as its self-size, so a scaled
   image must also be `lv_obj_set_size`d to its drawn size or the layout reserves
   the wrong box. See `ui/components/student_photo.cpp`.
@@ -282,6 +328,14 @@ These have each caused a real bug:
   turns the gaps into phantom releases — one tap arriving as two clicks. The
   indev is read every 10 ms (for scroll smoothness), so `gt911_touch::getTouch()`
   holds the last point for `TOUCH_HOLD_US` before reporting a release.
+- **A press claimed by a scroller never becomes a click.** Once the finger has
+  travelled `scroll_limit` px, LVGL latches the nearest scrollable ancestor and
+  sends no `LV_EVENT_CLICKED` at all — the tap vanishes with no feedback. Every
+  screen's content chains up to the shell's scrollable body, so this applies to
+  every list row. The stock 10 px is ~1 mm here against an unfiltered GT911
+  stream, which lost taps outright; `lvgl_port.cpp` raises it to
+  `SCROLL_LIMIT_PX`. That is the knob for "taps are hard to land" *and* for
+  "scrolling feels sticky" — they trade against each other.
 
 ## Stored credentials
 
@@ -354,8 +408,10 @@ pressed, and interrupting an apply or a wipe half way is the outcome to avoid.
 
 `ui/theme/theme.cpp` — light "staff" palette plus a dark palette for the idle and
 kiosk screens, with `ui_make_button/label/card` helpers and `ui_add_press_feedback`
-(opacity dim + tick beep). Beeps are `beeper_touch` (tick), `beeper_beep` (grant),
-`beeper_error` (two-tone).
+(opacity dim + tick beep). `ui_add_press_style` is the dim without the tick, for a
+control that plays its own outcome tone (the roll-call chips). Beeps are
+`beeper_touch` (tick), `beeper_beep` (grant/registered), `beeper_error`
+(two-tone).
 
 Fonts are Montserrat with FontAwesome glyphs merged in
 (`src/ui/assets/font_montserrat_custom_{14,20,32}.c`); see

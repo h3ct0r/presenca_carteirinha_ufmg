@@ -99,7 +99,8 @@ static bool save_jpeg() {
     if (s_jpeg == NULL || s_frame == NULL) return false;
 
     if (s_jpg_out == NULL) {
-        // Generous ceiling: quality-85 4:2:0 1080p lands around 300-500 KB
+        // Generous ceiling: one byte per pixel, where quality-85 4:2:0 lands
+        // around an eighth of that (~100-150 KB for a 960x540 snapshot).
         jpeg_encode_memory_alloc_cfg_t mc = {.buffer_direction = JPEG_ENC_ALLOC_OUTPUT_BUFFER};
         s_jpg_out = (uint8_t*)jpeg_alloc_encoder_mem((size_t)s_w * s_h, &mc, &s_jpg_out_cap);
     }
