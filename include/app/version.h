@@ -11,7 +11,7 @@
 // fixed MATRICULA,FREQ contract (docs/software/EXPORT.md) consumed by an
 // external grade-filling tool, so its header must not gain extra lines.
 
-#define APP_VERSION "v0.2.0"
+#define APP_VERSION "v0.3.0"
 
 #ifndef APP_GIT_SHA
 #define APP_GIT_SHA "nogit"

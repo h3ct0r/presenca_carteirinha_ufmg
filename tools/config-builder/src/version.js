@@ -7,7 +7,7 @@
 // step to inject it — but NOT left to vigilance: test/schema-sync.test.js reads
 // the firmware header and fails if the two drift, the same guard that protects
 // the LIMITS table.
-export const APP_VERSION = 'v0.2.0';
+export const APP_VERSION = 'v0.3.0';
 
 // Short git SHA of the deployed tree, or '' when unknown.
 //
